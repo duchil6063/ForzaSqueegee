@@ -6,3 +6,9 @@ vendor/kfps-editor/** -text
 # FLS 패치는 `git am`이 그대로 먹는 파일이다 — 개행이 CRLF로 바뀌면 얹히다가
 # 깨진다 (AGPL 대응 소스가 그 패치들이므로 여기가 깨지면 배포가 반쪽이 된다).
 tools/fls-patch/*.patch -text
+
+# cmd.exe는 배치 파일을 CRLF로 읽는다 — LF만 있으면 줄 경계를 잘못 잡아 주석
+# 한복판부터 명령으로 실행하고 "배치 파일이 아닙니다"를 쏟아낸다. GitHub의
+# 압축 내려받기(git archive)는 core.autocrlf를 안 보고 이 속성만 보므로, 여기서
+# CRLF를 못 박지 않으면 내려받은 사람만 프로그램이 안 열린다.
+*.bat text eol=crlf
