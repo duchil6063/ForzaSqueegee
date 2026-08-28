@@ -1,0 +1,8 @@
+# vendor/kfps-editor는 업스트림(KFPS 0af4f21f)과 **바이트 그대로**를 유지한다 —
+# README.md의 SHA-256 대조와 갱신 검증이 그 위에 선다. 개행 변환(autocrlf)이
+# 체크아웃마다 CRLF로 바꿔 놓으면 그 대조가 깨지므로 이 폴더만 변환을 끈다.
+vendor/kfps-editor/** -text
+
+# FLS 패치는 `git am`이 그대로 먹는 파일이다 — 개행이 CRLF로 바뀌면 얹히다가
+# 깨진다 (AGPL 대응 소스가 그 패치들이므로 여기가 깨지면 배포가 반쪽이 된다).
+tools/fls-patch/*.patch -text

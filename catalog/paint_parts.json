@@ -1,0 +1,96 @@
+{
+ "car": "ACU_Integra_23",
+ "cells": [
+  {
+   "cell": [
+    0,
+    0
+   ],
+   "name": "전체 도색",
+   "camera_moved": 0.0,
+   "shot": "00.png",
+   "title": "00-title.png"
+  },
+  {
+   "cell": [
+    0,
+    1
+   ],
+   "name": "후드",
+   "camera_moved": 0.787,
+   "shot": "01.png",
+   "title": "01-title.png"
+  },
+  {
+   "cell": [
+    0,
+    2
+   ],
+   "name": "미러",
+   "camera_moved": 0.894,
+   "shot": "02.png",
+   "title": "02-title.png"
+  },
+  {
+   "cell": [
+    1,
+    0
+   ],
+   "name": "윙",
+   "camera_moved": 0.839,
+   "shot": "10.png",
+   "title": "10-title.png"
+  },
+  {
+   "cell": [
+    1,
+    1
+   ],
+   "name": "브레이크",
+   "camera_moved": 0.952,
+   "shot": "11.png",
+   "title": "11-title.png"
+  },
+  {
+   "cell": [
+    1,
+    2
+   ],
+   "name": "림",
+   "camera_moved": 0.864,
+   "shot": "12.png",
+   "title": "12-title.png"
+  },
+  {
+   "cell": [
+    2,
+    0
+   ],
+   "name": "림(전방)",
+   "camera_moved": 0.0,
+   "shot": "20.png",
+   "title": "20-title.png"
+  },
+  {
+   "cell": [
+    2,
+    1
+   ],
+   "name": "림(리어)",
+   "camera_moved": 0.688,
+   "shot": "21.png",
+   "title": "21-title.png"
+  },
+  {
+   "cell": [
+    2,
+    2
+   ],
+   "name": "창문 틴트",
+   "camera_moved": 0.939,
+   "shot": "22.png",
+   "title": "22-title.png"
+  }
+ ],
+ "note": "2026-08-21 실측 (인테그라 A-스펙 '23, 한국어 UI 1600×899). 차체 패널 칸은 후드·윙·미러뿐이고 **지붕·필러 칸이 없다** — 지붕 투톤은 도료로 못 칠한다. 탭 구성처럼 차종이 칸을 바꿀 수 있으므로 다른 차에서는 다시 잰다 (python tools/paint_parts.py)."
+}

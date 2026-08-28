@@ -1,0 +1,92 @@
+"""자동 자리 — 편집기가 도안을 처음 앉히는 그 자리."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from ...game import seam as gseam, surface as gsurf
+from .boxes import DEFAULT_GROUP_UNIT
+from .look import Look, person_ink, rot_ink_box
+from .place import (
+    BODY_FILL, ManualPlace, Place, dodge_parts, fit_on, person_pose, place_in_rect)
+
+
+def _side_place(rig: "SideRig", lk: Look, group_unit: float, mirror: bool,
+                notes: list[str] | None = None) -> tuple[Place, float]:
+    """옆면 하나의 인물 자리 — 차체 밴드 예산에 내접, 발은 로커. (배치, 기울기)."""
+    t, _ = person_pose(lk, {rig.name: rig})
+    t = t if rig.name == "side_left" else -t
+    wb, hb = gseam.person_budget(rig.body, rig.geom)
+    iw, ih = person_ink(lk, t, mirror)
+    s = min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+    box = gseam.person_span(rig.body, rig.geom, (iw * s, ih * s), rig.rear_dir)
+    box, why = dodge_parts(box, rig, lk, t)
+    if why and notes is not None:
+        notes.append(why)
+    return place_in_rect(box, rig.name, lk, anchor="bottom", fill=1.0,
+                         group_unit=group_unit, tilt=t, mirror=mirror,
+                         paint=rig.smap.paint), t
+
+
+def auto_place(name: str, plan_path: Path, lk: Look,
+               maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"], *,
+               group_unit: float = DEFAULT_GROUP_UNIT, mirror: bool = False,
+               notes: list[str] | None = None) -> ManualPlace | None:
+    """이 면에 이 도안을 **자동 경로가 앉힐 자리** — 편집기의 첫 자리다.
+
+    옆면은 자동 구성과 **똑같은 수**를 쓴다 (눕히기 각 + 차체 밴드 예산 +
+    로커 앵커). 그래서 도안 하나를 넣고 아무것도 안 만지면 지금까지의 이타샤가
+    그대로 나오고, 사람은 거기서부터 손댄다. 나머지 면은 도색 마스크 내접이다.
+    못 앉히면 None.
+
+    인물은 **벨트라인을 안 넘는다** (`person_budget`) — 넘긴 몫은 그 자리에서
+    잘린다. 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 가르고 위쪽 반을
+    유리 면에 따로 올린다.
+    """
+    rig = rigs.get(name)
+    if rig is not None:
+        why: list[str] = []
+        pl, t = _side_place(rig, lk, group_unit, mirror, why)
+        if notes is not None:
+            notes.extend(w for w in why if w)
+    else:
+        smap = maps.get(name)
+        if smap is None:
+            return None
+        pl = fit_on(smap, lk, anchor="bottom" if lk.kind == "tall" else "center",
+                    fill=BODY_FILL, bias_x=0.5, group_unit=group_unit,
+                    mirror=mirror)
+        if pl is None:                            # 마스크에 이 비율이 안 들어간다
+            p0, q0, p1, q1 = smap.paint
+            ib = rot_ink_box(lk, 0.0, mirror)
+            s = min((p1 - p0) / max(1e-6, ib[2] - ib[0]),
+                    (q1 - q0) / max(1e-6, ib[3] - ib[1])) * 0.8 / max(1e-6, group_unit)
+            g = s * group_unit
+            pl = Place(surface=name, plan=Path(), scale=round(s, 3), rot=0.0,
+                       x=round((p0 + p1) / 2 - g * (ib[0] + ib[2]) / 2, 1),
+                       y=round((q0 + q1) / 2 - g * (ib[1] + ib[3]) / 2, 1))
+    return ManualPlace(plan=Path(plan_path), surface=name, x=pl.x, y=pl.y,
+                       scale=pl.scale, rot=pl.rot, mirror=mirror)
+
+
+def mirror_place(mp: ManualPlace, src: gsurf.SurfaceMap,
+                 dst: gsurf.SurfaceMap, surface: str) -> ManualPlace:
+    """배치 하나를 **반대편 면의 거울 자리**로 옮긴다 (좌우 대칭).
+
+    좌우 옆면은 서로의 거울이다 — 왼쪽 카메라는 차가 왼쪽을 보므로 +u가 뒤고,
+    오른쪽은 그 거울이라 −u가 뒤다 (2026-08-17 캡처 확인). 그래서 "차에서 같은
+    자리"는 **각 면의 도색 상자 중심을 축으로 뒤집은 곳**이다.
+
+    표시 변환 = R(rot)·(미러면 수평뒤집기)·스케일이므로, 면 유닛 x를 뒤집는 것은
+    `mirror`를 켜고 `rot` 부호를 뒤집는 것과 같다 (M·R(θ) = R(−θ)·M). 그래서
+    돌아온 배치는 **거울 대칭이면서 그림 자체는 안 뒤집힌 채로** 읽힌다.
+    """
+    scx = (src.paint[0] + src.paint[2]) / 2
+    scy = (src.paint[1] + src.paint[3]) / 2
+    dcx = (dst.paint[0] + dst.paint[2]) / 2
+    dcy = (dst.paint[1] + dst.paint[3]) / 2
+    return ManualPlace(plan=mp.plan, surface=surface,
+                       x=round(dcx + (scx - mp.x), 1),
+                       y=round(dcy + (mp.y - scy), 1),
+                       scale=mp.scale, rot=round((-mp.rot) % 360.0, 1),
+                       mirror=not mp.mirror)

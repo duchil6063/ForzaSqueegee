@@ -1,0 +1,73 @@
+MIT License
+
+Copyright (c) 2026 ForzaSqueegee contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 이 MIT가 적용되는 곳
+
+`forzasqueegee/`·`tools/`·`catalog/`의 **코드**에 적용된다. 그중 일부는 다른
+MIT 프로젝트에서 **이식한 파생물**이다 — `forzasqueegee/engine/galatea/`,
+`forzasqueegee/engine/kfpsjson.py`, `forzasqueegee/kfpseditor.py`는
+kloudys-forza-painter-suite(MIT)에서 왔고, 그 저작권 고지가 파일 머리와
+`THIRD_PARTY_NOTICES.md`에 함께 실린다 (MIT가 요구하는 대로).
+
+## 이 MIT가 **적용되지 않는** 곳
+
+- **`tools/fls-patch/*.patch` — AGPL-3.0-or-later.** ForzaLiveryStudio
+  (© Arstz, AGPL-3.0-or-later)를 고친 것이라 그 조건을 따른다. 전문은
+  `tools/fls-patch/LICENSE`, 무엇을 왜 고쳤는지는 같은 폴더의 `README.md`.
+
+- **게임에서 뽑아낸 자료 — 우리 것이 아니다.** 아래 파일들은 Forza Horizon 6의
+  설치 에셋에서 뽑았거나 인게임 실측으로 떴다. 저작권은 Microsoft·Playground
+  Games를 비롯한 각 권리자에게 있고, **우리는 여기에 어떤 라이선스도 부여하지
+  않는다.** 게임 파일과 오갈 수 있게 하려고(상호운용) 함께 둘 뿐이며, 권리자의
+  요청이 있으면 제거한다.
+
+  - `catalog/vinyl_catalog.json` · `catalog/shape_native.json` — 게임 비닐
+    도형의 기하
+  - `catalog/surfaces/` · `catalog/body_tabs.json` ·
+    `catalog/cell_map.json` · `catalog/font_cells.json` ·
+    `catalog/gradient_catalog.json` · `catalog/paint_parts.json` ·
+    `catalog/fh6_layout.json` — 면 마스크·차량 색인·화면 좌표·레코드 배치 실측
+  - `vendor/kfps-editor/shape-names.json` · `shape-words.json` — 같은 게임
+    도형의 이름표 (KFPS를 거쳐 왔다. KFPS의 MIT는 KFPS가 쓴 것에 대한 것이지
+    게임 자료에 대한 권한이 아니다)
+  - `vendor/kfps-editor/Resources/`(도형 메시 2,800파일)는 **저장소에 없다** —
+    편집기를 처음 열 때 KFPS 고정 커밋에서 받는다 (`tools/get_kfps.py`)
+
+- **동봉·수신하는 제3자 구성 요소** — 각자의 라이선스를 따른다. 전문과 출처는
+  `THIRD_PARTY_NOTICES.md`:
+  - `vendor/kfps-editor/`, `vendor/galatea/` — kloudys-forza-painter-suite
+    (MIT), Fabric.js (MIT), forza-painter-geometrize-go (MIT)
+  - `vendor/fls-editor/` — ForzaLiveryStudio (AGPL-3.0-or-later). 저장소에 없고
+    `tools/get_fls.py`로 받거나 `tools/fls_build.py`로 짓는다. 우리 코드는 이
+    편집기를 **별개 프로세스로 실행만** 하므로 파생물이 아니다.
+  - `models/*.onnx` — 저장소에 없고 실행 시 받는다. AniLines (MIT),
+    Real-ESRGAN (BSD-3-Clause), isnet-anime / anime-segmentation (Apache-2.0).
+
+## 상표·제휴
+
+ForzaSqueegee는 Microsoft Corporation·Playground Games와 **아무 관계가 없는**
+비공식 팬 제작 도구다. 그들이 만들지도, 후원하지도, 승인하지도 않았다.
+Forza, Forza Horizon은 Microsoft의 상표이며, 차량·제조사 이름은 그 차를
+가리키기 위해서만 쓴다. 상표 사용은 이 MIT 라이선스가 부여하는 권리에 들어가지
+않는다.

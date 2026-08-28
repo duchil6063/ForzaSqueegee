@@ -1,0 +1,92 @@
+{
+ "note": "차체 면 탭 대조표. 이름은 설치 파일 LiveryMasks 유효 면 순서에서 (2026-08-19, 실측 9탭 = 예측 9면, 상한 패턴 일치).",
+ "warning": "탭 구성은 **차종마다 다르다** (스포일러·선루프가 없는 차가 있다). 다른 차에서는 tools/body_tabs.py로 다시 재고 이름을 다시 붙일 것. 코드는 이름을 못 찾으면 멈춘다.",
+ "car": "2021 Alfa Romeo Giulia GTAm",
+ "client": [
+  1600,
+  899
+ ],
+ "tabs": [
+  {
+   "index": 0,
+   "center": 0.1037,
+   "cap": 1000,
+   "count": 0,
+   "name": "front",
+   "ko": "앞",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 1,
+   "center": 0.1537,
+   "cap": 3000,
+   "count": 0,
+   "name": "side_left",
+   "ko": "왼쪽면",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 2,
+   "center": 0.2037,
+   "cap": 3000,
+   "count": 0,
+   "name": "top",
+   "ko": "윗면",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 3,
+   "center": 0.2537,
+   "cap": 3000,
+   "count": 0,
+   "name": "side_right",
+   "ko": "오른쪽면",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 4,
+   "center": 0.3038,
+   "cap": 1000,
+   "count": 0,
+   "name": "rear",
+   "ko": "뒤",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 5,
+   "center": 0.3538,
+   "cap": 1000,
+   "count": 0,
+   "name": "windshield",
+   "ko": "앞유리",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 6,
+   "center": 0.4037,
+   "cap": 1000,
+   "count": 0,
+   "name": "rear_window",
+   "ko": "뒷유리",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 7,
+   "center": 0.4537,
+   "cap": 1000,
+   "count": 0,
+   "name": "window_left",
+   "ko": "왼쪽 창",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  },
+  {
+   "index": 8,
+   "center": 0.5038,
+   "cap": 1000,
+   "count": 0,
+   "name": "window_right",
+   "ko": "오른쪽 창",
+   "note": "설치 파일 예측 (carfiles.tab_names, 상한 패턴 일치)"
+  }
+ ]
+}

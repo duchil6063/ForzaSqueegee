@@ -1,0 +1,2067 @@
+From f51e3aec361974e5d0c5944017e81e6fe7e97434 Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Thu, 27 Aug 2026 03:02:51 +0900
+Subject: [PATCH 2/2] itasha: an Itasha menu, headless geometry dump, and
+ split-at-a-line
+
+Adds everything ForzaSqueegee needs from the editor:
+
+* dumpItashaGeometry / --itasha-dump - project the car mesh per section
+  into a depth raster, answered before QApplication so it runs headless.
+* [Itasha] menu - load a design into a section (plan.json, KFPS typecode
+  JSON, or a vinyl group), auto-place, grow/drop decoration, motif family,
+  mirror, base paint, export to a game container, export a group. Each
+  item saves the project, calls the engine named by
+  QSettings("itasha/command"), and reopens what it wrote. Menu items act
+  on the artwork you picked - selectedItashaGroups walks up to the nearest
+  FS: group. Engine output is read as UTF-8.
+* [Edit -> Split Selection at a Line] - cut the selected layers or groups
+  into two groups at one line. Game shapes cannot be halved, so a layer
+  the line crosses is copied into both groups; the slack widens that
+  overlap inward. The line is dragged on the canvas (SplitTool) and the
+  side panel holds the numbers.
+---
+ CMakeLists.txt                          |   4 +
+ src/gui/app/main_window.cpp             |   1 +
+ src/gui/app/main_window.h               |  27 ++
+ src/gui/app/main_window_itasha.cpp      | 456 ++++++++++++++++++++++++
+ src/gui/app/main_window_split.cpp       | 251 +++++++++++++
+ src/gui/app/main_window_ui.cpp          |  11 +
+ src/gui/canvas/canvas_tools.h           |  12 +
+ src/gui/canvas/car_model_renderer.cpp   | 264 ++++++++++++++
+ src/gui/canvas/car_model_renderer.h     |  10 +
+ src/gui/canvas/project_canvas.cpp       |   1 +
+ src/gui/canvas/project_canvas.h         |  33 ++
+ src/gui/canvas/project_canvas_paint.cpp |   2 +
+ src/gui/canvas/project_canvas_split.cpp | 320 +++++++++++++++++
+ src/gui/canvas/split_line.h             |  44 +++
+ src/gui/state/editor_state.h            |  17 +
+ src/gui/state/editor_state_split.cpp    | 195 ++++++++++
+ src/gui/widgets/car_preview_widget.cpp  |  14 +
+ src/gui/widgets/car_preview_widget.h    |   5 +
+ src/main.cpp                            |  83 +++++
+ 19 files changed, 1750 insertions(+)
+ create mode 100644 src/gui/app/main_window_itasha.cpp
+ create mode 100644 src/gui/app/main_window_split.cpp
+ create mode 100644 src/gui/canvas/project_canvas_split.cpp
+ create mode 100644 src/gui/canvas/split_line.h
+ create mode 100644 src/gui/state/editor_state_split.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ea4beef..b71ce80 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -186,7 +186,9 @@ qt_add_executable(${FORZA_LIVERY_STUDIO_TARGET} WIN32
+     src/gui/app/main_window_internal.h
+     src/gui/app/main_window_edit.cpp
+     src/gui/app/main_window_io.cpp
++    src/gui/app/main_window_itasha.cpp
+     src/gui/app/main_window_project.cpp
++    src/gui/app/main_window_split.cpp
+     src/gui/app/main_window_ui.cpp
+     src/gui/app/perf_utils.h
+     src/gui/app/settings_dialog.cpp
+@@ -203,6 +205,7 @@ qt_add_executable(${FORZA_LIVERY_STUDIO_TARGET} WIN32
+     src/gui/state/editor_state_grouping.cpp
+     src/gui/state/editor_state_selection.cpp
+     src/gui/state/editor_state_snapshot.cpp
++    src/gui/state/editor_state_split.cpp
+     src/gui/state/layer_tree_model.cpp
+     src/gui/state/layer_tree_model.h
+     src/gui/state/scene_view.h
+@@ -246,6 +249,7 @@ qt_add_executable(${FORZA_LIVERY_STUDIO_TARGET} WIN32
+     src/gui/canvas/project_canvas.cpp
+     src/gui/canvas/project_canvas_bucket.cpp
+     src/gui/canvas/project_canvas_pen.cpp
++    src/gui/canvas/project_canvas_split.cpp
+     src/gui/canvas/project_canvas.h
+     src/gui/canvas/project_canvas_internal.h
+     src/gui/canvas/project_canvas_hit.cpp
+diff --git a/src/gui/app/main_window.cpp b/src/gui/app/main_window.cpp
+index 1d66a6c..1e0ce12 100644
+--- a/src/gui/app/main_window.cpp
++++ b/src/gui/app/main_window.cpp
+@@ -42,6 +42,7 @@ MainWindow::MainWindow(QWidget *parent)
+     setupImgGenMenu();
+ #endif
+     setupOptionsMenu();
++    setupItashaMenu();
+     setupToolbar();
+     setupWindowMenu();
+ 
+diff --git a/src/gui/app/main_window.h b/src/gui/app/main_window.h
+index 7a63f09..597f24f 100644
+--- a/src/gui/app/main_window.h
++++ b/src/gui/app/main_window.h
+@@ -228,10 +228,37 @@ private:
+     void setupToolbar();
+     void applyToolbarStyle(bool vertical);
+     void setupWindowMenu();
++    // Itasha: composing a livery - placing a design on a panel, carrying it
++    // across a seam onto the neighbouring panel, growing the decoration - is
++    // done by an external engine that rewrites the project file. These entries
++    // run it on the current project and reload the result.
++    // Splitting a design at a line — the panel beside the canvas line.
++    // See main_window_split.cpp.
++    void setupSplitPanel();
++    void openSplitPanel();
++    void closeSplitPanel();
++    void refreshSplitTally();
++    void applySplit();
++    void setupItashaMenu();
++    bool runItashaAction(const QString &action, const QStringList &extra = {},
++                         bool needLivery = true, bool reload = true);
++    QStringList itashaCommand() const;
++    void refreshItashaMenu();
+     void importCarModel();
+     void maybeAutoLoadCarForProject(bool replaceLoadedModel = false);
+     QString findCarModelPath(const QString &folder, const QString &modelName) const;
+ 
++    QDialog *splitDialog_ = nullptr;
++    QDoubleSpinBox *splitAngleSpin_ = nullptr;
++    QDoubleSpinBox *splitOffsetSpin_ = nullptr;
++    QDoubleSpinBox *splitMarginSpin_ = nullptr;
++    QLabel *splitTallyLabel_ = nullptr;
++    QPushButton *splitApplyButton_ = nullptr;
++    QVector<QString> splitEntries_;
++    bool splitUpdating_ = false;
++    QMenu *itashaMenu_ = nullptr;
++    QList<QAction *> itashaLiveryActions_;
++    QList<QAction *> itashaGroupActions_;
+     EditorState *state_ = nullptr;
+     KeyBindingRouter *keyBindings_ = nullptr;
+     ProjectCanvas *canvas_ = nullptr;
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+new file mode 100644
+index 0000000..6f45a53
+--- /dev/null
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -0,0 +1,456 @@
++// Itasha menu: composing a livery out of character artwork, and handing a
++// vinyl group to the tools that speak the other formats.
++//
++// The heavy work - reading the car's paint masks, placing a design on a panel,
++// carrying the part that runs off an edge onto the neighbouring panel, growing
++// the decoration, mirroring left to right, choosing the base paint, checking
++// the per-panel decal budget - is done by an external engine (ForzaSqueegee).
++// It reads and rewrites the project document, so an entry here is always the
++// same three steps: hand it the saved project, run it, reload what it wrote.
++//
++// Two families of entries, and which one is live depends on the open project:
++//
++//   livery  place a design, auto-place, join across seams, decoration, motif,
++//           mirror, base paint, export the game container
++//   group   export this vinyl group as a game container, as KFPS JSON, or as
++//           a ForzaSqueegee plan.json
++//
++// The engine is not required to run the editor. Its command is read from
++// QSettings ("itasha/command", a string list, plus "itasha/cwd"); when it is
++// absent the menu says so and stays disabled.
++
++#include "main_window.h"
++#include "main_window_internal.h"
++
++#include "car_preview_widget.h"
++#include "editor_state.h"
++#include "import_locations.h"
++
++#include <QAction>
++#include <QApplication>
++#include <QColor>
++#include <QColorDialog>
++#include <QDir>
++#include <QFileDialog>
++#include <QGuiApplication>
++#include <QMenu>
++#include <QMenuBar>
++#include <QMessageBox>
++#include <QProcess>
++#include <QSettings>
++#include <QStandardPaths>
++#include <QStatusBar>
++#include <QStringList>
++#include <QTemporaryDir>
++
++namespace gui {
++
++namespace {
++
++constexpr auto kItashaCommandKey = "itasha/command";
++constexpr auto kItashaCwdKey = "itasha/cwd";
++constexpr int kItashaTimeoutMs = 30 * 60 * 1000;   // 도안 하나가 몇 분 걸린다
++
++// Motif families the engine knows (engine/compose/vocabulary.py). The design's
++// theme colour picks one on its own, which is what "Auto" leaves it doing.
++const char *const kMotifFamilies[] = {"star", "flower", "splat", "swirl",
++                                      "crystal"};
++
++// Exporting a vinyl group: the same design, in the three formats the tools
++// share.
++struct GroupFormat {
++    const char *text;
++    const char *format;
++    const char *tip;
++};
++
++const GroupFormat kGroupFormats[] = {
++    {"&Game Container (C_group)...", "fls",
++     "LayerGroup_<name>/C_group + header - drop it in the game's save container "
++     "and it shows up in the grid"},
++    {"&KFPS JSON...", "kfps",
++     "The typecode JSON the KFPS editor and its tools read"},
++    {"ForzaSqueegee &plan.json...", "plan",
++     "The design format every ForzaSqueegee command takes"},
++};
++
++// The Itasha groups the selection sits in. The engine names each chunk it
++// builds "FS:<name>" (a design is FS:decal-1-fit), so walking up from whatever
++// is selected to the nearest such group says which artwork the person means -
++// which is what an entry like Auto-place on This Section acts on. Returns the
++// names without the prefix; empty when the selection is not inside one.
++QStringList selectedItashaGroups(const EditorState *state) {
++    QStringList out;
++    if (state == nullptr) {
++        return out;
++    }
++    QVector<QString> ids;
++    for (const QString &id : state->selectedLayerIds()) {
++        ids.push_back(id);
++    }
++    ids += state->fullySelectedTopGroupIds();
++    for (const QString &id : ids) {
++        for (const fls::scene::Layer *node = state->sceneNode(id);
++             node != nullptr; node = node->parent()) {
++            if (node->kind() != fls::scene::LayerKind::Group
++                || !node->name.startsWith(QStringLiteral("FS:"))) {
++                continue;
++            }
++            const QString name = node->name.mid(3);
++            if (!out.contains(name)) {
++                out.push_back(name);
++            }
++            break;
++        }
++    }
++
++    return out;
++}
++
++QString itashaWorkDir() {
++    const QString base = QStandardPaths::writableLocation(
++        QStandardPaths::AppLocalDataLocation);
++    QDir().mkpath(base + QStringLiteral("/itasha"));
++
++    return base + QStringLiteral("/itasha");
++}
++
++} // namespace
++
++QStringList MainWindow::itashaCommand() const {
++    QSettings settings;
++    const QStringList command =
++        settings.value(QLatin1String(kItashaCommandKey)).toStringList();
++    if (command.isEmpty() || command.first().trimmed().isEmpty()) {
++        return {};
++    }
++
++    return command;
++}
++
++void MainWindow::setupItashaMenu() {
++    itashaMenu_ = menuBar()->addMenu(QStringLiteral("&Itasha"));
++    itashaLiveryActions_.clear();
++    itashaGroupActions_.clear();
++
++    // Which entries are live depends on the open project, so the menu has to
++    // hear about a project arriving. Without this it is built before any
++    // project exists and stays greyed out until an entry runs - which none can,
++    // because they are greyed out.
++    if (state_ != nullptr) {
++        connect(state_, &EditorState::projectReset,
++                this, &MainWindow::refreshItashaMenu);
++        connect(state_, &EditorState::projectStructureChanged,
++                this, &MainWindow::refreshItashaMenu);
++    }
++
++    const auto addLiveryEntry = [this](QMenu *menu, const QString &text,
++                                       const QString &action, const QString &tip,
++                                       const QStringList &extra = {}) {
++        QAction *entry = menu->addAction(text);
++        entry->setStatusTip(tip);
++        connect(entry, &QAction::triggered, this,
++                [this, action, extra]() { runItashaAction(action, extra); });
++        itashaLiveryActions_.push_back(entry);
++
++        return entry;
++    };
++
++    QAction *load = itashaMenu_->addAction(
++        QStringLiteral("&Load Design into Section..."));
++    load->setStatusTip(QStringLiteral(
++        "Place a design on the active livery panel - a ForzaSqueegee plan.json, "
++        "a KFPS JSON, or a vinyl group (.3so / C_group)"));
++    connect(load, &QAction::triggered, this, [this]() {
++        const QString path = QFileDialog::getOpenFileName(
++            this, QStringLiteral("Load Design into Section"),
++            importDialogStartDirectory(this, QStringLiteral("itashaDesign")),
++            QStringLiteral("Any design (plan.json *.json *.3so C_group);;"
++                           "ForzaSqueegee design (plan.json);;"
++                           "KFPS JSON (*.json);;"
++                           "Vinyl group (*.3so C_group);;"
++                           "All files (*)"));
++        if (path.isEmpty()) {
++            return;
++        }
++        rememberImportDirectory(path, QStringLiteral("itashaDesign"));
++        runItashaAction(QStringLiteral("load-design"),
++                        {QStringLiteral("--design"), path});
++    });
++    itashaLiveryActions_.push_back(load);
++
++    addLiveryEntry(itashaMenu_, QStringLiteral("&Auto-place on This Section"),
++                   QStringLiteral("auto-place"),
++                   QStringLiteral("Move the panel's artwork to the place the "
++                                  "reference liveries put it"));
++    itashaMenu_->addSeparator();
++    // Nothing here carries artwork across a seam. A design that runs off its
++    // panel is cut there, the way the game draws it; to carry it onto the
++    // neighbour, split it at the seam (Edit > Split Selection at a Line) and
++    // move one of the two groups.
++    //
++    // Decoration is off until it is asked for. Loading a design puts the
++    // artwork on the car and nothing else; bands, motifs and the roof blackout
++    // grow only when someone picks this entry, and stay on from then until
++    // Drop Decoration.
++    addLiveryEntry(itashaMenu_,
++                   QStringLiteral("Grow &Decoration (bands, motifs, roof)"),
++                   QStringLiteral("decoration"),
++                   QStringLiteral("Grow the bands, scattered motifs and roof "
++                                  "blackout around the artwork. Off until you "
++                                  "ask for it."));
++    addLiveryEntry(itashaMenu_, QStringLiteral("Drop Decoration (artwork &only)"),
++                   QStringLiteral("no-decoration"),
++                   QStringLiteral("Leave only the artwork - no bands, motifs or "
++                                  "roof blackout. The base paint stays."));
++
++    QMenu *motif = itashaMenu_->addMenu(QStringLiteral("&Motif Family"));
++    motif->setStatusTip(QStringLiteral(
++        "Which family the scattered decoration draws from. The design's theme "
++        "colour picks one; a character you know is better picked by hand. "
++        "Picking a family does not switch the decoration on."));
++    addLiveryEntry(motif, QStringLiteral("&Auto (the design picks)"),
++                   QStringLiteral("motif"),
++                   QStringLiteral("Let the design's theme colour choose"));
++    for (const char *family : kMotifFamilies) {
++        const QString name = QString::fromLatin1(family);
++        addLiveryEntry(motif, name.at(0).toUpper() + name.mid(1),
++                       QStringLiteral("motif"),
++                       QStringLiteral("Use the %1 family").arg(name),
++                       {QStringLiteral("--family"), name});
++    }
++
++    itashaMenu_->addSeparator();
++    addLiveryEntry(itashaMenu_, QStringLiteral("Mirror Left/&Right"),
++                   QStringLiteral("mirror"),
++                   QStringLiteral("Copy the side and door-glass panels onto "
++                                  "their mirrored counterparts"));
++
++    QMenu *paint = itashaMenu_->addMenu(QStringLiteral("&Base Paint"));
++    paint->setStatusTip(QStringLiteral(
++        "The single colour the whole car is painted. It is paint, not vinyl - "
++        "it costs no layers and carries a gloss no decal can."));
++    addLiveryEntry(paint, QStringLiteral("&From the Design"),
++                   QStringLiteral("base-paint"),
++                   QStringLiteral("Choose the colour from the artwork"));
++    QAction *pick = paint->addAction(QStringLiteral("&Pick Colour..."));
++    pick->setStatusTip(QStringLiteral("Paint the car a colour you choose"));
++    connect(pick, &QAction::triggered, this, [this]() {
++        const QColor chosen = QColorDialog::getColor(
++            Qt::white, this, QStringLiteral("Base Paint"));
++        if (!chosen.isValid()) {
++            return;
++        }
++        runItashaAction(QStringLiteral("base-paint"),
++                        {QStringLiteral("--color"), chosen.name(QColor::HexRgb)});
++    });
++    itashaLiveryActions_.push_back(pick);
++
++    itashaMenu_->addSeparator();
++    QAction *exportLivery = itashaMenu_->addAction(
++        QStringLiteral("&Export to Game Container..."));
++    exportLivery->setStatusTip(QStringLiteral(
++        "Write the Livery_<name>/C_livery + header the game reads"));
++    connect(exportLivery, &QAction::triggered, this, [this]() {
++        const QString folder = QFileDialog::getExistingDirectory(
++            this, QStringLiteral("Export Livery Container"),
++            importDialogStartDirectory(this, QStringLiteral("itashaExport")));
++        if (folder.isEmpty()) {
++            return;
++        }
++        rememberImportDirectory(folder, QStringLiteral("itashaExport"));
++        runItashaAction(QStringLiteral("export"),
++                        {QStringLiteral("--out"), folder});
++    });
++    itashaLiveryActions_.push_back(exportLivery);
++
++    QMenu *group = itashaMenu_->addMenu(QStringLiteral("Export &Group As"));
++    group->setStatusTip(QStringLiteral(
++        "Write this vinyl group in one of the three formats the tools share"));
++    for (const GroupFormat &fmt : kGroupFormats) {
++        QAction *entry = group->addAction(QString::fromLatin1(fmt.text));
++        entry->setStatusTip(QString::fromLatin1(fmt.tip));
++        const QString format = QString::fromLatin1(fmt.format);
++        connect(entry, &QAction::triggered, this, [this, format]() {
++            const QString folder = QFileDialog::getExistingDirectory(
++                this, QStringLiteral("Export Group"),
++                importDialogStartDirectory(this, QStringLiteral("itashaGroup")));
++            if (folder.isEmpty()) {
++                return;
++            }
++            rememberImportDirectory(folder, QStringLiteral("itashaGroup"));
++            runItashaAction(QStringLiteral("export-group"),
++                            {QStringLiteral("--format"), format,
++                             QStringLiteral("--out"), folder},
++                            /*needLivery=*/false, /*reload=*/false);
++        });
++        itashaGroupActions_.push_back(entry);
++    }
++
++    itashaMenu_->addSeparator();
++    QAction *dump = itashaMenu_->addAction(QStringLiteral("Dump Car Geometr&y..."));
++    dump->setStatusTip(QStringLiteral(
++        "Write the loaded car's panel geometry for the Itasha engine"));
++    connect(dump, &QAction::triggered, this, [this]() {
++        if (carPreview_ == nullptr || !carPreview_->hasModel()) {
++            QMessageBox::information(
++                this, QStringLiteral("Itasha"),
++                QStringLiteral("Import a car model first - the panel geometry "
++                               "comes from it."));
++            return;
++        }
++        const QString path = QFileDialog::getSaveFileName(
++            this, QStringLiteral("Dump Car Geometry"),
++            QDir(itashaWorkDir()).filePath(
++                carPreview_->loadedCarMedia() + QStringLiteral(".fsgeom")),
++            QStringLiteral("Itasha geometry (*.fsgeom);;All files (*)"));
++        if (path.isEmpty()) {
++            return;
++        }
++        QString error;
++        if (!carPreview_->dumpItashaGeometry(path, &error)) {
++            QMessageBox::warning(this, QStringLiteral("Itasha"), error);
++            return;
++        }
++        statusBar()->showMessage(QStringLiteral("Wrote %1").arg(path), 5000);
++    });
++
++    refreshItashaMenu();
++}
++
++void MainWindow::refreshItashaMenu() {
++    if (itashaMenu_ == nullptr) {
++        return;
++    }
++    const bool haveEngine = !itashaCommand().isEmpty();
++    const bool open = state_ != nullptr && state_->hasProject();
++    const bool livery = open && state_->project_.isLivery;
++    for (QAction *entry : itashaLiveryActions_) {
++        entry->setEnabled(haveEngine && livery);
++    }
++    for (QAction *entry : itashaGroupActions_) {
++        entry->setEnabled(haveEngine && open && !livery);
++    }
++    itashaMenu_->setToolTipsVisible(true);
++    if (!haveEngine) {
++        itashaMenu_->setTitle(QStringLiteral("&Itasha (engine not configured)"));
++    } else if (!open) {
++        itashaMenu_->setTitle(QStringLiteral("&Itasha (open a project)"));
++    } else {
++        itashaMenu_->setTitle(QStringLiteral("&Itasha"));
++    }
++}
++
++bool MainWindow::runItashaAction(const QString &action, const QStringList &extra,
++                                 bool needLivery, bool reload) {
++    const QStringList command = itashaCommand();
++    if (command.isEmpty()) {
++        QMessageBox::information(
++            this, QStringLiteral("Itasha"),
++            QStringLiteral(
++                "No Itasha engine is configured.\n\nLaunch this editor from "
++                "ForzaSqueegee once and it registers itself, or set "
++                "itasha/command in the editor's settings."));
++        return false;
++    }
++    if (state_ == nullptr || !state_->hasProject()) {
++        QMessageBox::information(this, QStringLiteral("Itasha"),
++                                 QStringLiteral("Open a project first."));
++        return false;
++    }
++    if (needLivery != state_->project_.isLivery) {
++        QMessageBox::information(
++            this, QStringLiteral("Itasha"),
++            needLivery
++                ? QStringLiteral("Open a livery project first.")
++                : QStringLiteral("This entry exports a vinyl group, and the "
++                                 "open project is a livery."));
++        return false;
++    }
++
++    // The engine works on a saved project, so an unsaved one goes to the work
++    // folder first and stays there - reopening it later is the user's business.
++    QString projectPath = projectJsonPath_;
++    if (projectPath.isEmpty()) {
++        projectPath = QDir(itashaWorkDir()).filePath(
++            mw_detail::safeGroupName(state_->project_.name) + QStringLiteral(".3so"));
++    }
++    QString error;
++    if (!saveProjectJson(projectPath, &error)) {
++        QMessageBox::critical(this, QStringLiteral("Itasha"), error);
++        return false;
++    }
++    projectJsonPath_ = projectPath;
++
++    // Panel geometry: the engine needs to know where the car's surface is to
++    // carry artwork across a seam, and the dump's file name tells it which car
++    // this is. Write it next to the project, once per car.
++    QStringList arguments = command.mid(1);
++    arguments << action << QStringLiteral("--project") << projectPath;
++    if (carPreview_ != nullptr && carPreview_->hasModel()) {
++        const QString geometry = QDir(itashaWorkDir()).filePath(
++            carPreview_->loadedCarMedia() + QStringLiteral(".fsgeom"));
++        QString dumpError;
++        if (carPreview_->dumpItashaGeometry(geometry, &dumpError)) {
++            arguments << QStringLiteral("--geometry") << geometry;
++        } else {
++            statusBar()->showMessage(
++                QStringLiteral("Itasha: %1").arg(dumpError), 5000);
++        }
++    }
++    const int slot = activeLiverySectionSlot();
++    if (slot >= 0) {
++        arguments << QStringLiteral("--slot") << QString::number(slot);
++    }
++    const QStringList groups = selectedItashaGroups(state_);
++    if (!groups.isEmpty()) {
++        arguments << QStringLiteral("--group") << groups;
++    }
++    arguments << extra;
++
++    QSettings settings;
++    const QString cwd = settings.value(QLatin1String(kItashaCwdKey)).toString();
++    statusBar()->showMessage(QStringLiteral("Itasha: %1...").arg(action));
++    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
++    QProcess process;
++    if (!cwd.isEmpty()) {
++        process.setWorkingDirectory(cwd);
++    }
++    process.start(command.first(), arguments);
++    const bool finished = process.waitForFinished(kItashaTimeoutMs);
++    QGuiApplication::restoreOverrideCursor();
++    // The engine writes UTF-8 whatever the console code page is (it
++    // reconfigures its own streams), so decode it as UTF-8 - fromLocal8Bit
++    // turns its Korean into mojibake on a cp949 machine.
++    const QString output = QString::fromUtf8(process.readAllStandardOutput())
++        + QString::fromUtf8(process.readAllStandardError());
++    if (!finished || process.exitStatus() != QProcess::NormalExit
++        || process.exitCode() != 0) {
++        QMessageBox box(this);
++        box.setIcon(QMessageBox::Warning);
++        box.setWindowTitle(QStringLiteral("Itasha"));
++        box.setText(QStringLiteral("The Itasha engine reported a problem."));
++        box.setDetailedText(output.isEmpty()
++                                ? QStringLiteral("no output")
++                                : output);
++        box.exec();
++        return false;
++    }
++
++    if (reload && !loadProjectJson(projectPath, &error)) {
++        QMessageBox::critical(this, QStringLiteral("Itasha"), error);
++        return false;
++    }
++    // The engine prints one summary line; show its last line, which is the one
++    // written for a human.
++    const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++    statusBar()->showMessage(
++        lines.isEmpty() ? QStringLiteral("Itasha: %1 done").arg(action)
++                        : lines.last().trimmed(),
++        8000);
++    refreshItashaMenu();
++
++    return true;
++}
++
++} // namespace gui
+diff --git a/src/gui/app/main_window_split.cpp b/src/gui/app/main_window_split.cpp
+new file mode 100644
+index 0000000..e0bb8a1
+--- /dev/null
++++ b/src/gui/app/main_window_split.cpp
+@@ -0,0 +1,251 @@
++// Split Selection at a Line: the panel beside the line, and running the split.
++//
++// Two halves of one job. The canvas owns the line - it is what gets dragged and
++// what knows where every shape sits - and this owns the numbers next to it: the
++// angle, where the line sits, and the clearance. The panel stays open while the
++// line is moved so the tally beneath the fields keeps answering "what would this
++// split give me", and only [Split] commits anything.
++//
++// Splitting is how artwork is carried across a panel seam by hand, now that the
++// engine no longer joins across seams on its own. Put the line on the seam,
++// split, and drag one of the two groups onto the neighbouring panel. A shape the
++// line crosses cannot be cut in half, so it is copied into both groups and each
++// panel draws its own part; the clearance widens that overlap inwards for a seam
++// that really sits a little further in than the line does.
++
++#include "main_window.h"
++#include "main_window_internal.h"
++
++#include "editor_state.h"
++#include "project_canvas.h"
++
++#include <QAction>
++#include <QDialog>
++#include <QDialogButtonBox>
++#include <QDoubleSpinBox>
++#include <QFormLayout>
++#include <QLabel>
++#include <QPushButton>
++#include <QStatusBar>
++#include <QVBoxLayout>
++
++namespace gui {
++
++namespace {
++
++constexpr double kSplitAngleMax = 180.0;
++constexpr double kSplitOffsetLimit = 100000.0;
++constexpr double kSplitMarginLimit = 10000.0;
++
++QString splitGroupName(const EditorState *state, const QString &base,
++                       const QString &suffix) {
++    QSet<QString> taken;
++    if (state != nullptr && state->sceneRoot() != nullptr) {
++        const auto walk = [&](auto &self, const fls::scene::Layer &node) -> void {
++            taken.insert(node.name);
++            if (node.kind() != fls::scene::LayerKind::Group) {
++                return;
++            }
++            for (const auto &child : static_cast<const fls::scene::Group &>(node).children) {
++                self(self, *child);
++            }
++        };
++        walk(walk, *state->sceneRoot());
++    }
++    QString name = QStringLiteral("%1 %2").arg(base, suffix);
++    for (int i = 2; taken.contains(name); ++i) {
++        name = QStringLiteral("%1 %2 %3").arg(base, suffix).arg(i);
++    }
++
++    return name;
++}
++
++} // namespace
++
++void MainWindow::setupSplitPanel() {
++    splitDialog_ = new QDialog(this);
++    splitDialog_->setWindowTitle(QStringLiteral("Split at a Line"));
++    splitDialog_->setWindowFlag(Qt::Tool);
++    splitDialog_->setModal(false);
++
++    auto *layout = new QVBoxLayout(splitDialog_);
++    auto *lead = new QLabel(
++        QStringLiteral("Drag the line on the canvas to move it, or drag an end "
++                       "handle to turn it. A layer the line crosses goes into "
++                       "both groups - it is copied, because a game shape cannot "
++                       "be cut in half."),
++        splitDialog_);
++    lead->setWordWrap(true);
++    layout->addWidget(lead);
++
++    auto *form = new QFormLayout;
++    splitAngleSpin_ = new QDoubleSpinBox(splitDialog_);
++    splitAngleSpin_->setRange(0.0, kSplitAngleMax);
++    splitAngleSpin_->setDecimals(1);
++    splitAngleSpin_->setSuffix(QStringLiteral(" deg"));
++    splitAngleSpin_->setWrapping(true);
++    splitOffsetSpin_ = new QDoubleSpinBox(splitDialog_);
++    splitOffsetSpin_->setRange(-kSplitOffsetLimit, kSplitOffsetLimit);
++    splitOffsetSpin_->setDecimals(1);
++    splitMarginSpin_ = new QDoubleSpinBox(splitDialog_);
++    splitMarginSpin_->setRange(0.0, kSplitMarginLimit);
++    splitMarginSpin_->setDecimals(1);
++    splitMarginSpin_->setToolTip(QStringLiteral(
++        "How far past the line each side may still reach. A layer touching this "
++        "band goes into both groups, so a seam that sits a little further in "
++        "than the line still has no bare strip."));
++    form->addRow(QStringLiteral("Angle"), splitAngleSpin_);
++    form->addRow(QStringLiteral("Line position"), splitOffsetSpin_);
++    form->addRow(QStringLiteral("Clearance"), splitMarginSpin_);
++    layout->addLayout(form);
++
++    splitTallyLabel_ = new QLabel(splitDialog_);
++    splitTallyLabel_->setWordWrap(true);
++    layout->addWidget(splitTallyLabel_);
++
++    auto *buttons = new QDialogButtonBox(splitDialog_);
++    splitApplyButton_ = buttons->addButton(QStringLiteral("Split"),
++                                           QDialogButtonBox::AcceptRole);
++    buttons->addButton(QDialogButtonBox::Close);
++    layout->addWidget(buttons);
++
++    const auto onValue = [this]() {
++        if (canvas_ == nullptr || splitUpdating_) {
++            return;
++        }
++        SplitLine line = canvas_->splitLine();
++        line.angleDeg = splitAngleSpin_->value();
++        line.offset = splitOffsetSpin_->value();
++        line.margin = splitMarginSpin_->value();
++        canvas_->setSplitLine(line);
++        refreshSplitTally();
++    };
++    connect(splitAngleSpin_, &QDoubleSpinBox::valueChanged, this, onValue);
++    connect(splitOffsetSpin_, &QDoubleSpinBox::valueChanged, this, onValue);
++    connect(splitMarginSpin_, &QDoubleSpinBox::valueChanged, this, onValue);
++    connect(buttons, &QDialogButtonBox::accepted, this, &MainWindow::applySplit);
++    connect(buttons, &QDialogButtonBox::rejected, splitDialog_, &QDialog::reject);
++    connect(splitDialog_, &QDialog::finished, this, [this](int) { closeSplitPanel(); });
++
++    if (canvas_ != nullptr) {
++        canvas_->setSplitLineChangedCallback([this]() {
++            splitUpdating_ = true;
++            const SplitLine line = canvas_->splitLine();
++            splitAngleSpin_->setValue(line.angleDeg);
++            splitOffsetSpin_->setValue(line.offset);
++            splitUpdating_ = false;
++            refreshSplitTally();
++        });
++    }
++}
++
++void MainWindow::openSplitPanel() {
++    if (state_ == nullptr || !state_->hasProject() || canvas_ == nullptr) {
++        return;
++    }
++    if (splitDialog_ == nullptr) {
++        setupSplitPanel();
++    }
++    splitEntries_ = state_->normalizeEntrySelection(selectedEntryIds());
++    QSet<QString> targets;
++    for (const QString &entryId : splitEntries_) {
++        for (const QString &leafId : state_->leafLayerIdsForEntry(entryId)) {
++            targets.insert(leafId);
++        }
++    }
++    if (targets.size() < 2) {
++        statusBar()->showMessage(
++            QStringLiteral("Select two or more layers before splitting - "
++                           "selecting a group takes every layer in it."),
++            4000);
++        return;
++    }
++    canvas_->setSplitTargets(targets);
++    const QRectF bounds = canvas_->splitTargetsWorldBounds();
++    SplitLine line;
++    line.angleDeg = 0.0;
++    line.margin = 0.0;
++    const QPointF centre = bounds.isNull() ? QPointF(0.0, 0.0) : bounds.center();
++    line.offset = line.normal().x() * centre.x() + line.normal().y() * centre.y();
++    canvas_->setSplitLine(line);
++    canvas_->setSplitLineActive(true);
++    canvas_->setTool(QStringLiteral("split"));
++
++    splitUpdating_ = true;
++    splitAngleSpin_->setValue(line.angleDeg);
++    splitOffsetSpin_->setValue(line.offset);
++    splitMarginSpin_->setValue(line.margin);
++    splitUpdating_ = false;
++    refreshSplitTally();
++    splitDialog_->show();
++    splitDialog_->raise();
++}
++
++void MainWindow::closeSplitPanel() {
++    if (canvas_ != nullptr) {
++        canvas_->setSplitLineActive(false);
++        canvas_->setSplitTargets({});
++        if (canvas_->tool() == QStringLiteral("split")) {
++            canvas_->setTool(QStringLiteral("select"));
++        }
++    }
++    splitEntries_.clear();
++    if (splitDialog_ != nullptr && splitDialog_->isVisible()) {
++        splitDialog_->hide();
++    }
++}
++
++void MainWindow::refreshSplitTally() {
++    if (splitTallyLabel_ == nullptr || canvas_ == nullptr) {
++        return;
++    }
++    QSet<QString> sideA;
++    QSet<QString> sideB;
++    canvas_->classifySplitTargets(canvas_->splitLine(), &sideA, &sideB);
++    const QSet<QString> both = sideA & sideB;
++    splitTallyLabel_->setText(QStringLiteral(
++        "Side A %1  ·  Side B %2  ·  both %3 (copied)")
++        .arg(sideA.size()).arg(sideB.size()).arg(both.size()));
++    const bool usable = !sideA.isEmpty() && !sideB.isEmpty();
++    if (splitApplyButton_ != nullptr) {
++        splitApplyButton_->setEnabled(usable);
++    }
++    if (!usable) {
++        splitTallyLabel_->setText(splitTallyLabel_->text()
++            + QStringLiteral("\nOne side is empty - move the line into the artwork."));
++    }
++}
++
++void MainWindow::applySplit() {
++    if (state_ == nullptr || canvas_ == nullptr || splitEntries_.isEmpty()) {
++        return;
++    }
++    QSet<QString> sideA;
++    QSet<QString> sideB;
++    canvas_->classifySplitTargets(canvas_->splitLine(), &sideA, &sideB);
++    const QString base = QStringLiteral("Split");
++    const QString nameA = splitGroupName(state_, base, QStringLiteral("A"));
++    const QString nameB = splitGroupName(state_, base, QStringLiteral("B"));
++
++    state_->beginProjectEdit();
++    const SplitOutcome outcome =
++        state_->splitEntriesAtLine(splitEntries_, sideA, sideB, nameA, nameB);
++    if (!outcome.ok) {
++        state_->cancelProjectEdit();
++        statusBar()->showMessage(outcome.error, 5000);
++        return;
++    }
++    state_->commitProjectEdit();
++    state_->noteProjectStructureChanged();
++    closeSplitPanel();
++    statusBar()->showMessage(
++        QStringLiteral("Split into %1 (%2 layers) and %3 (%4 layers)%5")
++            .arg(nameA).arg(outcome.sideA).arg(nameB).arg(outcome.sideB)
++            .arg(outcome.copied > 0
++                     ? QStringLiteral(" - %1 layer(s) the line crossed went into both")
++                           .arg(outcome.copied)
++                     : QString()),
++        8000);
++}
++
++} // namespace gui
+diff --git a/src/gui/app/main_window_ui.cpp b/src/gui/app/main_window_ui.cpp
+index a926dc8..456b2ee 100644
+--- a/src/gui/app/main_window_ui.cpp
++++ b/src/gui/app/main_window_ui.cpp
+@@ -394,6 +394,17 @@ void MainWindow::setupEditMenu() {
+                  QStringLiteral("MenuUngroupFlat.xpm"), &MainWindow::ungroupSelectionFlat);
+     addEditEntry(QStringLiteral("Fold All Groups"), QStringLiteral("fold_all_groups"), QStringLiteral("Fold All Groups"),
+                  QStringLiteral("MenuFoldAllGroups.xpm"), &MainWindow::collapseAllGroups);
++    // Splitting is how artwork gets carried across a panel seam by hand. It
++    // sits with Group/Ungroup because that is what it is: one selection in,
++    // two groups out.
++    QAction *splitAction = addEditEntry(
++        QStringLiteral("Split Selection at a &Line..."), QStringLiteral("split_at_line"),
++        QStringLiteral("Split at a Line"), QStringLiteral("MenuGroup.xpm"),
++        &MainWindow::openSplitPanel);
++    splitAction->setStatusTip(QStringLiteral(
++        "Split the selected layers (or the selected group, two or more layers in "
++        "total) into two groups at one line. A layer the line crosses goes into "
++        "both."));
+     addEditEntry(QStringLiteral("&Delete Selected"), QStringLiteral("delete_selected"), QStringLiteral("Delete Selected"),
+                  QStringLiteral("MenuDelete.xpm"), &MainWindow::deleteSelectedLayers);
+     editMenu->addSeparator();
+diff --git a/src/gui/canvas/canvas_tools.h b/src/gui/canvas/canvas_tools.h
+index d4d7ae9..3168856 100644
+--- a/src/gui/canvas/canvas_tools.h
++++ b/src/gui/canvas/canvas_tools.h
+@@ -147,4 +147,16 @@ public:
+     Qt::CursorShape idleCursorShape(const QPointF &point) const override;
+ };
+ 
++// Splitting a design at a line: this tool only drags the line. The numbers
++// beside it and the split itself live in the window's split panel.
++class SplitTool final : public CanvasTool {
++public:
++    using CanvasTool::CanvasTool;
++    QString name() const override;
++    bool handlePress(QMouseEvent *event) override;
++    bool handleMove(QMouseEvent *event) override;
++    bool handleRelease(QMouseEvent *event) override;
++    Qt::CursorShape idleCursorShape(const QPointF &point) const override;
++};
++
+ } // namespace gui
+diff --git a/src/gui/canvas/car_model_renderer.cpp b/src/gui/canvas/car_model_renderer.cpp
+index a92b922..c4f864a 100644
+--- a/src/gui/canvas/car_model_renderer.cpp
++++ b/src/gui/canvas/car_model_renderer.cpp
+@@ -5,7 +5,11 @@
+ #include "region_fill.h"
+ 
+ #include <QDebug>
++#include <QFile>
+ #include <QHash>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
+ #include <QOpenGLContext>
+ #include <QOpenGLExtraFunctions>
+ #include <QOpenGLFunctions>
+@@ -3273,4 +3277,264 @@ void CarModelRenderer::render(
+     program_.release();
+ }
+ 
++// ─────────────────────── Itasha geometry dump ───────────────────────
++//
++// The livery panels are planar projections: a world point lands on side i at
++//
++//     px = xSign*xScale * world[xAxis]   u = (px - projMin.x) / projSpan.x
++//     py = ySign*yScale * world[yAxis]   v = (py - projMin.y) / projSpan.y
++//     canvas  = (left + (right-left)*u, top + (bottom-top)*v)
++//     section = liverySectionPoint(side, i, canvas)
++//
++// which is closed form and needs no geometry. The inverse does: a point on the
++// panel only names a ray, and the car surface decides where that ray lands. So
++// the dump carries, per side, a raster over the mask box holding the remaining
++// world axis (the depth) of the front-most facing surface. With it a point on
++// panel A resolves to a world point and projects onto panel B, which is what
++// carrying artwork across a panel seam needs.
++
++namespace {
++
++struct ItashaDepthRaster {
++    int width = 0;
++    int height = 0;
++    std::vector<float> depth;      // NaN where no surface is seen
++};
++
++ItashaDepthRaster rasterizeSideDepth(int sideIndex,
++                                     const fls::LiverySide &side,
++                                     const std::vector<fls::CarMesh> &meshes,
++                                     const QVector2D &projectionMinimum,
++                                     const QVector2D &projectionMaximum,
++                                     int depthAxis) {
++    ItashaDepthRaster raster;
++    const float spanX = projectionMaximum.x() - projectionMinimum.x();
++    const float spanY = projectionMaximum.y() - projectionMinimum.y();
++    const float boxWidth = std::abs(side.right - side.left);
++    const float boxHeight = std::abs(side.bottom - side.top);
++    if (spanX <= 0.0f || spanY <= 0.0f || boxWidth < 1.0f || boxHeight < 1.0f) {
++        return raster;
++    }
++    // One cell per mask canvas unit, the grid section coordinates are measured
++    // in, clamped so an odd panel cannot blow the dump up.
++    raster.width = std::clamp(static_cast<int>(std::lround(boxWidth)), 8, 2048);
++    raster.height = std::clamp(static_cast<int>(std::lround(boxHeight)), 8, 2048);
++    const size_t cells = static_cast<size_t>(raster.width) * raster.height;
++    raster.depth.assign(cells, std::numeric_limits<float>::quiet_NaN());
++
++    const int geometrySide = kMaskSlotGeometrySides[sideIndex];
++    // The panel is looked at along the remaining axis; its sign says whether the
++    // visible surface is the one with the larger or the smaller depth.
++    const QVector3D facingVector = kFacing[geometrySide];
++    const float facingDepth = depthAxis == 0
++        ? facingVector.x()
++        : (depthAxis == 1 ? facingVector.y() : facingVector.z());
++    const bool keepGreater = facingDepth >= 0.0f;
++    std::vector<float> best(cells, keepGreater
++                                       ? -std::numeric_limits<float>::max()
++                                       : std::numeric_limits<float>::max());
++
++    const auto rasterPoint = [&](const fls::ModelVec3 &world) {
++        const float px = sideAxisScale(side, true) * axisOf(world, side.xAxis);
++        const float py = sideAxisScale(side, false) * axisOf(world, side.yAxis);
++        return QPointF(
++            (px - projectionMinimum.x()) / spanX * (raster.width - 1),
++            (py - projectionMinimum.y()) / spanY * (raster.height - 1));
++    };
++
++    for (const fls::CarMesh &mesh : meshes) {
++        if ((projectionSidesForMesh(mesh) & (1 << geometrySide)) == 0) {
++            continue;
++        }
++        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
++            QPointF corner[3];
++            float cornerDepth[3] = {0.0f, 0.0f, 0.0f};
++            bool valid = true;
++            bool haveNormals = true;
++            float facing = 0.0f;
++            for (int c = 0; c < 3; ++c) {
++                const quint32 index = mesh.indices[i + c];
++                if (index >= mesh.positions.size()) {
++                    valid = false;
++                    break;
++                }
++                const fls::ModelVec3 world = mirroredCarSpace(
++                    mesh.boneTransform.transformPoint(mesh.positions[index]));
++                corner[c] = rasterPoint(world);
++                cornerDepth[c] = axisOf(world, depthAxis);
++                if (index < mesh.normals.size()) {
++                    const fls::ModelVec3 normal = mirroredCarSpace(
++                        mesh.boneTransform.transformVector(mesh.normals[index]));
++                    facing += normal.x * facingVector.x()
++                        + normal.y * facingVector.y()
++                        + normal.z * facingVector.z();
++                } else {
++                    haveNormals = false;
++                }
++            }
++            if (!valid || (haveNormals && facing <= 0.0f)) {
++                continue;
++            }
++            const double area =
++                (corner[1].x() - corner[0].x()) * (corner[2].y() - corner[0].y())
++                - (corner[2].x() - corner[0].x()) * (corner[1].y() - corner[0].y());
++            if (std::abs(area) < 1e-9) {
++                continue;
++            }
++            int x0 = std::max(0, static_cast<int>(std::floor(
++                std::min({corner[0].x(), corner[1].x(), corner[2].x()}))));
++            int x1 = std::min(raster.width - 1, static_cast<int>(std::ceil(
++                std::max({corner[0].x(), corner[1].x(), corner[2].x()}))));
++            int y0 = std::max(0, static_cast<int>(std::floor(
++                std::min({corner[0].y(), corner[1].y(), corner[2].y()}))));
++            int y1 = std::min(raster.height - 1, static_cast<int>(std::ceil(
++                std::max({corner[0].y(), corner[1].y(), corner[2].y()}))));
++            for (int y = y0; y <= y1; ++y) {
++                for (int x = x0; x <= x1; ++x) {
++                    const double sx = x;
++                    const double sy = y;
++                    const double w0 =
++                        ((corner[1].x() - sx) * (corner[2].y() - sy)
++                         - (corner[2].x() - sx) * (corner[1].y() - sy)) / area;
++                    const double w1 =
++                        ((corner[2].x() - sx) * (corner[0].y() - sy)
++                         - (corner[0].x() - sx) * (corner[2].y() - sy)) / area;
++                    const double w2 = 1.0 - w0 - w1;
++                    if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) {
++                        continue;
++                    }
++                    const float value = static_cast<float>(
++                        w0 * cornerDepth[0] + w1 * cornerDepth[1]
++                        + w2 * cornerDepth[2]);
++                    const size_t cell = static_cast<size_t>(y) * raster.width + x;
++                    if (keepGreater ? value > best[cell] : value < best[cell]) {
++                        best[cell] = value;
++                        raster.depth[cell] = value;
++                    }
++                }
++            }
++        }
++    }
++    return raster;
++}
++
++} // namespace
++
++bool dumpItashaGeometry(const fls::CarModel &model,
++                        const fls::LiveryMaskSet &masks,
++                        const QString &path,
++                        QString *error) {
++    const auto fail = [error](const QString &message) {
++        if (error != nullptr) {
++            *error = message;
++        }
++        return false;
++    };
++    if (!masks.valid()) {
++        return fail(QStringLiteral("livery masks are not loaded"));
++    }
++    const std::vector<fls::CarMesh> &meshes = model.liveryProjectionMeshes.empty()
++        ? model.meshes
++        : model.liveryProjectionMeshes;
++    if (meshes.empty()) {
++        return fail(QStringLiteral("car model has no meshes"));
++    }
++    const LiveryProjectionData projection = buildLiveryProjectionData(model, masks);
++
++    QJsonArray sideArray;
++    std::vector<ItashaDepthRaster> rasters(fls::kLiverySideCount);
++    for (int sideIndex = 0; sideIndex < fls::kLiverySideCount; ++sideIndex) {
++        const fls::LiverySide &side = masks.sides[sideIndex];
++        QJsonObject meta;
++        meta.insert(QStringLiteral("slot"), sideIndex);
++        meta.insert(QStringLiteral("name"), side.maskName);
++        meta.insert(QStringLiteral("valid"), side.valid);
++        if (!side.valid) {
++            sideArray.append(meta);
++            continue;
++        }
++        const int depthAxis = 3 - side.xAxis - side.yAxis;
++        meta.insert(QStringLiteral("left"), side.left);
++        meta.insert(QStringLiteral("right"), side.right);
++        meta.insert(QStringLiteral("top"), side.top);
++        meta.insert(QStringLiteral("bottom"), side.bottom);
++        meta.insert(QStringLiteral("x_origin"), side.xOrigin);
++        meta.insert(QStringLiteral("y_origin"), side.yOrigin);
++        meta.insert(QStringLiteral("x_axis"), side.xAxis);
++        meta.insert(QStringLiteral("y_axis"), side.yAxis);
++        meta.insert(QStringLiteral("depth_axis"), depthAxis);
++        meta.insert(QStringLiteral("x_axis_scale"), sideAxisScale(side, true));
++        meta.insert(QStringLiteral("y_axis_scale"), sideAxisScale(side, false));
++        meta.insert(QStringLiteral("rotation_deg"), side.rotationDeg);
++        meta.insert(QStringLiteral("transpose"), transposedLiverySide(sideIndex));
++        meta.insert(QStringLiteral("flip_x"),
++                    sideIndex == 4 || sideIndex == 6 || sideIndex == 7
++                        || sideIndex == 10);
++        meta.insert(QStringLiteral("flip_y"),
++                    sideIndex == 4 || sideIndex == 7 || sideIndex == 10);
++        QJsonArray projectionMin;
++        projectionMin.append(projection.minimum[sideIndex].x());
++        projectionMin.append(projection.minimum[sideIndex].y());
++        QJsonArray projectionMax;
++        projectionMax.append(projection.maximum[sideIndex].x());
++        projectionMax.append(projection.maximum[sideIndex].y());
++        meta.insert(QStringLiteral("projection_min"), projectionMin);
++        meta.insert(QStringLiteral("projection_max"), projectionMax);
++        if (depthAxis >= 0 && depthAxis <= 2 && side.xAxis != side.yAxis) {
++            rasters[sideIndex] = rasterizeSideDepth(
++                sideIndex, side, meshes, projection.minimum[sideIndex],
++                projection.maximum[sideIndex], depthAxis);
++        }
++        meta.insert(QStringLiteral("raster_width"), rasters[sideIndex].width);
++        meta.insert(QStringLiteral("raster_height"), rasters[sideIndex].height);
++        sideArray.append(meta);
++    }
++
++    QJsonObject root;
++    root.insert(QStringLiteral("format"), QStringLiteral("fls_itasha_geometry"));
++    root.insert(QStringLiteral("version"), 1);
++    root.insert(QStringLiteral("media"), model.mediaName);
++    root.insert(QStringLiteral("source"), model.sourcePath);
++    root.insert(QStringLiteral("canvas_half_width"), fls::kLiveryCanvasHalfWidth);
++    root.insert(QStringLiteral("canvas_half_height"), fls::kLiveryCanvasHalfHeight);
++    root.insert(QStringLiteral("sides"), sideArray);
++    const QByteArray header = QJsonDocument(root).toJson(QJsonDocument::Compact);
++
++    QFile file(path);
++    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
++        return fail(QStringLiteral("could not write %1").arg(path));
++    }
++    const auto writeU32 = [&file](quint32 value) {
++        const char bytes[4] = {static_cast<char>(value & 0xff),
++                               static_cast<char>((value >> 8) & 0xff),
++                               static_cast<char>((value >> 16) & 0xff),
++                               static_cast<char>((value >> 24) & 0xff)};
++        file.write(bytes, 4);
++    };
++    file.write("FSITG1\0\0", 8);
++    writeU32(static_cast<quint32>(header.size()));
++    file.write(header);
++    for (const ItashaDepthRaster &raster : rasters) {
++        writeU32(static_cast<quint32>(raster.width));
++        writeU32(static_cast<quint32>(raster.height));
++        if (raster.depth.empty()) {
++            writeU32(0);
++            continue;
++        }
++        const QByteArray plain(
++            reinterpret_cast<const char *>(raster.depth.data()),
++            static_cast<qsizetype>(raster.depth.size() * sizeof(float)));
++        // qCompress prefixes a big-endian uncompressed size before the zlib
++        // stream; readers skip those four bytes.
++        const QByteArray packed = qCompress(plain, 6);
++        writeU32(static_cast<quint32>(packed.size()));
++        file.write(packed);
++    }
++    if (file.error() != QFileDevice::NoError) {
++        return fail(file.errorString());
++    }
++    file.close();
++    return true;
++}
++
+ } // namespace gui
+diff --git a/src/gui/canvas/car_model_renderer.h b/src/gui/canvas/car_model_renderer.h
+index 9f61c80..aa21cb3 100644
+--- a/src/gui/canvas/car_model_renderer.h
++++ b/src/gui/canvas/car_model_renderer.h
+@@ -28,6 +28,16 @@ CarUnwrapOverlaySet buildCarUnwrapOverlaySet(
+     const QSet<int> &selectablePartTypes,
+     int lodIndex = 0);
+ 
++// Writes the car's livery geometry for the Itasha tools: per livery side, the
++// scalars that map a world point onto that side's section coordinates, plus a
++// depth raster over the side's mask box holding the car surface seen from that
++// side. Together they invert the projection, so artwork running off one panel
++// can be carried through world space onto the neighbouring panel.
++bool dumpItashaGeometry(const fls::CarModel &model,
++                        const fls::LiveryMaskSet &masks,
++                        const QString &path,
++                        QString *error = nullptr);
++
+ class CarModelRenderer {
+ public:
+     CarModelRenderer();
+diff --git a/src/gui/canvas/project_canvas.cpp b/src/gui/canvas/project_canvas.cpp
+index ce4f100..088251c 100644
+--- a/src/gui/canvas/project_canvas.cpp
++++ b/src/gui/canvas/project_canvas.cpp
+@@ -99,6 +99,7 @@ ProjectCanvas::ProjectCanvas(QWidget *parent)
+     tools_.push_back(std::make_unique<PenTool>(*this));
+     tools_.push_back(std::make_unique<LiningTool>(*this));
+     tools_.push_back(std::make_unique<BucketTool>(*this));
++    tools_.push_back(std::make_unique<SplitTool>(*this));
+     activeTool_ = tools_.front().get();
+ }
+ 
+diff --git a/src/gui/canvas/project_canvas.h b/src/gui/canvas/project_canvas.h
+index 1e8179b..5bba20c 100644
+--- a/src/gui/canvas/project_canvas.h
++++ b/src/gui/canvas/project_canvas.h
+@@ -15,6 +15,7 @@
+ #include "region_extract.h"
+ #include "region_fill.h"
+ #include "shape_geometry_store.h"
++#include "split_line.h"
+ 
+ #include <QtCore>
+ #include <QtGui>
+@@ -106,6 +107,23 @@ public:
+     void setLiningWidth(double width);
+     double liningWidth() const;
+ 
++    // Splitting a design at a line. The canvas owns the line because it is the
++    // thing that can be dragged and the thing that knows where every shape sits
++    // in world units; the window owns the numbers next to it.
++    void setSplitLineActive(bool active);
++    bool splitLineActive() const;
++    void setSplitLine(const SplitLine &line);
++    SplitLine splitLine() const;
++    void setSplitLineChangedCallback(std::function<void()> callback);
++    void setSplitTargets(const QSet<QString> &layerIds);
++    // Which side of the line each target layer reaches, clearance included. A
++    // layer the band touches lands in both sets - it is copied when the split
++    // runs, because a game shape cannot be cut in half.
++    void classifySplitTargets(const SplitLine &line,
++                              QSet<QString> *sideA,
++                              QSet<QString> *sideB) const;
++    QRectF splitTargetsWorldBounds() const;
++
+     void setCarUnwrapOverlay(const CarUnwrapOverlay &overlay);
+     void setCarUnwrapVisible(bool visible);
+     bool carUnwrapVisible() const;
+@@ -164,6 +182,7 @@ private:
+     friend class PenTool;
+     friend class LiningTool;
+     friend class BucketTool;
++    friend class SplitTool;
+ 
+     static constexpr double kPenCloseRadius = 8.0;
+     static constexpr double kPenEditRadius = 9.0;
+@@ -441,6 +460,12 @@ private:
+     QCursor pipetteCursor() const;
+     QCursor rotateCursor() const;
+     QCursor rotateCursorForPoint(const QPointF &point, const SelectionBox &box) const;
++    QPointF splitAnchorPoint() const;
++    bool beginSplitDrag(const QPointF &screenPoint);
++    bool updateSplitDrag(const QPointF &screenPoint);
++    void endSplitDrag();
++    bool splitLineNearScreenPoint(const QPointF &screenPoint) const;
++    void drawSplitLine(QPainter &painter);
+     void drawVisibilityBorders(QPainter &painter);
+     void drawRulersAndGuidelines(QPainter &painter);
+     void drawOverlay(QPainter &painter);
+@@ -557,6 +582,7 @@ private:
+     std::function<void(const QVector<PenPoint> &, double, const std::optional<QColor> &)> liningFillRequestedCallback_;
+     std::function<void()> liningFillCancelCallback_;
+     std::function<void(double)> liningWidthChangedCallback_;
++    std::function<void()> splitLineChangedCallback_;
+     PathInteraction pen_;
+     QString contourLeewayGroupId_;
+     PathInteraction lining_;
+@@ -583,6 +609,13 @@ private:
+     mutable QHash<QString, QImage> sectionCanvasCache_;
+     std::optional<FlipCycleState> flipCycle_;
+     CarUnwrapOverlay carUnwrapOverlay_;
++    SplitLine splitLine_;
++    QSet<QString> splitTargets_;
++    bool splitLineActive_ = false;
++    int splitDragMode_ = 0;          // 0 idle, 1 sliding, 2 turning
++    double splitDragGrab_ = 0.0;
++    double splitDragSign_ = 1.0;
++    QPointF splitAnchorWorld_;
+     bool carUnwrapVisible_ = false;
+     bool sectionWireframeVisible_ = false;
+     RegionOverlayState region_;
+diff --git a/src/gui/canvas/project_canvas_paint.cpp b/src/gui/canvas/project_canvas_paint.cpp
+index c186b9c..f5d5c63 100644
+--- a/src/gui/canvas/project_canvas_paint.cpp
++++ b/src/gui/canvas/project_canvas_paint.cpp
+@@ -667,6 +667,8 @@ void ProjectCanvas::drawOverlay(QPainter &painter) {
+         }
+     }
+ 
++    drawSplitLine(painter);
++
+     if (drag_.mode == DragMode::Marquee && drag_.marqueeRect.isValid()) {
+         QColor marqueeFill = kSelectionAccentColor;
+         marqueeFill.setAlpha(kMarqueeFillAlpha);
+diff --git a/src/gui/canvas/project_canvas_split.cpp b/src/gui/canvas/project_canvas_split.cpp
+new file mode 100644
+index 0000000..7c76c28
+--- /dev/null
++++ b/src/gui/canvas/project_canvas_split.cpp
+@@ -0,0 +1,320 @@
++// Splitting a design at a line: the line itself, dragging it, and deciding
++// which side each selected shape reaches.
++//
++// The canvas owns this because it is the only place that knows where a shape
++// actually sits in section units - a shape's world quad is its local rect
++// carried through every group frame above it. The window owns the numbers
++// beside the line and runs the split on EditorState.
++
++#include "project_canvas.h"
++#include "project_canvas_internal.h"
++
++#include "canvas_tools.h"
++#include "editor_state.h"
++
++#include <QMouseEvent>
++#include <QPainter>
++
++#include <algorithm>
++#include <cmath>
++
++namespace gui {
++
++namespace {
++
++constexpr double kSplitHandleScreenGap = 130.0;
++constexpr double kSplitLabelScreenGap = 42.0;
++constexpr double kSplitGrabScreenRadius = 12.0;
++constexpr double kSplitHandleScreenRadius = 6.0;
++constexpr double kSplitScreenReach = 8000.0;
++
++const QColor kSplitLineColor(255, 47, 146);
++const QColor kSplitBandColor(255, 138, 198);
++
++} // namespace
++
++void ProjectCanvas::setSplitLineActive(bool active) {
++    if (splitLineActive_ == active) {
++        return;
++    }
++    splitLineActive_ = active;
++    splitDragMode_ = 0;
++    update();
++}
++
++bool ProjectCanvas::splitLineActive() const {
++    return splitLineActive_;
++}
++
++void ProjectCanvas::setSplitLine(const SplitLine &line) {
++    splitLine_ = line;
++    splitLine_.margin = std::max(0.0, splitLine_.margin);
++    update();
++}
++
++SplitLine ProjectCanvas::splitLine() const {
++    return splitLine_;
++}
++
++void ProjectCanvas::setSplitLineChangedCallback(std::function<void()> callback) {
++    splitLineChangedCallback_ = std::move(callback);
++}
++
++void ProjectCanvas::setSplitTargets(const QSet<QString> &layerIds) {
++    splitTargets_ = layerIds;
++    update();
++}
++
++QRectF ProjectCanvas::splitTargetsWorldBounds() const {
++    QRectF bounds;
++    forEachSceneShape([&](const fls::scene::Shape &shape, const QTransform &world, int) {
++        if (!splitTargets_.contains(shape.id)) {
++            return true;
++        }
++        const QRectF local = sceneLocalRect(shape, geometry_);
++        QPolygonF quad;
++        quad << world.map(local.topLeft()) << world.map(local.topRight())
++             << world.map(local.bottomRight()) << world.map(local.bottomLeft());
++        bounds = bounds.isNull() ? quad.boundingRect()
++                                 : bounds.united(quad.boundingRect());
++        return true;
++    }, false);
++
++    return bounds;
++}
++
++void ProjectCanvas::classifySplitTargets(const SplitLine &line,
++                                         QSet<QString> *sideA,
++                                         QSet<QString> *sideB) const {
++    if (sideA != nullptr) {
++        sideA->clear();
++    }
++    if (sideB != nullptr) {
++        sideB->clear();
++    }
++    const double margin = std::max(0.0, line.margin);
++    forEachSceneShape([&](const fls::scene::Shape &shape, const QTransform &world, int) {
++        if (!splitTargets_.contains(shape.id)) {
++            return true;
++        }
++        const QRectF local = sceneLocalRect(shape, geometry_);
++        const QPointF corners[4] = {
++            world.map(local.topLeft()), world.map(local.topRight()),
++            world.map(local.bottomRight()), world.map(local.bottomLeft()),
++        };
++        double lowest = std::numeric_limits<double>::max();
++        double highest = std::numeric_limits<double>::lowest();
++        for (const QPointF &corner : corners) {
++            const double d = line.signedDistance(corner);
++            lowest = std::min(lowest, d);
++            highest = std::max(highest, d);
++        }
++        // Reaching into a side at all puts the shape there. A shape the band
++        // touches reaches into both, and the split copies it.
++        if (sideA != nullptr && lowest <= margin) {
++            sideA->insert(shape.id);
++        }
++        if (sideB != nullptr && highest >= -margin) {
++            sideB->insert(shape.id);
++        }
++        return true;
++    }, false);
++}
++
++// ────────────────────────── dragging ──────────────────────────
++
++QPointF ProjectCanvas::splitAnchorPoint() const {
++    const QRectF bounds = splitTargetsWorldBounds();
++    const QPointF nearby = bounds.isNull() ? QPointF(0.0, 0.0) : bounds.center();
++
++    return splitLine_.anchor(nearby);
++}
++
++bool ProjectCanvas::beginSplitDrag(const QPointF &screenPoint) {
++    if (!splitLineActive_) {
++        return false;
++    }
++    const QPointF world = screenToWorld(screenPoint);
++    const QPointF anchorScreen = worldToScreen(splitAnchorPoint());
++    const QPointF direction = splitLine_.direction();
++    const QPointF alongScreen =
++        worldToScreen(splitAnchorPoint() + direction) - anchorScreen;
++    const double alongLength = std::hypot(alongScreen.x(), alongScreen.y());
++    if (alongLength > 1e-9) {
++        const QPointF unit = alongScreen / alongLength;
++        for (const double sign : {-1.0, 1.0}) {
++            const QPointF handle = anchorScreen + unit * (sign * kSplitHandleScreenGap);
++            if (QLineF(handle, screenPoint).length()
++                <= kSplitGrabScreenRadius + kSplitHandleScreenRadius) {
++                splitDragMode_ = 2;
++                splitDragSign_ = sign;
++                splitAnchorWorld_ = splitAnchorPoint();
++                return true;
++            }
++        }
++    }
++    // Distance to the line, measured on screen so the grab feels the same at
++    // every zoom.
++    const QPointF onLine = splitLine_.anchor(world);
++    if (QLineF(worldToScreen(onLine), screenPoint).length() <= kSplitGrabScreenRadius) {
++        splitDragMode_ = 1;
++        splitDragGrab_ = splitLine_.signedDistance(world);
++        return true;
++    }
++
++    return false;
++}
++
++bool ProjectCanvas::updateSplitDrag(const QPointF &screenPoint) {
++    if (splitDragMode_ == 0) {
++        return false;
++    }
++    const QPointF world = screenToWorld(screenPoint);
++    if (splitDragMode_ == 1) {
++        const QPointF n = splitLine_.normal();
++        splitLine_.offset = n.x() * world.x() + n.y() * world.y() - splitDragGrab_;
++    } else {
++        // Turning pivots on the anchor, so the line keeps passing through the
++        // place it was put.
++        const QPointF v = (world - splitAnchorWorld_) * splitDragSign_;
++        if (std::hypot(v.x(), v.y()) < 1e-9) {
++            return true;
++        }
++        double degrees = qRadiansToDegrees(std::atan2(v.y(), v.x()));
++        degrees = std::fmod(std::fmod(degrees, 180.0) + 180.0, 180.0);
++        splitLine_.angleDeg = degrees;
++        const QPointF n = splitLine_.normal();
++        splitLine_.offset =
++            n.x() * splitAnchorWorld_.x() + n.y() * splitAnchorWorld_.y();
++    }
++    if (splitLineChangedCallback_) {
++        splitLineChangedCallback_();
++    }
++    update();
++
++    return true;
++}
++
++void ProjectCanvas::endSplitDrag() {
++    splitDragMode_ = 0;
++}
++
++bool ProjectCanvas::splitLineNearScreenPoint(const QPointF &screenPoint) const {
++    if (!splitLineActive_) {
++        return false;
++    }
++    const QPointF world = screenToWorld(screenPoint);
++    const QPointF onLine = splitLine_.anchor(world);
++    if (QLineF(worldToScreen(onLine), screenPoint).length() <= kSplitGrabScreenRadius) {
++        return true;
++    }
++    const QPointF anchorScreen = worldToScreen(splitAnchorPoint());
++    const QPointF alongScreen =
++        worldToScreen(splitAnchorPoint() + splitLine_.direction()) - anchorScreen;
++    const double alongLength = std::hypot(alongScreen.x(), alongScreen.y());
++    if (alongLength <= 1e-9) {
++        return false;
++    }
++    const QPointF unit = alongScreen / alongLength;
++    for (const double sign : {-1.0, 1.0}) {
++        const QPointF handle = anchorScreen + unit * (sign * kSplitHandleScreenGap);
++        if (QLineF(handle, screenPoint).length()
++            <= kSplitGrabScreenRadius + kSplitHandleScreenRadius) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
++// ────────────────────────── painting ──────────────────────────
++
++void ProjectCanvas::drawSplitLine(QPainter &painter) {
++    if (!splitLineActive_) {
++        return;
++    }
++    const QPointF anchorScreen = worldToScreen(splitAnchorPoint());
++    const QPointF along = worldToScreen(splitAnchorPoint() + splitLine_.direction())
++        - anchorScreen;
++    const QPointF across = worldToScreen(splitAnchorPoint() + splitLine_.normal())
++        - anchorScreen;
++    const double alongLength = std::hypot(along.x(), along.y());
++    const double acrossLength = std::hypot(across.x(), across.y());
++    if (alongLength <= 1e-9 || acrossLength <= 1e-9) {
++        return;
++    }
++    const QPointF alongUnit = along / alongLength;
++    const QPointF acrossUnit = across / acrossLength;
++    const QPointF reach = alongUnit * kSplitScreenReach;
++    const double bandScreen = splitLine_.margin * acrossLength;
++
++    painter.save();
++    if (bandScreen > 0.5) {
++        QPen bandPen(kSplitBandColor, 1.0, Qt::DashLine);
++        painter.setPen(bandPen);
++        for (const double sign : {-1.0, 1.0}) {
++            const QPointF centre = anchorScreen + acrossUnit * (sign * bandScreen);
++            painter.drawLine(centre - reach, centre + reach);
++        }
++    }
++    painter.setPen(QPen(kSplitLineColor, 2.0));
++    painter.drawLine(anchorScreen - reach, anchorScreen + reach);
++
++    painter.setBrush(Qt::white);
++    for (const double sign : {-1.0, 1.0}) {
++        const QPointF handle = anchorScreen + alongUnit * (sign * kSplitHandleScreenGap);
++        painter.drawEllipse(handle, kSplitHandleScreenRadius, kSplitHandleScreenRadius);
++    }
++    // A and B, so which group is which never depends on reading the angle.
++    QFont labelFont = painter.font();
++    labelFont.setBold(true);
++    labelFont.setPointSizeF(std::max(10.0, labelFont.pointSizeF() * 1.4));
++    painter.setFont(labelFont);
++    painter.setPen(kSplitLineColor);
++    painter.setBrush(Qt::NoBrush);
++    const QFontMetricsF metrics(labelFont);
++    const QString labels[2] = {QStringLiteral("A"), QStringLiteral("B")};
++    const double signs[2] = {-1.0, 1.0};
++    for (int i = 0; i < 2; ++i) {
++        const QPointF at = anchorScreen
++            + acrossUnit * (signs[i] * (kSplitLabelScreenGap + bandScreen));
++        const QRectF box(at.x() - 12.0, at.y() - metrics.height() * 0.5,
++                         24.0, metrics.height());
++        painter.drawText(box, Qt::AlignCenter, labels[i]);
++    }
++    painter.restore();
++}
++
++// ────────────────────────── the tool ──────────────────────────
++
++QString SplitTool::name() const {
++    return QStringLiteral("split");
++}
++
++bool SplitTool::handlePress(QMouseEvent *event) {
++    if (event->button() != Qt::LeftButton) {
++        return false;
++    }
++    return canvas_.beginSplitDrag(event->position());
++}
++
++bool SplitTool::handleMove(QMouseEvent *event) {
++    return canvas_.updateSplitDrag(event->position());
++}
++
++bool SplitTool::handleRelease(QMouseEvent *event) {
++    Q_UNUSED(event);
++    if (canvas_.splitDragMode_ == 0) {
++        return false;
++    }
++    canvas_.endSplitDrag();
++
++    return true;
++}
++
++Qt::CursorShape SplitTool::idleCursorShape(const QPointF &point) const {
++    return canvas_.splitLineNearScreenPoint(point) ? Qt::SizeAllCursor
++                                                   : Qt::ArrowCursor;
++}
++
++} // namespace gui
+diff --git a/src/gui/canvas/split_line.h b/src/gui/canvas/split_line.h
+new file mode 100644
+index 0000000..6eb4940
+--- /dev/null
++++ b/src/gui/canvas/split_line.h
+@@ -0,0 +1,44 @@
++#pragma once
++
++// The line a design is split along, in section units.
++//
++// Splitting is how artwork is carried across a panel seam by hand: put the line
++// where the seam is, split, and move one of the two groups onto the neighbouring
++// panel. Game shapes cannot be cut in half, so a shape the line crosses is
++// copied into both groups - the clearance widens that overlap inwards, so a seam
++// that really sits a little further in than the line still has no bare strip.
++
++#include <QPointF>
++#include <QtMath>
++
++namespace gui {
++
++struct SplitLine {
++    double angleDeg = 0.0;   // counter-clockwise from the section's +x axis
++    double offset = 0.0;     // where the line sits along its own normal
++    double margin = 0.0;     // clearance: how far past the line each side reaches
++
++    QPointF normal() const {
++        const double radians = qDegreesToRadians(angleDeg);
++        return QPointF(-std::sin(radians), std::cos(radians));
++    }
++
++    QPointF direction() const {
++        const QPointF n = normal();
++        return QPointF(-n.y(), n.x());
++    }
++
++    QPointF anchor(const QPointF &near) const {
++        const QPointF n = normal();
++        const double d = signedDistance(near);
++        return QPointF(near.x() - n.x() * d, near.y() - n.y() * d);
++    }
++
++    // Negative is side A, positive is side B.
++    double signedDistance(const QPointF &point) const {
++        const QPointF n = normal();
++        return n.x() * point.x() + n.y() * point.y() - offset;
++    }
++};
++
++} // namespace gui
+diff --git a/src/gui/state/editor_state.h b/src/gui/state/editor_state.h
+index ee5e5da..db97491 100644
+--- a/src/gui/state/editor_state.h
++++ b/src/gui/state/editor_state.h
+@@ -50,6 +50,15 @@ struct ProjectEditCommand {
+     ProjectEditRefresh refresh = ProjectEditRefresh::Structure;
+ };
+ 
++// What a split at a line did, or why it did nothing.
++struct SplitOutcome {
++    bool ok = false;
++    int sideA = 0;
++    int sideB = 0;
++    int copied = 0;      // shapes the line crossed, which went into both sides
++    QString error;
++};
++
+ struct ProjectClipboard {
+     ProjectClipboard() = default;
+     ProjectClipboard(const ProjectClipboard &other);
+@@ -155,6 +164,14 @@ public:
+     bool insertLayerBelowEntry(std::unique_ptr<fls::scene::Layer> &layer,
+                                const QString &entryId);
+     void groupEntries(const QVector<QString> &entryIds);
++    // Splits the selection into two groups at a line. sideA/sideB name the
++    // leaf layers each side reaches (the canvas measures that); a layer in both
++    // is copied, so the seam has no gap. See editor_state_split.cpp.
++    SplitOutcome splitEntriesAtLine(const QVector<QString> &entryIds,
++                                    const QSet<QString> &sideA,
++                                    const QSet<QString> &sideB,
++                                    const QString &nameA,
++                                    const QString &nameB);
+     void ungroupEntries(const QVector<QString> &entryIds, bool flatten);
+     bool reorderEntries(const QString &parentGroupId, const QVector<QString> &entryIds, int insertRow);
+     bool reorderGuideLayers(const QVector<QString> &guideIds, int insertRow);
+diff --git a/src/gui/state/editor_state_split.cpp b/src/gui/state/editor_state_split.cpp
+new file mode 100644
+index 0000000..8a77138
+--- /dev/null
++++ b/src/gui/state/editor_state_split.cpp
+@@ -0,0 +1,195 @@
++// Splitting a selection into two groups at a line.
++//
++// This is how artwork is carried across a panel seam by hand: put the line on
++// the seam, split, and drag one of the two groups onto the neighbouring panel.
++//
++// A game shape cannot be cut in half, so a shape the line crosses is copied -
++// the original stays in side A, the copy goes into side B. Both halves then
++// hold the whole shape, and each panel draws only its own part, so nothing
++// opens up at the seam. The clearance (SplitLine::margin) widens that overlap
++// inwards, which is what covers a seam that really sits a little further in
++// than the line does.
++//
++// The selection is flattened: whatever nesting it had is dissolved into the two
++// new groups, with every group frame above a leaf folded into the leaf. Two
++// groups is the answer the split gives, and keeping a half-preserved tree
++// underneath them would make the result depend on how the design happened to be
++// grouped before.
++//
++// A group is one contiguous run of siblings, so the two sides come out stacked
++// rather than interleaved: every layer of side A now draws under every layer of
++// side B. That is what splitting into groups means and there is no tree shape
++// that avoids it. It costs nothing in the case this exists for - the two halves
++// go onto two panels and never overlap - but it does show if both halves are
++// left on one panel and their edges cross.
++
++#include "editor_state.h"
++
++#include "matrix_math.h"
++
++#include <algorithm>
++
++namespace gui {
++namespace {
++
++void flattenInto(std::unique_ptr<fls::scene::Layer> node,
++                 const fls::Matrix3 &ancestorFrame,
++                 std::vector<std::unique_ptr<fls::scene::Layer>> &out) {
++    if (!node) {
++        return;
++    }
++    const fls::Matrix3 frame =
++        fls::detail::multiply(ancestorFrame, node->transform.matrix());
++    if (node->kind() != fls::scene::LayerKind::Group) {
++        node->transform = fls::decomposeTransform2D(frame);
++        out.push_back(std::move(node));
++        return;
++    }
++    auto *group = static_cast<fls::scene::Group *>(node.get());
++    while (!group->children.empty()) {
++        flattenInto(group->takeAt(0), frame, out);
++    }
++}
++
++// Fresh ids, minted here rather than through uniqueLayerId(): the tree is in
++// pieces while the split runs, so the index cache cannot answer "is this taken"
++// and asking it twice would hand out the same id twice.
++class IdMinter {
++public:
++    explicit IdMinter(QSet<QString> taken)
++        : taken_(std::move(taken)) {
++    }
++
++    QString next(const QString &prefix) {
++        QString id;
++        do {
++            id = QStringLiteral("%1_%2").arg(prefix).arg(++counter_);
++        } while (taken_.contains(id));
++        taken_.insert(id);
++
++        return id;
++    }
++
++private:
++    QSet<QString> taken_;
++    int counter_ = 0;
++};
++
++} // namespace
++
++SplitOutcome EditorState::splitEntriesAtLine(const QVector<QString> &entryIds,
++                                             const QSet<QString> &sideA,
++                                             const QSet<QString> &sideB,
++                                             const QString &nameA,
++                                             const QString &nameB) {
++    SplitOutcome outcome;
++    if (!hasProject_) {
++        outcome.error = QStringLiteral("No project is open.");
++        return outcome;
++    }
++    QVector<QString> entries = normalizeEntrySelection(entryIds);
++    if (entries.isEmpty()) {
++        outcome.error = QStringLiteral("Nothing is selected.");
++        return outcome;
++    }
++    const ProjectIndexCache &cache = projectIndexCache();
++    const QString parentId = cache.parentByChild.value(entries.front());
++    for (const QString &entryId : entries) {
++        if (cache.parentByChild.value(entryId) != parentId) {
++            outcome.error = QStringLiteral(
++                "Select layers that sit side by side - a split makes two groups "
++                "in one place, so it cannot reach across two of them.");
++            return outcome;
++        }
++        if (entryHasLockedLayer(entryId)) {
++            outcome.error = QStringLiteral("The selection contains locked layers.");
++            return outcome;
++        }
++        if (entryIsGuide(entryId)) {
++            outcome.error = QStringLiteral("Guide layers cannot be split.");
++            return outcome;
++        }
++    }
++    fls::scene::Group *parent = groupForId(parentId);
++    if (parent == nullptr) {
++        outcome.error = QStringLiteral("The selection has no parent group.");
++        return outcome;
++    }
++    std::sort(entries.begin(), entries.end(), [&](const QString &a, const QString &b) {
++        return cache.orderByChild.value(a, 0) < cache.orderByChild.value(b, 0);
++    });
++
++    // Count first, mutate second: a split that would leave one side empty is
++    // not a split, and finding that out halfway through would leave the project
++    // holding a group with nothing in it.
++    QVector<QString> leafIds;
++    for (const QString &entryId : entries) {
++        leafIds += leafLayerIdsForEntry(entryId);
++    }
++    if (leafIds.size() < 2) {
++        outcome.error = QStringLiteral(
++            "Select two or more layers - a split needs something to put on each "
++            "side.");
++        return outcome;
++    }
++    int countA = 0;
++    int countB = 0;
++    for (const QString &id : leafIds) {
++        const bool inA = sideA.contains(id);
++        const bool inB = sideB.contains(id);
++        countA += inA || !inB ? 1 : 0;
++        countB += inB ? 1 : 0;
++    }
++    if (countA == 0 || countB == 0) {
++        outcome.error = QStringLiteral(
++            "One side of the line is empty - move the line into the artwork.");
++        return outcome;
++    }
++
++    const int insertAt = cache.orderByChild.value(entries.front(), 0);
++    std::vector<std::unique_ptr<fls::scene::Layer>> leaves;
++    for (int i = entries.size() - 1; i >= 0; --i) {
++        std::vector<std::unique_ptr<fls::scene::Layer>> taken;
++        flattenInto(takeEntry(entries[i]), fls::Matrix3{}, taken);
++        leaves.insert(leaves.begin(), std::make_move_iterator(taken.begin()),
++                      std::make_move_iterator(taken.end()));
++    }
++
++    IdMinter minter(QSet<QString>(cache.nodes.keyBegin(), cache.nodes.keyEnd()));
++    auto groupA = std::make_unique<fls::scene::Group>();
++    groupA->id = minter.next(QStringLiteral("group"));
++    groupA->name = nameA;
++    auto groupB = std::make_unique<fls::scene::Group>();
++    groupB->id = minter.next(QStringLiteral("group"));
++    groupB->name = nameB;
++    QSet<QString> selected;
++    for (auto &leaf : leaves) {
++        const QString id = leaf->id;
++        const bool inB = sideB.contains(id);
++        const bool inA = sideA.contains(id) || !inB;
++        if (inA && inB) {
++            std::unique_ptr<fls::scene::Layer> copy = leaf->clone();
++            copy->id = minter.next(QStringLiteral("layer"));
++            selected.insert(copy->id);
++            groupB->append(std::move(copy));
++            ++outcome.copied;
++        }
++        selected.insert(id);
++        if (inA) {
++            groupA->append(std::move(leaf));
++        } else {
++            groupB->append(std::move(leaf));
++        }
++    }
++    outcome.sideA = static_cast<int>(groupA->children.size());
++    outcome.sideB = static_cast<int>(groupB->children.size());
++    parent->insert(insertAt, std::move(groupB));
++    parent->insert(insertAt, std::move(groupA));
++    selectedLayerIds_ = selected;
++    invalidateProjectIndexCache();
++    outcome.ok = true;
++
++    return outcome;
++}
++
++} // namespace gui
+diff --git a/src/gui/widgets/car_preview_widget.cpp b/src/gui/widgets/car_preview_widget.cpp
+index 46b87f3..0d2a1b7 100644
+--- a/src/gui/widgets/car_preview_widget.cpp
++++ b/src/gui/widgets/car_preview_widget.cpp
+@@ -1464,6 +1464,20 @@ bool CarPreviewWidget::hasModel() const {
+     return !model_.meshes.empty();
+ }
+ 
++bool CarPreviewWidget::dumpItashaGeometry(const QString &path, QString *error) const {
++    if (model_.meshes.empty()) {
++        if (error != nullptr) {
++            *error = QStringLiteral("no car model is loaded");
++        }
++        return false;
++    }
++    return gui::dumpItashaGeometry(model_, liveryMasks_, path, error);
++}
++
++QString CarPreviewWidget::loadedCarMedia() const {
++    return model_.mediaName;
++}
++
+ QImage CarPreviewWidget::renderThumbnail(const QSize &size) {
+     if (!hasModel() || !size.isValid() || size.isEmpty()) {
+         return {};
+diff --git a/src/gui/widgets/car_preview_widget.h b/src/gui/widgets/car_preview_widget.h
+index 2722a26..a53e3ff 100644
+--- a/src/gui/widgets/car_preview_widget.h
++++ b/src/gui/widgets/car_preview_widget.h
+@@ -49,6 +49,11 @@ public:
+     void setSectionWireframeVisible(bool visible);
+     void setCarUnwrapSection(int liverySectionSlot);
+ 
++    // Writes the loaded car's livery geometry for the Itasha tools. Needs both
++    // a car model and its livery masks, which arrive together with the model.
++    bool dumpItashaGeometry(const QString &path, QString *error = nullptr) const;
++    QString loadedCarMedia() const;
++
+     void setProject(fls::Project *project);
+     void setEditorState(EditorState *state);
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index 1f54150..cdb2ba4 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -3,18 +3,77 @@
+ #include "system_integration.h"
+ #include "image_io.h"
+ #include "car_model_renderer.h"
++#include "car_scene.h"
+ #include "livery_codec.h"
++#include "livery_masks.h"
++#include "zip_extract.h"
+ 
+ #include <QApplication>
+ #include <QCoreApplication>
++#include <QDir>
++#include <QDirIterator>
+ #include <QFile>
+ #include <QFileInfo>
+ #include <QOffscreenSurface>
+ #include <QOpenGLContext>
++#include <QTemporaryDir>
++#include <QTextStream>
+ #include <QTimer>
+ 
+ namespace {
+ 
++// Headless panel-geometry dump: takes a car (a .carbin, a model, or the game's
++// car .zip) and writes the file the Itasha engine reads. Everything it needs -
++// the meshes, the paint masks - is plain data, so no window and no GL context
++// are involved and it can run from a script.
++int runItashaDump(const QString &carPath, const QString &outPath) {
++    QTextStream err(stderr);
++    QString loadPath = carPath;
++    QTemporaryDir extracted;
++    if (carPath.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive)) {
++        QString zipError;
++        if (!extracted.isValid()
++            || !fls::extractZipArchive(carPath, extracted.path(), &zipError)) {
++            err << "itasha-dump: " << zipError << Qt::endl;
++            return 1;
++        }
++        QDirIterator it(extracted.path(), QStringList{QStringLiteral("*.carbin")},
++                        QDir::Files, QDirIterator::Subdirectories);
++        loadPath = it.hasNext() ? it.next() : QString();
++        if (loadPath.isEmpty()) {
++            err << "itasha-dump: no .carbin inside " << carPath << Qt::endl;
++            return 1;
++        }
++    }
++    QString error;
++    const fls::CarModel model =
++        loadPath.endsWith(QStringLiteral(".carbin"), Qt::CaseInsensitive)
++        ? fls::loadCarBin(loadPath, &error)
++        : fls::loadModelBin(loadPath, &error);
++    if (model.meshes.empty()) {
++        err << "itasha-dump: " << (error.isEmpty()
++                                       ? QStringLiteral("car model has no meshes")
++                                       : error) << Qt::endl;
++        return 1;
++    }
++    const QString masksDir =
++        QFileInfo(loadPath).absoluteDir().filePath(QStringLiteral("LiveryMasks"));
++    const fls::LiveryMaskSet masks = fls::loadLiveryMasks(masksDir, &error);
++    if (!masks.valid()) {
++        err << "itasha-dump: " << (error.isEmpty()
++                                       ? QStringLiteral("no LiveryMasks next to the car")
++                                       : error) << Qt::endl;
++        return 1;
++    }
++    if (!gui::dumpItashaGeometry(model, masks, outPath, &error)) {
++        err << "itasha-dump: " << error << Qt::endl;
++        return 1;
++    }
++    QTextStream(stdout) << outPath << Qt::endl;
++    return 0;
++}
++
++
+ bool isProjectPath(const QString &path) {
+     const QFileInfo info(path);
+     return info.suffix().compare(QStringLiteral("3so"), Qt::CaseInsensitive) == 0
+@@ -67,6 +126,30 @@ void openStartupFiles(gui::MainWindow &window, const QStringList &paths) {
+ } // namespace
+ 
+ int main(int argc, char *argv[]) {
++    // The geometry dump reads meshes and paint masks and writes a file - plain
++    // data, no painting - so it must not need a screen. Answer it before
++    // QApplication, which opens the display and (with AA_ShareOpenGLContexts)
++    // builds a shared GL context: on a machine whose display is present but not
++    // handing out contexts, that never returns. QCoreApplication is enough
++    // because nothing on this path touches a widget or a QPixmap.
++    for (int i = 1; i < argc; ++i) {
++        if (qstrcmp(argv[i], "--itasha-dump") != 0) {
++            continue;
++        }
++        if (i + 2 >= argc) {
++            QTextStream(stderr)
++                << "usage: --itasha-dump <car.zip|car.carbin> <out.fsgeom>"
++                << Qt::endl;
++            return 2;
++        }
++        QCoreApplication core(argc, argv);
++        QCoreApplication::setOrganizationName(QStringLiteral("ForzaTools"));
++        QCoreApplication::setApplicationName(QStringLiteral("ForzaLiveryStudio"));
++
++        return runItashaDump(QString::fromLocal8Bit(argv[i + 1]),
++                             QString::fromLocal8Bit(argv[i + 2]));
++    }
++
+     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+     QApplication app(argc, argv);
+     QCoreApplication::setOrganizationName(QStringLiteral("ForzaTools"));

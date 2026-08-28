@@ -1,0 +1,352 @@
+"""`make` — 이미지 하나 → 도안 하나. 한 명령으로 끝난다.
+
+    python -m forzasqueegee make <이미지> -o <폴더> [--route cel|painter|line] [--shapes N]
+
+노선은 사람이 고른다 (자동 판별은 만들지 않는다). 본체는 노선마다 제 모듈에
+있고, 이 파일은 **모든 노선이 함께 쓰는 것**만 갖는다 — 전처리(배경 제거·
+크롭)·한글 경로 io·인게임 도달 검사·최소 CelArt 구성·KFPS JSON 내보내기:
+
+- `cel` — **기본** (`route_cel`). 사람 순서 그대로 세 단이다: ① **선 도안** —
+  line 노선과 같은 기계로 SR 중간본의 선화를 사람 문법으로 긋고 ② **셀
+  재해석** — 같은 중간본을 평면 색 영역으로 누른 뒤(celart) ③ **색 채움** —
+  셀 영역을 배치된 획 라스터에 스냅해 그 아래를 채운다 (celfit — 색이 선을
+  못 넘고, 빈 틈이 없고, 같은 색만 선 아래를 지난다. `_make_cel` 문서).
+  레이어 수는 **가격이 정한다** — 예산을 채우지 않고 값이 되는 레이어만
+  산다 (`engine.price`).
+- `painter` — KFPS(kloudys-forza-painter-suite) 동일 로직 (`route_painter`
+  → galatea) — GPU 원시 생성 + 체크포인트 마무리, 회전 타원·사각형 혼합.
+- `line` — 원화의 **선만** 획으로 딴다 (면 채움 없음, `route_line`). 사람이
+  원화를 반투명 오버레이로 깔고 선만 따라 긋는 방식의 자동화
+  (`celfit.fit_line_plan`). 바탕이 비므로 차 도색 위에 선화만 얹는 도안이
+  된다. 그 획 배치 절반(`route_line._line_design`)은 cel 노선도 쓴다.
+
+GUI는 이 함수를 부르는 창일 뿐이다 — 로직을 창에 두지 않는다.
+
+산출물 (`-o` 폴더). **파일마다 폴더 이름이 앞에 붙는다** — `out/내도안/`이면
+`내도안.plan.json`이다 (`paths.run_file`). 이름이 겹치지 않아 편집기 탭·게임
+임포트 목록에서 어느 도안인지 갈린다:
+
+    <이름>.plan.json     창 조작·주입에 쓰는 레이어 계획
+    <이름>.kfps.json     KFPS 편집기·임포터 타입코드 JSON
+    <이름>.3so           FLS 편집기가 여는 프로젝트
+    LayerGroup_<이름>/   게임이 읽는 비닐 그룹 컨테이너 (C_group + header)
+    <이름>.preview.png   플랜을 렌더한 그림
+    <이름>.cel.png       (cel) 배치 목표 — 획 라스터에 스냅한 셀 재해석 + 선 도안
+    <이름>.line.png      (line) 선화 목표 — 흰 바탕 + 원화 색 선
+    <이름>.cutout.png    (전처리 발동 시) 배경 제거·크롭 결과 — 노선이 받은 입력
+    <이름>.report.json   자가 점검 — `verdict`에 한 줄 판정
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from ..paths import find_run_file, run_file
+
+# 작업 해상도 — **짧은 변** 기준. 긴 변 기준이면 세로로 긴 구도에서 인물의 폭이
+# 몇백 px로 줄어 얼굴이 무너진다
+WORK_SIZE = 1200
+MAX_SHAPES = 3000     # 인게임 레이어 상한 (남은 용량이 모자라면 통째로 거부된다)
+ROUTES = ("painter", "cel", "line")
+
+
+class Cancelled(RuntimeError):
+    """진행 콜백이 올려 중단을 알린다 (창의 취소 단추).
+
+    엔진은 이 예외를 **안 잡는다** — 긴 반복문마다 `progress`를 부르므로 거기서
+    바로 풀려 나온다. 그 단계까지 쓴 파일은 남고 report는 안 생긴다.
+    """
+
+
+def _say(s: str = "") -> None:
+    """진행이 몇 분짜리라 **버퍼링하면 안 된다** — 파이프로 받으면 통째로 늦는다."""
+    print(s, flush=True)
+
+
+def read_rgba(path: str | Path) -> np.ndarray:
+    """RGBA로 읽는다 (알파 없으면 255로 채운다). 한글 경로 대응."""
+    buf = np.fromfile(str(path), np.uint8)
+    im = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
+    if im is None:
+        raise SystemExit(f"읽기 실패: {path}")
+    if im.ndim == 2:
+        im = cv2.cvtColor(im, cv2.COLOR_GRAY2BGRA)
+    elif im.shape[2] == 3:
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2BGRA)
+    return np.dstack([cv2.cvtColor(im[..., :3], cv2.COLOR_BGR2RGB), im[..., 3]])
+
+
+def write_png(path: Path, img: np.ndarray) -> None:
+    """PNG로 쓴다 (BGR 또는 BGRA 또는 회색). **한글 경로 대응.**
+
+    `cv2.imwrite`를 쓰면 안 된다 — 경로에 비ASCII 글자가 하나라도 있으면 예외
+    없이 `False`만 돌려주고 **파일을 안 만든다**(읽기의 `imread`와 같다). GUI의
+    기본 출력 폴더가 `out/make/<이미지 이름>`이라 한글 파일명이 곧 한글 폴더고,
+    그래서 도안은 나오는데 그림만 통째로 빠졌다. 인코딩은 OpenCV에 맡기고
+    파일은 파이썬이 쓴다."""
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise SystemExit(f"인코딩 실패: {path}")
+    path.write_bytes(buf.tobytes())
+
+
+def _crop_to_subject(rgba: np.ndarray) -> tuple[np.ndarray, list[int] | None]:
+    """인물 알파 bbox + 여백으로 자른다 — 작업 해상도를 인물에 몰아준다.
+
+    문턱 128은 셀 노선의 캔버스 판정(`sel`)과 같고, 부드러운 알파 치마는
+    여백(최대변의 2%)이 덮는다. 알파가 아예 없거나(전부 불투명 = bbox가 전체)
+    절감이 10% 미만이면 안 자른다 — 재인코딩만 생기고 이득이 없다.
+    반환: (잘린 RGBA, [x, y, w, h]) — 안 잘랐으면 (원본, None).
+    """
+    a = rgba[..., 3]
+    ys, xs = np.where(a >= 128)
+    if ys.size == 0:
+        return rgba, None
+    h, w = a.shape[:2]
+    m = max(8, round(0.02 * max(h, w)))
+    y0, y1 = max(int(ys.min()) - m, 0), min(int(ys.max()) + 1 + m, h)
+    x0, x1 = max(int(xs.min()) - m, 0), min(int(xs.max()) + 1 + m, w)
+    if (y1 - y0) * (x1 - x0) >= 0.90 * h * w:
+        return rgba, None
+    return rgba[y0:y1, x0:x1], [x0, y0, x1 - x0, y1 - y0]
+
+
+def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
+         shapes: int = MAX_SHAPES, size: int = WORK_SIZE, log=_say,
+         progress=None, keep_bg: bool = False,
+         no_crop: bool = False) -> dict:
+    """도안 하나를 끝까지 만든다. 반환값은 `report.json`과 같은 딕셔너리.
+
+    `progress(0~1, 단계 이름)`은 창의 진행 막대용이다. 콜백이 `Cancelled`를
+    올리면 그대로 밖으로 나간다 — 엔진에 중단 플래그를 따로 두지 않는다.
+    """
+    if route not in ROUTES:
+        raise SystemExit(f"모르는 노선: {route} ({'|'.join(ROUTES)})")
+    shapes = max(1, min(int(shapes), MAX_SHAPES))
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    # 전처리 (요구사항 §4: 배경 제거·크롭) — 실패·미발동은 경고만 (한 버튼 원칙)
+    # ① 배경 제거: 알파 없는 입력(사진·JPG)은 배경까지 도형으로 그려지므로
+    #    신경망 알파(isnet-anime)로 인물만 딴다. keep_bg = 배경도 도안에 담는다
+    src = Path(image)
+    bgcut = False
+    rgba = read_rgba(src)
+    if not keep_bg and bool(rgba[..., 3].min() >= 250):
+        from .bgremove import matte
+
+        log("배경 제거 중… (신경망 알파)")
+        if progress:
+            progress(0.0, "배경 제거")
+        a = matte(rgba[..., :3], log=log)
+        if a is not None:
+            rgba[..., 3] = a
+            bgcut = True
+            log("  인물 알파 생성")
+    # ② 크롭: 인물 bbox + 여백으로 잘라 작업 해상도를 인물에 몰아준다 —
+    #    프레임 구석의 인물이 작게 뭉개지는 것을 막는다. 알파가 프레임을 다
+    #    채우면(표준 검증 이미지 포함) 미발동이라 기존 도안과 같다
+    crop = None
+    if not no_crop and not os.environ.get("FS_NO_CROP"):
+        oh, ow = rgba.shape[:2]
+        rgba, crop = _crop_to_subject(rgba)
+        if crop is not None:
+            log(f"  크롭: {ow}×{oh} → {crop[2]}×{crop[3]} (인물 bbox + 여백 2%)")
+    if bgcut or crop is not None:
+        src = run_file(out, "cutout.png")
+        write_png(src, np.dstack(
+            [cv2.cvtColor(rgba[..., :3], cv2.COLOR_RGB2BGR), rgba[..., 3]]))
+        log(f"  전처리 결과 → {src.name}")
+    # 노선 본체는 여기서 부른다 — 노선 모듈이 이 파일의 공용 헬퍼를 쓰므로
+    # 임포트를 함수 안에 둔다 (모듈 수준이면 서로 물린다)
+    from .route_cel import _make_cel
+    from .route_line import _make_line
+    from .route_painter import _make_painter
+
+    rep = (_make_painter(src, out, shapes, size, log, progress) if route == "painter"
+           else _make_line(src, out, shapes, size, log, progress) if route == "line"
+           else _make_cel(src, out, shapes, size, log, progress))
+    rep["kfps"] = _write_kfps_json(out, log)
+    rep["fls"] = _write_fls(out, log)
+    rep["input"]["bgcut"] = bgcut
+    rep["input"]["crop"] = crop
+    rep["route"] = route
+    rep["shapes"] = shapes
+    rep["source"] = str(image)
+    rep["sec"] = round(time.time() - t0, 1)
+    run_file(out, "report.json").write_text(
+        json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    log(f"\n총 {rep['sec']:.0f}s → {out}")
+    log(rep["verdict"])
+    if progress:
+        progress(1.0, "완료")
+    return rep
+
+
+def _write_kfps_json(out: Path, log) -> dict:
+    """도안 → KFPS 편집기·임포터 타입코드 JSON — 두 노선 공통.
+
+    실패해도 도안은 유효하므로 경고만 한다 (한 버튼 원칙). 통계는 report에
+    실린다 — approx > 0이면 word 없는 도형이 근사로 나갔다는 뜻이다.
+    """
+    from .catalog import Catalog, default_catalog_path
+    from .kfpsjson import export_typecode
+    from .model import LayerPlan
+
+    try:
+        plan = LayerPlan.load(find_run_file(out, "plan.json"))
+        data, st = export_typecode(plan, Catalog(default_catalog_path()))
+        kfps = run_file(out, "kfps.json")
+        kfps.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        log(f"KFPS 편집기 JSON → {kfps.name} (도형 {len(data['shapes'])}장"
+            + (f" · 근사 {st['approx']}" if st["approx"] else "") + ")")
+        return st
+    except Exception as e:                       # noqa: BLE001
+        log(f"경고: KFPS JSON 생성 실패 — {e}")
+        return {"error": str(e)}
+
+
+def _write_fls(out: Path, log) -> dict:
+    """도안 → 게임 컨테이너 폴더 + FLS 프로젝트(`.3so`) — 세 노선 공통.
+
+    굽자마자 **게임이 읽는 파일**이 도안 옆에 선다 (`flsexport`를 따로 칠
+    일이 없다). 컨테이너 폴더를 게임 저장 컨테이너 뿌리에 두면 저장 그리드에
+    뜨고, `.3so`는 FLS 편집기가 그대로 연다.
+
+    실패해도 도안은 유효하므로 경고만 한다 (한 버튼 원칙).
+    """
+    from ..paths import run_label
+    from .fls import bridge
+    from .fls.folder import GROUP_PREFIX, safe_name
+
+    try:
+        plan_path = find_run_file(out, "plan.json")
+        label = run_label(plan_path)
+        # 설 자리를 못 박아 준다 — `export_folder`는 이미 있으면 `_2`를 붙이는데,
+        # 같은 폴더에 다시 구우면 컨테이너가 쌓인다. 판마다 폴더는 하나다.
+        dest = out / (GROUP_PREFIX + safe_name(label))
+        folder, st = bridge.plan_folder(plan_path, dest)
+        proj, _ = bridge.plan_project(plan_path, run_file(out, "3so"))
+        st["project"] = str(proj)
+        log(f"FLS·게임 파일 → {folder.name}/ · {proj.name} "
+            f"(레이어 {st['layers']:,}장, 마스크 {st['masks']:,})")
+        if st.get("skipped"):
+            n = sum(st["skipped"].values())
+            log(f"  경고: 카탈로그 도형 id를 모르는 {n}장을 뺐다 "
+                f"({', '.join(sorted(st['skipped']))})")
+        return st
+    except Exception as e:                       # noqa: BLE001
+        log(f"경고: FLS·게임 파일 생성 실패 — {e}")
+        return {"error": str(e)}
+
+
+def _bundle_cache_path(rgba: np.ndarray, size: int):
+    """`FS_BUNDLE_CACHE=1`일 때 이 입력의 앞단 캐시 파일 — 아니면 None.
+
+    **계측 전용이고 기본은 꺼져 있다.** 앞단(SR + 선화 두 판)이 장당 ~27초라
+    회귀 스윕에서 판을 여러 벌 구울 때 그 몫이 통째로 반복된다 — 배치 축을
+    재는데 앞단을 다시 도는 것은 값이 없다. 키는 입력 배열 자체의 해시라
+    전처리(배경 제거·크롭)까지 반영된다.
+
+    `work/cache/`는 서술자 캐시가 이미 사는 자리다 (`paths.work_root`).
+    """
+    if os.environ.get("FS_BUNDLE_CACHE", "0") == "0":
+        return None
+    import hashlib
+
+    from ..paths import work_root
+
+    h = hashlib.blake2b(np.ascontiguousarray(rgba), digest_size=16).hexdigest()
+    d = work_root() / "cache" / "bundle"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{h}-{size}.npz"
+
+
+def _source_bundle(rgba: np.ndarray, size: int, log):
+    """노선이 받을 중간본 + 그 해상도의 선화 지도를 만든다.
+
+    반환 (중간본, basic 지도, detail 지도). 선화를 **작업 해상도로 줄이기
+    전에** 뽑는 것이 요점이다 — 축소가 가는 선을 씻어 점선으로 만든다
+    (점선도가 몇 배로 뛴다). `FS_LINE_PRE=0`이면 celart가 작업 해상도에서
+    뽑는다 (변인 분리용).
+
+    detail 판은 **있으면 쓴다** — Basic이 놓친 세부선을 낮은 우선순위 증거로
+    얹는 자리다 (`celfit.evidence`). 모델이 없으면 None이고 Basic만으로 돈다.
+
+    `FS_BUNDLE_CACHE=1`이면 결과를 `work/cache/bundle`에 재사용한다
+    (계측 전용 — `_bundle_cache_path` 문서).
+    """
+    from . import lineart, upscale
+
+    cache = _bundle_cache_path(rgba, size)
+    if cache is not None and cache.is_file():
+        z = np.load(cache)
+        log("  앞단 캐시 재사용 (FS_BUNDLE_CACHE)")
+        return (z["big"], z["line"] if "line" in z else None,
+                z["detail"] if "detail" in z else None)
+    big = upscale.prepare(rgba, size, log=log)
+    line = detail = None
+    if os.environ.get("FS_LINE_PRE", "1") != "0":
+        from .celart import _fill_bg_nearest
+
+        sel = big[..., 3] >= 128
+        rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
+        line = lineart.extract(rgb, log=log, cap=True)
+        if line is not None and lineart.available("detail"):
+            detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
+            if detail is not None:
+                log("  선화 detail 판도 증거로 얹는다")
+    if cache is not None:
+        got = {"big": big}
+        if line is not None:
+            got["line"] = line
+        if detail is not None:
+            got["detail"] = detail
+        np.savez_compressed(cache, **got)
+    return big, line, detail
+
+
+def _reach_check(plan, cat) -> dict:
+    """**도안 = 인게임인가** — 플랜이 게임에 그대로 갈 수 있는 것만 쓰나.
+
+    도안 쪽 지표(RMSE·lpips)는 전부 **플랜 렌더**를 보므로, 렌더가 게임과 다르게
+    그리는 축이 섞이면 그 결함을 통째로 못 본다. 실제로 두 번 그랬다 — 반투명
+    도형(렌더는 불투명으로 그렸다)과 기울기(주입이 조용히 뺐다). 둘 다 도안
+    수치는 멀쩡하고 인게임만 갈렸다. 그래서 **자를 여기에 하나 세운다**: 값이
+    싸고(플랜만 읽는다) 게임이 없어도 돌고, `make`의 판정 줄에 바로 뜬다.
+
+    인게임 대조는 이 자가 못 보는 것까지
+    보지만 게임이 켜져 있어야 한다 — 둘은 겹치는 자가 아니라 층이 다르다.
+    """
+    trans = sorted({l.shape for l in plan.layers
+                    if l.shape in cat.shapes and not cat[l.shape].opaque})
+    n_skew = sum(1 for l in plan.layers if abs(l.skew) > 1e-9)
+    n_mask = sum(1 for l in plan.layers if l.mask)
+    bad = []
+    if trans:
+        bad.append("반투명 도형 " + "·".join(trans))
+    if n_skew:
+        bad.append(f"기울기 {n_skew}장")
+    if n_mask:
+        bad.append(f"마스크 {n_mask}장")
+    return {"id": "reach", "ok": not bad,
+            "text": "게임에 그대로 감" if not bad
+                    else "게임에 그대로 못 감 — " + " · ".join(bad)}
+
+
+def _one_region(mask: np.ndarray, color) -> list:
+    """마스크 하나 = 영역 하나 (line 노선·선 도안의 최소 CelArt 구성용)."""
+    from .celart import Region
+
+    ys, xs = np.nonzero(mask)
+    return [Region(rid=0, color=tuple(int(v) for v in color),
+                   area=int(mask.sum()),
+                   bbox=(int(xs.min()), int(ys.min()),
+                         int(xs.max()) + 1, int(ys.max()) + 1))]

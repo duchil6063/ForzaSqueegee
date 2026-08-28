@@ -1,0 +1,43 @@
+{
+  "_": "이 프로젝트가 내는 릴리스 — 저장소·태그와 그 자산들. forzasqueegee/modelstore.py와 tools/get_fls.py가 읽는다.",
+  "repo": "https://github.com/duchil6063/ForzaSqueegee",
+  "tag": "assets-v1",
+  "models": {
+    "anilines_basic": {
+      "file": "anilines_basic.onnx",
+      "size": 69070607,
+      "sha256": "7d14e5d95ec7336b52838f0c73ac1fb993a58aecdf1a78cf3b8dbe2e26b93346",
+      "what": "선화 추출 (AniLines basic) — cel·line 노선"
+    },
+    "anilines_detail": {
+      "file": "anilines_detail.onnx",
+      "size": 69068320,
+      "sha256": "ddc910dcd8bdb75205aa60aa0ce55ba68550bd5cbcd84600092ebbc230fc50e6",
+      "what": "선화 추출 detail 판 — 세부선 증거"
+    },
+    "isnet_anime": {
+      "file": "isnet_anime.onnx",
+      "size": 176069933,
+      "sha256": "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99",
+      "what": "배경 제거 (isnet-anime)"
+    },
+    "realesrgan_anime6b": {
+      "file": "realesrgan_anime6b.onnx",
+      "size": 17939933,
+      "sha256": "e14e15eda95daf42e53eaf66b442b8e0560fe45a2bd3694bc87929f56beb3957",
+      "what": "저해상 입력 확대 (Real-ESRGAN anime 6B)"
+    }
+  },
+  "fls": {
+    "what": "ForzaLiveryStudio 수정판 — [Itasha] 메뉴가 든 우리 빌드 (AGPL-3.0)",
+    "file": "ForzaLiveryStudio-itasha-5e890e1766ee-win64.zip",
+    "size": 30947129,
+    "sha256": "f8b7d3b2cd15adb580707946c711dbfe045cf97bdd0dd71dd9c2d5f543c1c902",
+    "source": "ForzaLiveryStudio-itasha-5e890e1766ee-source.zip",
+    "source_size": 19904998,
+    "source_sha256": "e6e314f1dd7e8ce708fbf188d1df5eb523d37527381e8c38124751744989929b",
+    "upstream": "https://github.com/Arstz/ForzaLiveryStudio",
+    "upstream_tag": "1.2.1",
+    "pin": "5e890e1766eedd884cfa0d1234e135431bb7cdde"
+  }
+}

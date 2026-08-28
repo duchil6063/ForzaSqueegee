@@ -1,0 +1,96 @@
+From a50b10ed9219475dd8f440b55424beff714d729f Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Wed, 26 Aug 2026 16:17:05 +0900
+Subject: [PATCH 1/2] build: locate Qt plugins without assuming a vcpkg layout
+
+The plugin and runtime paths were derived from Qt6_DIR with the vcpkg tree
+shape baked in (<prefix>/Qt6/plugins, <prefix>/bin). An official Qt install
+keeps them at <prefix>/plugins and <prefix>/bin, so configuring against one
+failed with "Qt WebP imageformat plugin was not found" even when the plugin
+was present.
+
+Ask Qt for its own layout (QT6_INSTALL_PREFIX / QT6_INSTALL_PLUGINS / _BINS)
+and probe both shapes, so the build works with vcpkg, an official Qt install,
+or an aqtinstall one.
+---
+ CMakeLists.txt | 49 ++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 5 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 674f4b8..ea4beef 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -678,10 +678,49 @@ if(WIN32)
+     )
+     target_sources(${FORZA_LIVERY_STUDIO_TARGET} PRIVATE "${FLS_WINDOWS_RESOURCES}")
+     target_link_libraries(${FORZA_LIVERY_STUDIO_TARGET} PRIVATE windowscodecs ole32 shell32 gdi32)
++
++    # Qt keeps its plugins and runtime DLLs in a different place depending on how
++    # it was installed: vcpkg puts them under <prefix>/Qt6/plugins and <prefix>/bin,
++    # while an official Qt install uses <prefix>/plugins and <prefix>/bin. Ask Qt
++    # for its own layout first, then probe both shapes, so the build does not
++    # require a vcpkg-provided Qt.
++    set(FLS_QT_PLUGIN_CANDIDATES)
++    set(FLS_QT_BIN_CANDIDATES)
++    if(QT6_INSTALL_PREFIX AND QT6_INSTALL_PLUGINS)
++        list(APPEND FLS_QT_PLUGIN_CANDIDATES "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}")
++    endif()
++    if(QT6_INSTALL_PREFIX AND QT6_INSTALL_BINS)
++        list(APPEND FLS_QT_BIN_CANDIDATES "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
++    endif()
++    list(APPEND FLS_QT_PLUGIN_CANDIDATES
++        "${Qt6_DIR}/../../Qt6/plugins"
++        "${Qt6_DIR}/../../../plugins")
++    list(APPEND FLS_QT_BIN_CANDIDATES
++        "${Qt6_DIR}/../../bin"
++        "${Qt6_DIR}/../../../bin")
++    set(FLS_QT_PLUGIN_DIR "")
++    foreach(fls_qt_candidate IN LISTS FLS_QT_PLUGIN_CANDIDATES)
++        if(EXISTS "${fls_qt_candidate}/platforms/qwindows.dll")
++            get_filename_component(FLS_QT_PLUGIN_DIR "${fls_qt_candidate}" ABSOLUTE)
++            break()
++        endif()
++    endforeach()
++    if(NOT FLS_QT_PLUGIN_DIR)
++        message(FATAL_ERROR
++            "Qt platform plugin qwindows.dll was not found. Looked in: ${FLS_QT_PLUGIN_CANDIDATES}")
++    endif()
++    set(FLS_QT_BIN_DIR "")
++    foreach(fls_qt_candidate IN LISTS FLS_QT_BIN_CANDIDATES)
++        if(IS_DIRECTORY "${fls_qt_candidate}")
++            get_filename_component(FLS_QT_BIN_DIR "${fls_qt_candidate}" ABSOLUTE)
++            break()
++        endif()
++    endforeach()
++
+     add_custom_command(TARGET ${FORZA_LIVERY_STUDIO_TARGET} POST_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${FORZA_LIVERY_STUDIO_TARGET}>/platforms"
+         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+-            "${Qt6_DIR}/../../Qt6/plugins/platforms/qwindows.dll"
++            "${FLS_QT_PLUGIN_DIR}/platforms/qwindows.dll"
+             "$<TARGET_FILE_DIR:${FORZA_LIVERY_STUDIO_TARGET}>/platforms/qwindows.dll"
+         COMMENT "Deploying Qt platform plugin for ${FORZA_LIVERY_STUDIO_TARGET}"
+     )
+@@ -690,9 +729,9 @@ if(WIN32)
+             "$<TARGET_FILE_DIR:${FORZA_LIVERY_STUDIO_TARGET}>/imageformats/qico.dll"
+         COMMENT "Removing redundant Qt ICO imageformat plugin"
+     )
+-    set(QT_WEBP_PLUGIN "${Qt6_DIR}/../../Qt6/plugins/imageformats/qwebp.dll")
++    set(QT_WEBP_PLUGIN "${FLS_QT_PLUGIN_DIR}/imageformats/qwebp.dll")
+     if(NOT EXISTS "${QT_WEBP_PLUGIN}")
+-        message(FATAL_ERROR "Qt WebP imageformat plugin was not found. Install qtimageformats with the webp feature, e.g. vcpkg install qtimageformats[webp]:x64-windows")
++        message(FATAL_ERROR "Qt WebP imageformat plugin was not found at ${QT_WEBP_PLUGIN}. Install qtimageformats with the webp feature, e.g. vcpkg install qtimageformats[webp]:x64-windows or aqt install-qt ... -m qtimageformats")
+     endif()
+     add_custom_command(TARGET ${FORZA_LIVERY_STUDIO_TARGET} POST_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${FORZA_LIVERY_STUDIO_TARGET}>/imageformats"
+@@ -703,8 +742,8 @@ if(WIN32)
+     )
+     set(QT_WEBP_RUNTIME_DLLS)
+     foreach(webp_dll IN ITEMS libwebp.dll libwebpdecoder.dll libwebpdemux.dll libwebpmux.dll libsharpyuv.dll)
+-        if(EXISTS "${Qt6_DIR}/../../bin/${webp_dll}")
+-            list(APPEND QT_WEBP_RUNTIME_DLLS "${Qt6_DIR}/../../bin/${webp_dll}")
++        if(FLS_QT_BIN_DIR AND EXISTS "${FLS_QT_BIN_DIR}/${webp_dll}")
++            list(APPEND QT_WEBP_RUNTIME_DLLS "${FLS_QT_BIN_DIR}/${webp_dll}")
+         endif()
+     endforeach()
+     if(QT_WEBP_RUNTIME_DLLS)

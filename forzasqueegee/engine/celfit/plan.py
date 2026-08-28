@@ -1,0 +1,312 @@
+"""진입점 — CelArt 하나를 LayerPlan 하나로.
+
+`fit_plan`은 셀 영역을 면으로 채우고(선 지도가 붙어 있으면 획도 함께 놓는다),
+`fit_line_plan`은 획만 놓는다. 두 노선이 같은 기계를 쓰고 갈리는 곳은 그
+문서에 적혀 있다. 레이어 수는 **가격이 정한다** — 예산을 채우지 않는다.
+"""
+
+from __future__ import annotations
+
+import itertools
+
+import cv2
+import numpy as np
+
+from .. import celaxes
+from ..catalog import Catalog
+from ..celart import CelArt, mark_mask
+from ..model import Layer, LayerPlan
+from ..price import _PRICE_INK
+from .fill import _fit_bars, _mop_up
+from .geometry import _ink_cover, _min_span
+from .layered import fill_region, grow_fill, mop_up
+from .lines import _fit_lines
+from .scoring import (_COVER_STOP, _INK_FREE, _MAX_PER_REGION,
+                      _NO_FREESPILL, _PEN_WASTE, _PEN_WASTE_FILL, _Scorer)
+from .stroke import _CURVE_STATS, _stroke_forms
+from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
+
+
+def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
+             line_budget: int | None = None,
+             source_image: str = "", log=print, progress=None,
+             value: np.ndarray | None = None,
+             price: float = 0.0,
+             ink_free: np.ndarray | None = None,
+             sid_start: int = 0) -> tuple[LayerPlan, dict]:
+    """CelArt → LayerPlan + 통계. 결정적.
+
+    `value`·`price`를 주면 **가격 설계**이다 — 한 장이 새로 맞히는 값이 λ에
+    못 미치면 안 산다 (`price._PRICE_REL` 문서). 안 주면 값을 안 묻는다.
+
+    `ink_free`는 **밖에서 이미 배치된 획**의 커버 지도다 (cel 노선 — 선
+    도안이 먼저 서고 이 함수는 면만 채울 때. `cel.line_mask`는 None으로
+    온다). 의미는 안에서 계산하는 지도와 같다 — 획이 덮는 자리는 면 채점의
+    공짜 (`_Scorer` ink · `_INK_FREE`).
+
+    `sid_start`는 **획 그룹 id의 시작 번호**다. cel 노선은 선 도안을 먼저
+    딴 판(`fit_line_plan`)과 이 함수를 **따로** 부르고 두 판의 레이어를 한
+    플랜에 합치는데, 둘이 각자 0부터 번호를 매기면 **가는 잔여 막대 사슬
+    (`_fit_bars`)과 획이 같은 그룹 번호를 쓴다.** `Layer.stroke`는 프루닝의
+    원자 단위라(같은 값이면 통째로 살거나 죽는다) 겹치면 상관없는 두 무리가
+    한 덩이로 잘리고, 구조 지표(`linemetrics`)도 남의 도형을 그 획의 마디로
+    읽는다 (실측 M1-01: 획 539개 중 46개가 막대 사슬과 번호가 겹쳤다).
+    """
+    _check_vocab(cat, log)
+    w, h = cel.size
+    upp = 900.0 / h                      # painter와 같은 캔버스 배율
+    plan = LayerPlan(source_image=source_image, image_size=(w, h),
+                     units_per_px=upp)
+
+    # 그리기 순서 지도: 픽셀 → 영역 순번 (배경 = -1)
+    order_of = {r.rid: i for i, r in enumerate(cel.regions)}
+    order_img = np.full(cel.labels.shape, -1, np.int32)
+    pos = cel.labels >= 0
+    lut = np.full(int(cel.labels.max()) + 1, -1, np.int32)
+    for rid, o in order_of.items():
+        lut[rid] = o
+    order_img[pos] = lut[cel.labels[pos]]
+
+    stats = {"regions": len(cel.regions), "skipped": 0, "uncovered_px": 0,
+             "grown_fill": 0,
+             "fill_layers": 0, "bar_layers": 0, "mop_layers": 0, "line_layers": 0,
+             "big10_layers": 0, "cap_hit": 0, "share_hit": 0}
+    # 유예 덮개 — 순이득이 λ×_FIX_DE_REPAIR~λ×_FIX_DE 구간인 획 덮개.
+    # 지금 사면 포화 장에서 재컷이 채움을 밀어내므로(2단 수리와 같은 실측),
+    # 배치·메움·수리가 끝나 예산 잔여가 확정된 뒤 파이프라인이 남는 만큼만
+    # 산다. stats에 실어 나가되 report에는 안 남는다 (파이프라인이 pop)
+    carve_defer: list = []
+    stats["_carve_defer"] = carve_defer
+    for k in _CURVE_STATS:
+        _CURVE_STATS[k] = 0
+    _FILL_WIN.clear()
+    forms = _stroke_forms(cat)            # 획 어휘의 중심선 (프로세스 1회 계측)
+    sids = itertools.count(sid_start)     # 획 그룹 id 발급기 (한 경로 = 한 획)
+
+    # 신경망 선화가 있으면 **선 예산을 먼저 확보**한다 (선이 시각 품질의 상한).
+    # 획 레이어는 그리기 순서상 맨 뒤(모든 면 위)로 가야 하므로 따로 모았다가
+    # 영역 채움이 끝난 뒤 붙인다 — 사람의 마지막 선따기 순서와 같다
+    line_layers: list[Layer] = []
+    ink_cov: np.ndarray | None = ink_free if _INK_FREE else None
+    if cel.line_mask is not None:
+        lp = LayerPlan(image_size=(w, h), units_per_px=upp)
+        # 선 예산은 **최종 상한 기준**으로 받는다 (fit 여유 배수에 비례시키면
+        # 프루닝이 채움을 학살한다 — 실측 RMSE 74)
+        lb = line_budget if line_budget is not None else budget // 3
+        # 선화 모델이 없을 때의 폴백 — 선·면 동시 배치라 덮개가 산다.
+        # 선 재구성 자체는 **같은 엔진**이고 정책만 갈린다
+        from .policy import CEL_FALLBACK
+
+        line_st: dict = {}
+        n_line = _fit_lines(lp, cel, cat, upp, lb, forms, log,
+                            sids=sids, pol=CEL_FALLBACK, stats=line_st,
+                            value=value, price=price * _PRICE_INK,
+                            carve_defer=carve_defer if price else None)
+        stats["_rec"] = line_st.pop("_rec", None)
+        stats.update({k: v for k, v in line_st.items() if k not in stats})
+        line_layers = lp.layers
+        stats["line_layers"] = n_line
+        budget = budget - n_line
+        # 획이 덮는 자리 — 면 배치에서 공짜다 (`_Scorer` 문서). 획은 이미
+        # 전부 놓였으므로 지도가 확정이다
+        if _INK_FREE and line_layers:
+            ink_cov = _ink_cover(line_layers, cat, upp, w, h)
+            stats["ink_free_px"] = int(ink_cov.sum())
+    # §9 이음 당김의 예외 — 무늬 보호 조각 (`celart.marks`). 큰 면이 눈
+    # 흰자·코 그림자를 1px씩 먹는 것이 이 당김의 유일한 해악이라 그 자리만 뺀다
+    protect = mark_mask(cel) if celaxes.on("PAIR") else None
+    total = len(cel.regions)
+    # 남은 영역 면적 합 (뒤부터 누적) — 영역별 예산 = 남은 예산 × 면적 비중.
+    # 큰 영역이 예산을 독식해 후순위 영역이 통째로 빠지는 것을 막는다
+    # (실측: 비례 배분 없이는 영역의 3/4이 통째로 못 그려졌다)
+    suffix_area = np.cumsum([r.area for r in cel.regions][::-1])[::-1].astype(float)
+
+    for oi, reg in enumerate(cel.regions):
+        if progress:
+            progress(oi / total, f"영역 {oi + 1}/{total}")
+        left = budget - len(plan.layers)
+        if left <= 0:
+            stats["skipped"] = total - oi
+            log(f"  경고: 예산 소진 — 영역 {total - oi}개 못 그림")
+            break
+        share = int(1.6 * left * reg.area / suffix_area[oi]) + 2
+
+        x0, y0, x1, y1 = reg.bbox
+        # ROI = bbox + 가드 여유 전체 — 도형이 닿을 수 있는 픽셀은 전부 채점판
+        # 안에 둔다. bbox+8이던 시절 가드 여유(24+0.25×변)가 무벌점 구간이라
+        # 채움이 그리로 뻗었다 (목을 가로지르는 타원이 그렇게 나왔다).
+        # 가드는 8px로 좁힌다
+        m = 24 + int(0.25 * max(x1 - x0, y1 - y0))
+        x0 = max(0, x0 - m); y0 = max(0, y0 - m)
+        x1 = min(w, x1 + m); y1 = min(h, y1 + m)
+        roi = (x0, y0, x1, y1)
+        omap = order_img[y0:y1, x0:x1]
+        mask = cel.labels[y0:y1, x0:x1] == reg.rid
+        # 획형 판정 — 픽셀 85%가 경계에서 3.2px 안이면 선·가닥이다. "최대 내접
+        # 반경"만 보면 선의 교차점(굵다) 때문에 타원 채움으로 넘어가 얼룩이 된다
+        dt0 = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
+        strokelike = float(np.percentile(dt0[mask], 85)) <= 3.2
+        if reg.area >= 100 and not strokelike:
+            # 닫기→열기로 1px대 요철·목을 정리 — 사람이 안 그리는 미세 위글에
+            # 도형을 쓰지 않는다 (선·작은 영역은 뭉개질 수 있어 건너뛴다)
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            m8 = mask.astype(np.uint8)
+            m8 = cv2.morphologyEx(cv2.morphologyEx(m8, cv2.MORPH_CLOSE, k),
+                                  cv2.MORPH_OPEN, k)
+            if m8.any():
+                mask = m8.astype(bool)
+        forbid = omap < oi                 # 먼저 그린 면 + 배경(-1)
+        sc = _Scorer(cat, upp, w, h, roi, mask, forbid, omap < 0, guard=8.0,
+                     pen_waste=(_PEN_WASTE if _NO_FREESPILL else _PEN_WASTE_FILL),
+                     ink=ink_cov[y0:y1, x0:x1] if ink_cov is not None else None,
+                     val=value[y0:y1, x0:x1] if value is not None else None,
+                     seam=celaxes.on("PAIR"),
+                     protect=protect[y0:y1, x0:x1] if protect is not None else None)
+
+        n_reg = 0
+        lo = len(plan.layers)              # 이 영역이 놓기 시작하는 자리
+        cap = min(_MAX_PER_REGION, left, share)
+        area = float(reg.area)
+        if not strokelike:
+            # 면 채움 — 바탕 한 장 먼저, 남은 것은 후보 경쟁 (§7·§8·§11)
+            n_reg = fill_region(plan, sc, cat, reg.color, cap, area, price,
+                                _COVER_STOP)
+            stats["fill_layers"] += n_reg
+        # **사기 전에 늘린다** — 경계 부스러기를 이미 놓은 도형의 한 스텝
+        # 확장으로 먼저 먹는다 (레이어 0장). 그러고도 남는 것만 막대·마무리가
+        # 산다 (`layered.grow_fill` 문서)
+        if celaxes.on("GROWFIRST") and n_reg:
+            stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
+        # 가는 잔여 → 획 사슬
+        if n_reg < cap and np.count_nonzero(sc.residual) > (1.0 - _COVER_STOP) * area:
+            dt = cv2.distanceTransform(sc.residual.astype(np.uint8), cv2.DIST_L2, 3)
+            n_bar = _fit_bars(plan, sc, dt, reg.color, cap - n_reg, forms,
+                              ink=strokelike, sids=sids, price=price,
+                              free_first=n_reg == 0)
+            stats["bar_layers"] += n_bar
+            n_reg += n_bar
+        # 막대가 놓인 뒤 한 번 더 — 새로 놓인 막대도 늘릴 자리가 생긴다
+        if celaxes.on("GROWFIRST") and n_reg:
+            stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
+        # 마무리 — 남은 큰 덩어리만 줍는다. 작은 조각은 구멍 메움(컷 뒤,
+        # 군집당 1장)이 더 싸게 처리하므로 여기서 예산을 쓰지 않는다
+        # (실측: min_blob 12일 때 mop 549장 — 채움 예산을 갉아먹었다)
+        if n_reg < cap:
+            n_mop = (mop_up(plan, sc, cat, reg.color, cap - n_reg, 40, price,
+                            n_reg == 0) if celaxes.on("LAYERED")
+                     else _mop_up(plan, sc, reg.color, cap - n_reg, min_blob=40,
+                                  price=price, free_first=n_reg == 0))
+            stats["mop_layers"] += n_mop
+            n_reg += n_mop
+        stats["uncovered_px"] += int(np.count_nonzero(sc.residual))
+        if oi < 10:                        # 큰 면이 얼마를 먹나 (계획 3 계측)
+            stats["big10_layers"] += n_reg
+        if n_reg >= cap:                   # 영역 예산이 실제로 물린 횟수
+            stats["cap_hit"] += 1
+            if cap == share:
+                stats["share_hit"] += 1
+
+    plan.layers.extend(line_layers)       # 선화는 모든 면 위 (마지막 선따기)
+    log(f"  큰 면 10개에 {stats['big10_layers']}장 "
+        f"(채움 {stats['fill_layers']}·막대 {stats['bar_layers']}"
+        f"·마무리 {stats['mop_layers']} 중) · 영역 예산이 물린 곳 "
+        f"{stats['cap_hit']}/{total} (그중 배분 몫 {stats['share_hit']})")
+    if len(_FILL_SHAPES) > 1:             # 채움 어휘 튜닝용 계측
+        tot = max(1, sum(_FILL_WIN.values()))
+        top = sorted(_FILL_WIN.items(), key=lambda kv: -kv[1])
+        stats["fill_win"] = dict(top)
+        log("  채움 도형: " + " · ".join(f"{k} {v}({100 * v / tot:.0f}%)"
+                                      for k, v in top[:12]))
+    if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측
+        log(f"  곡선 획 {_CURVE_STATS['ok']}/{_CURVE_STATS['paths']} "
+            f"(직선 {_CURVE_STATS['flat']}·짧음 {_CURVE_STATS['short']}"
+            f"·부적합 {_CURVE_STATS['nofit']}·저득점 {_CURVE_STATS['lowgain']}"
+            f"·획아님 {_CURVE_STATS['notline']})")
+    if progress:
+        progress(1.0, "배치 완료")
+    return plan, stats
+
+
+def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
+                  source_image: str = "", log=print, progress=None,
+                  value: np.ndarray | None = None,
+                  price: float = 0.0, maps=None,
+                  pol=None) -> tuple[LayerPlan, dict]:
+    """선 도안 — 선화 획**만** 배치한다 (공통 엔진 단독, 면 채움 없음).
+
+    사람이 원화를 반투명 오버레이로 깔고 선만 따라 긋는 방식의 자동화다
+    (`references/사람작업/오버레이-선*.png`). **두 노선이 이 함수를 함께
+    쓴다** — `cel.labels`는 실루엣 한 영역(0/-1)이면 되고, 갈리는 것은
+    `pol`(노선 정책)과 `price`(잉크 가격) 둘뿐이다:
+
+    - **가격** — line 노선은 안 준다 (선이 곧 도안 전부라 나눌 예산이 없다;
+      파편 필터와 예산 우선순위만 거른다). cel 노선은 면이 같은 λ 자를 나눠
+      쓰므로 잉크 몫(λ×`_PRICE_INK`)을 물린다 — 무가격이면 조밀한 그림에서
+      선이 예산을 다 먹어 채움이 굶는다 (홍채·입 채움 소실). **어느 역할이
+      가격을 무는가**는 정책이 정한다 (실루엣·고립 특징은 면제 — 길이로 값을
+      매기면 구조적으로 지는데, 빠지면 그 자리 경계가 통째로 없어진다).
+    - **정책** — 허용 스필·덮임·끊김, 밴드 여유, 덮어 그리기 여부, 한 획의
+      도형 상한 (`policy` 문서). 두 노선의 **논리 획 그래프는 같다**: 정책은
+      그 위에서 무엇을 그릴지와 어느 후보를 쓸지만 고른다. 그래서 노선별
+      결과 차이가 나면 그 이유가 정책 한 칸으로 적힌다 (`report`의 `policy`·
+      `dropped`).
+
+    stats 자가 지표는 렌더와 같은 폴리곤 식(`_ink_cover`)으로 잰다:
+    ink_cover(선 지도 중 획이 덮는 몫) · ink_stray(획 잉크 중 선 지도에서
+    최소 획 폭보다 먼 몫 — 최소 폭 강제 스필은 안 센다) · outline_cover
+    (실루엣 테에서 최소 획 폭 안에 잉크가 있는 몫 — 원화가 실루엣에 선을
+    안 그린 그림이 여기서 드러난다. 알파 없는 입력은 None).
+    """
+    _check_vocab(cat, log)
+    w, h = cel.size
+    upp = 900.0 / h                      # cel 노선과 같은 캔버스 배율
+    plan = LayerPlan(source_image=source_image, image_size=(w, h),
+                     units_per_px=upp)
+    for k in _CURVE_STATS:
+        _CURVE_STATS[k] = 0
+    forms = _stroke_forms(cat)
+    sids = itertools.count()
+    stats: dict = {}
+    n = _fit_lines(plan, cel, cat, upp, budget, forms, log, sids=sids,
+                   carve=False, progress=progress, stats=stats,
+                   value=value, price=price * _PRICE_INK, maps=maps, pol=pol)
+    stats["line_layers"] = n
+    stats["strokes"] = len({l.stroke for l in plan.layers if l.stroke >= 0})
+    if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측 (fit_plan과 동일)
+        log(f"  곡선 획 {_CURVE_STATS['ok']}/{_CURVE_STATS['paths']} "
+            f"(직선 {_CURVE_STATS['flat']}·짧음 {_CURVE_STATS['short']}"
+            f"·부적합 {_CURVE_STATS['nofit']}·저득점 {_CURVE_STATS['lowgain']}"
+            f"·획아님 {_CURVE_STATS['notline']})")
+    ink = _ink_cover(plan.layers, cat, upp, w, h)
+    lm = cel.line_mask
+    # "가깝다"의 자는 상수가 아니라 게임 격자 — 최소 도형(스케일 0.01)의 폭
+    r = max(1, int(round(2.0 * _min_span(upp))))
+    k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+    near_line = cv2.dilate(lm.astype(np.uint8), k5).astype(bool)
+    stats["ink_cover"] = round(float((ink & lm).sum()) / max(1, int(lm.sum())), 4)
+    # ±1px 완화판 — 획이 띠보다 반 픽셀 가늘거나 밀려 남는 **옆구리 실오라기**
+    # (선은 이어져 보인다)를 커버리지 미달로 세지 않는다. 실측(01) 미커버의
+    # 85%가 이 실오라기였다 — 진짜 결함(획 통째 누락·점선)은 이 완화로도 남는다
+    near_ink = cv2.dilate(ink.astype(np.uint8),
+                          np.ones((3, 3), np.uint8)).astype(bool)
+    stats["ink_near"] = round(float((near_ink & lm).sum())
+                              / max(1, int(lm.sum())), 4)
+    stats["ink_stray"] = round(float((ink & ~near_line).sum())
+                               / max(1, int(ink.sum())), 4)
+    stats["outline_cover"] = stats["outline_src"] = None
+    if bool((cel.labels < 0).any()):      # 알파 없는 입력은 테가 액자 테두리다
+        sel = cel.labels >= 0
+        rim = sel & ~cv2.erode(sel.astype(np.uint8),
+                               np.ones((3, 3), np.uint8)).astype(bool)
+        near_ink = cv2.dilate(ink.astype(np.uint8), k5).astype(bool)
+        stats["outline_cover"] = round(float((rim & near_ink).sum())
+                                       / max(1, int(rim.sum())), 4)
+        # 원화 쪽 상한 — 실루엣 테에 **선 지도**가 있는 몫. 잉크 몫과의 차가
+        # 곧 "선은 있는데 획이 안 선" 배치 손실이다 (실측 01: 95% vs 80% —
+        # 옅은 선의 대시 조각이 안 그려진 자리). 판정 문구가 이 둘로 원화
+        # 탓과 배치 탓을 가른다
+        stats["outline_src"] = round(float((rim & near_line).sum())
+                                     / max(1, int(rim.sum())), 4)
+    if progress:
+        progress(1.0, "배치 완료")
+    return plan, stats

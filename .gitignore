@@ -1,0 +1,41 @@
+# 레퍼런스 영상·이미지 (대용량 mp4 — 로컬에만 보관)
+references/
+
+# 도안 산출물 (재생성 가능)
+out/
+
+# 도안이 아닌 살림 — 편집기 상태·기하 덤프·캐시·검증 스크래치·계측
+work/
+
+# 신경망 모델 (합쳐 340MB — 릴리스에서 받는다, forzasqueegee/modelstore.py)
+models/*.onnx
+
+# 요구사항 정리 (개발 세션 기록 — 배포본에 안 들어간다)
+REQUIREMENTS.md
+
+# FLS 편집기 동봉본 (AGPL-3.0 — 저장소에 넣지 않는다, tools/get_fls.py가 받는다)
+vendor/fls-editor/*
+!vendor/fls-editor/README.md
+
+# KFPS 편집기 도형 리소스 (게임 도형 메시 2,800파일 — 우리가 재배포하지 않는다,
+# tools/get_kfps.py가 KFPS 고정 커밋에서 받는다)
+vendor/kfps-editor/Resources/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 빌드 산출물 (배포는 저장소 + ForzaSqueegee.bat이다 — 얼린 exe는 안 만든다)
+build/
+dist/
+*.spec
+*.egg-info/
+
+# OS
+Thumbs.db
+desktop.ini
+
+# 도구 상태 파일
+.claude/scheduled_tasks.lock
