@@ -13,6 +13,18 @@
     선/색면 틈 · 반대색 슬리버        맞물림이 어긋난 자리
     보정 도형 · 잔차 수리             마지막 수단을 몇 번 썼나
     중요도 가중 재현 오차             눈에 띄는 자리에 가중한 색 오차
+    바탕 덮음 · 보이는 장/영역        한 형태를 **한 장**이 맡고 있나
+    도형 갈아타기 · 쓴 종수           한 면을 같은 종류로 끝냈나
+    가려진 짝                         한 형태가 조각으로 끊긴 정도
+    **보이는 오차** · 면 안 틀림      경계 양자화를 뺀 색 오차 (아래)
+
+**색 오차에는 자가 둘이다.** 평균·중요도 가중 ΔE는 경계 양자화까지 센다 —
+실측(기준판 01·06·08)에서 문턱을 넘는 픽셀의 **96%가 셀 목표의 색 경계에서
+1.5px 안**이고, 그 자리는 도형 가장자리가 게임 격자(이동 0.5·스케일 0.01)에
+걸려 반 픽셀 어긋난 것이라 인게임 벡터 렌더에는 그렇게 안 나온다. 그것까지
+넣으면 "장수를 줄이면 언제나 오차가 는다"로만 읽혀 **구조 개선과 화질 회귀를
+못 가른다.** 그래서 경계 띠와 JND 하한을 뺀 `imp_error_seen`·`wrong_far_rate`를
+함께 낸다 — 장수를 줄이는 변경은 이 둘로 판정한다.
 
 이 표를 판끼리 나란히 세워 본다. 고정된 감축 목표를
 먼저 정하지 않는다 — 기준판을 재고, 회귀 전체에서 **품질과 위상을 지키면서**
@@ -29,6 +41,7 @@ from ..celart import CelArt
 from ..celart.marks import _MARK_DE, _MARK_RATIO
 from ..model import LayerPlan
 from . import residual
+from .geometry import _poly_px
 
 # "색이 틀렸다"의 문턱 — `residual._THR`과 같은 자
 _THR = residual._THR
@@ -86,21 +99,18 @@ def _crossing(cel: CelArt, render: np.ndarray, de: np.ndarray,
     return int((best < d_own - 0.5 * _THR).sum()), total
 
 
-def _mark_regions(cel: CelArt) -> set[int]:
-    """무늬 보호 조각의 영역 id — `celart.marks`와 같은 판정."""
+def _border_table(cel: CelArt) -> tuple[dict, np.ndarray, np.ndarray]:
+    """(접경 길이 dict {(a,b): px} · 영역별 둘레 · 영역 면적) — 4이웃 두 방향.
+
+    `_mark_regions`와 `_latent`가 같은 표를 쓴다 (한 번만 센다).
+    """
     lb = cel.labels
     n = int(lb.max()) + 1 if lb.max() >= 0 else 0
-    if n <= 0 or n > 8192:
-        return set()
-    area = np.zeros(n, np.int64)
-    col = np.zeros((n, 3), np.float32)
+    border: dict = {}
+    peri = np.zeros(max(n, 1), np.int64)
+    area = np.zeros(max(n, 1), np.int64)
     for r in cel.regions:
         area[r.rid] = r.area
-        col[r.rid] = r.color
-    lab_col = cv2.cvtColor(col.reshape(-1, 1, 3).astype(np.uint8),
-                           cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
-    border = {}
-    peri = np.zeros(n, np.int64)
     for a, b in ((lb[:, :-1], lb[:, 1:]), (lb[:-1], lb[1:])):
         sel = (a >= 0) & (b >= 0) & (a != b)
         if not sel.any():
@@ -111,6 +121,70 @@ def _mark_regions(cel: CelArt) -> set[int]:
         for k_, c_ in zip(uk.tolist(), kc.tolist()):
             border[k_] = border.get(k_, 0) + c_
             peri[k_ // n] += c_
+    return border, peri, area
+
+
+def _latent(cel: CelArt, border: dict, area: np.ndarray) -> tuple[int, int]:
+    """**가려져 갈라진 같은 색 짝**의 수와 그 px — 한 형태가 조각으로
+    끊긴 정도를 재는 자.
+
+    한 덩어리였을 것이 앞에 놓인 것에 가려 라벨 지도에서 두 조각으로 끊긴
+    자리다 (머리칼이 얼굴에 가려 좌우로 갈린 꼴). 판정은 셋이다:
+
+        ① 두 영역이 서로 **안 닿는다** (접경 0 — 그래프 병합이 못 본다)
+        ② 색이 사실상 같다 (ΔE < `_MARK_DE` — 합쳐도 재현 손해가 없다)
+        ③ **둘 다 닿는 이웃**이 있고 그 이웃이 둘의 합보다 작다
+           (= 넓이 내림차순 그리기 순서에서 **나중에** 그려져 위를 덮는다)
+
+    셋이 서면 그 짝은 한 장으로 그릴 수 있는 자리인데 지금은 조각마다
+    따로 근사된다. 여기서는 세기만 한다.
+    """
+    lb = cel.labels
+    n = int(lb.max()) + 1 if lb.max() >= 0 else 0
+    if n <= 0:
+        return 0, 0
+    col = np.zeros((max(n, 1), 3), np.float32)
+    live = np.zeros(max(n, 1), bool)
+    for r in cel.regions:
+        col[r.rid] = r.color
+        live[r.rid] = True
+    lab_col = cv2.cvtColor(col.reshape(-1, 1, 3).astype(np.uint8),
+                           cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+    nb: dict = {}
+    for k_ in border:
+        a_, b_ = divmod(k_, n)
+        nb.setdefault(a_, set()).add(b_)
+    pairs = set()
+    for c_, ns in nb.items():
+        if not live[c_]:
+            continue
+        ns = sorted(x for x in ns if live[x])
+        for i in range(len(ns)):
+            for j in range(i + 1, len(ns)):
+                a_, b_ = ns[i], ns[j]
+                if (a_ * n + b_) in border:          # ① 서로 닿으면 아니다
+                    continue
+                if area[c_] >= area[a_] + area[b_]:  # ③ 이웃이 먼저 그려진다
+                    continue
+                if float(np.linalg.norm(lab_col[a_] - lab_col[b_])) >= _MARK_DE:
+                    continue                          # ②
+                pairs.add((a_, b_))
+    px = int(sum(min(int(area[a_]), int(area[b_])) for a_, b_ in pairs))
+    return len(pairs), px
+
+
+def _mark_regions(cel: CelArt, border: dict, peri: np.ndarray,
+                  area: np.ndarray) -> set[int]:
+    """무늬 보호 조각의 영역 id — `celart.marks`와 같은 판정."""
+    lb = cel.labels
+    n = int(lb.max()) + 1 if lb.max() >= 0 else 0
+    if n <= 0 or n > 8192:
+        return set()
+    col = np.zeros((n, 3), np.float32)
+    for r in cel.regions:
+        col[r.rid] = r.color
+    lab_col = cv2.cvtColor(col.reshape(-1, 1, 3).astype(np.uint8),
+                           cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
     best: dict[int, tuple[int, int]] = {}
     for k_, c_ in border.items():
         a_, b_ = divmod(k_, n)
@@ -187,8 +261,80 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     if ink_i:
         out["line_visible_med"] = float(np.median(vis[ink_i]))
 
+    # ── **한 영역을 한 장이 얼마나 덮나** (원인 4·5를 재는 자).
+    # 영역당 장수(위)는 "몇 장을 샀나"를 세지만, 사람 도안과 갈리는 것은
+    # **큰 형태 한 장이 그 면의 몸통을 통째로 맡는가**이다. 조각붙임은
+    # 장수가 같아도 이 값이 낮다 — 어느 한 장도 몸통을 못 맡고 저마다
+    # 부스러기를 맡기 때문이다. `owner`가 픽셀마다 최종 소유자를 들고
+    # 있으므로 (레이어, 영역) 칸마다 보이는 px를 세면 바로 나온다.
+    insil0 = cel.labels >= 0
+    seen = (owner >= 0) & insil0
+    base_cov: list[float] = []
+    vis_per_reg: dict[int, int] = {}
+    if seen.any():
+        nreg_k = int(cel.labels.max()) + 1
+        key = owner[seen].astype(np.int64) * nreg_k + cel.labels[seen]
+        uk, kc = np.unique(key, return_counts=True)
+        top: dict[int, int] = {}
+        for k_, c_ in zip(uk.tolist(), kc.tolist()):
+            rid_ = k_ % nreg_k
+            if labels[k_ // nreg_k] == "ink":
+                continue                       # 획은 영역의 몫이 아니다
+            vis_per_reg[rid_] = vis_per_reg.get(rid_, 0) + 1
+            if c_ > top.get(rid_, 0):
+                top[rid_] = c_
+        for r in cel.regions:
+            if r.rid in top:
+                base_cov.append(min(1.0, top[r.rid] / max(1.0, float(r.area))))
+    if base_cov:
+        bc = np.asarray(base_cov, np.float64)
+        out["base_cover_med"] = round(float(np.median(bc)), 4)
+        out["base_cover_80"] = round(float((bc >= 0.8).mean()), 4)
+    if vis_per_reg:
+        out["visible_shapes_per_region"] = round(
+            float(np.mean(list(vis_per_reg.values()))), 3)
+
+    # ── **도형 갈아타기** (원인 4) — 한 영역 안에서 이어 놓은 채움 도형이
+    # 종류를 바꾸는 비율. 사람은 한 면을 같은 종류 몇 장으로 끝내고, 기계는
+    # 잔차를 줍느라 장마다 다른 도형을 고른다 (획 쪽 `family_switch`의 면 판)
+    seq: dict[int, list[str]] = {}
+    for i, rid in enumerate(reg_of):
+        if labels[i] == "ink" or rid < 0:
+            continue
+        seq.setdefault(rid, []).append(plan.layers[i].shape)
+    sw = tot_pair = 0
+    for v in seq.values():
+        for a_, b_ in zip(v, v[1:]):
+            tot_pair += 1
+            sw += a_ != b_
+    if tot_pair:
+        out["fill_family_churn"] = round(sw / tot_pair, 4)
+    fam = {plan.layers[i].shape for i, x in enumerate(labels) if x != "ink"}
+    out["fill_family_n"] = len(fam)
+
+    # ── **덮여 들어간 몫** — 그린 넓이 대비 보이는 넓이. 1보다 크면 그 장이
+    # 뒤 레이어 **밑까지** 뻗어 있다는 뜻이다 (사람이 큰 면을 뒤로 보내고
+    # 나중 파츠가 모서리를 덮게 두는 그 자유를 실제로 쓰고 있나)
+    if fill_i:
+        drawn = np.zeros(len(plan.layers), np.int64)
+        for i in fill_i:
+            polys = [np.round(q).astype(np.int32)
+                     for q in _poly_px(cat, plan.layers[i],
+                                       plan.units_per_px, *cel.size)]
+            if not polys:
+                continue
+            xs = np.concatenate([q[:, 0] for q in polys])
+            ys = np.concatenate([q[:, 1] for q in polys])
+            drawn[i] = max(0, int(xs.max() - xs.min())) *                 max(0, int(ys.max() - ys.min()))
+        ok = (vis[fill_i] > 0) & (drawn[fill_i] > 0)
+        if ok.any():
+            out["fill_bbox_over_visible_med"] = round(float(np.median(
+                drawn[fill_i][ok] / vis[fill_i][ok])), 3)
+
     # ── 작은 중요 영역 보존 — 무늬 보호 조각 중 도형을 실제로 받은 몫
-    marks = _mark_regions(cel)
+    bord, peri_t, area_t = _border_table(cel)
+    out["latent_pairs"], out["latent_px"] = _latent(cel, bord, area_t)
+    marks = _mark_regions(cel, bord, peri_t, area_t)
     out["small_important_regions"] = len(marks)
     out["small_important_kept"] = round(
         sum(1 for r in marks if per.get(r, 0) > 0) / max(1, len(marks)), 4)
@@ -211,6 +357,33 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         keep[0] = False
         sliver = int(keep.sum())
     out["wrong_color_slivers"] = sliver
+
+    # ── **보이는 오차** — 경계 양자화를 빼고 남는 색 오차.
+    # 실측(B0 01·06·08): ΔE가 문턱을 넘는 픽셀의 **96%가 셀 목표의 색 경계에서
+    # 1.5px 안**이다. 그 자리는 도형의 가장자리가 게임 격자(이동 0.5·스케일
+    # 0.01)에 걸려 반 픽셀 어긋난 것이고, 인게임은 벡터라 화면에 그렇게 안
+    # 나온다. 평균 ΔE에 그것을 넣으면 "장수를 줄이면 언제나 오차가 는다"로만
+    # 읽혀 **구조 개선과 화질 회귀를 못 가른다.** 여기서는 경계 띠(±1px)를
+    # 빼고, JND 하한(`marks._MARK_DE`) 아래도 빼고 남는 **면 안의 오차**를 낸다.
+    flat = cel.flat_render()
+    fl = cv2.cvtColor(flat, cv2.COLOR_RGB2LAB).astype(np.float32)
+    ce = np.zeros(de.shape, bool)
+    dh = np.linalg.norm(fl[:, :-1] - fl[:, 1:], axis=2) > _MARK_DE
+    ce[:, :-1] |= dh
+    ce[:, 1:] |= dh
+    dv_ = np.linalg.norm(fl[:-1] - fl[1:], axis=2) > _MARK_DE
+    ce[:-1] |= dv_
+    ce[1:] |= dv_
+    seen = (cel.labels >= 0) & ~cv2.dilate(
+        ce.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    de_seen = np.where(de >= _MARK_DE, de, 0.0)
+    out["wrong_far_px"] = int(((de > _THR) & seen).sum())
+    out["wrong_far_rate"] = round(float(out["wrong_far_px"]
+                                        / max(int(seen.sum()), 1)), 5)
+    if value is not None and seen.any():
+        vs = value[seen].astype(np.float64)
+        out["imp_error_seen"] = round(float((vs * de_seen[seen]).sum()
+                                            / max(vs.sum(), 1e-9)), 4)
 
     # ── 중요도 가중 재현 오차 — 값 맵으로 가중한 ΔE (눈에 띄는 자리 우선)
     insil = cel.labels >= 0

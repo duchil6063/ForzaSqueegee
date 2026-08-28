@@ -161,7 +161,8 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                      ink=ink_cov[y0:y1, x0:x1] if ink_cov is not None else None,
                      val=value[y0:y1, x0:x1] if value is not None else None,
                      seam=celaxes.on("PAIR"),
-                     protect=protect[y0:y1, x0:x1] if protect is not None else None)
+                     protect=protect[y0:y1, x0:x1] if protect is not None else None,
+                     silcap=True)
 
         n_reg = 0
         lo = len(plan.layers)              # 이 영역이 놓기 시작하는 자리

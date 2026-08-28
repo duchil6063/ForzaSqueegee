@@ -12,9 +12,10 @@ import os
 import cv2
 import numpy as np
 
+from .. import celaxes
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE, Layer
-from .geometry import _grad_alpha, _poly_px
+from .geometry import _grad_alpha, _min_span, _poly_px
 
 
 # 획 채점의 낭비 벌점 — 선 띠 **밖** 픽셀 하나당. 1.0보다 싸면 "새로 먹는
@@ -111,6 +112,23 @@ _INK_FREE = os.environ.get("FS_INK_FREE", "1") != "0"
 # 잔차 진단의 `boundary` 갈래가 잡아 §12가 기존 도형을 밀어 고친다.
 _SEAM_PULL = float(os.environ.get("FS_CEL_SEAM", 0.35))
 
+# ── §17 **실루엣 밖은 값이 아니라 금지다.**
+# 실루엣 밖 스필은 px당 `_PEN_BG`로 **값을 매겨** 왔다. 그 값(12)은 한 번
+# 올린 값이다 — "4×만으로는 큰 채움이 새 픽셀 이득으로 벌점을 눌러 실루엣 밖
+# 사각형이 찍혔다"(위 `_PEN_BG` 문서). 값으로 두는 한 그 실패는 **면이 커질
+# 때마다 되돌아온다**: 이득은 면적에 비례해 자라는데 벌점은 px당 상수라,
+# 충분히 큰 면에서는 언제나 눌린다 (실측: 병합으로 면이 커진 판에서 실루엣
+# 밖 스필이 실루엣에서 최대 86px까지 뻗었다 — 종전 38px).
+#
+# 그런데 그 자리는 **거래가 아니다.** 안쪽 스필이 공짜인 근거는 "나중 면·획이
+# 덮는다"인데 밖에는 덮어 줄 것이 없고, 이 노선에는 뺄셈 마스크가 없어 나중에
+# 지울 수도 없다. 이득이 0이고 되돌릴 수 없으면 값이 아니라 **제약**이다.
+#
+# 문턱은 새 상수가 아니라 게임 격자다 — 도형 가장자리는 최소 도형 폭
+# (`geometry._min_span`) 눈금에만 설 수 있으므로 그 한 칸까지의 물림은
+# **강제**다 (같은 자를 `snap_labels_to_ink` 반경과 껍질 컷이 쓴다).
+# 그 밖으로 나가는 후보는 점수가 아니라 자격에서 진다.
+
 
 class _Scorer:
     """영역 하나의 채점판 — ROI 배열 셋 (내 잔여·내 면·금지).
@@ -128,7 +146,8 @@ class _Scorer:
                  ink: np.ndarray | None = None, val: np.ndarray | None = None,
                  soft: np.ndarray | None = None, retrace: float = 0.0,
                  pen_far: float = 0.0, seam: bool = False,
-                 protect: np.ndarray | None = None):
+                 protect: np.ndarray | None = None,
+                 silcap: bool = False):
         self.cat, self.upp, self.w, self.h, self.roi = cat, upp, w, h, roi
         self.mask = mask                  # 내 면 전체 (bool, ROI)
         self.residual = mask.copy()       # 아직 안 덮인 내 면
@@ -186,6 +205,15 @@ class _Scorer:
             if protect is not None:
                 sm_ = sm_ & ~protect
             self.seam = sm_ if sm_.any() else None
+        # §17 실루엣에서 **격자 한 칸보다 멀리** 있는 배경 — 여기를 무는 후보는
+        # 자격에서 진다 (점수로 안 다툰다). 획 배치는 안 건다: 획은 제 밴드
+        # 안에서만 놓이고 실루엣 테를 따라 그어야 한다
+        self.farbg = None
+        if silcap and celaxes.on("SILCAP") and bg.any():
+            r = max(1, int(round(_min_span(upp))))
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1,) * 2)
+            far = cv2.erode(bg.astype(np.uint8), k).astype(bool)
+            self.farbg = far if far.any() else None
         self._spill = ~mask & ~self.free & ~self.outb  # 낭비 후보 (forb·bg 포함)
         self.pen_far = pen_far
         self._farm = (self._spill & ~soft & ~bg
@@ -323,6 +351,9 @@ class _Scorer:
             hit = m & sel
             return float(np.count_nonzero(hit) if wt is None else wt[hit].sum())
 
+        if self.farbg is not None:         # §17 — 자격 판정 (점수 아님)
+            if np.count_nonzero(m & self.farbg[by0:by1, bx0:bx1]):
+                return -1e9, None, None
         res_box = self.residual[by0:by1, bx0:bx1]
         gain_box = (res_box if self.limit is None
                     else res_box & self.limit[by0:by1, bx0:bx1])

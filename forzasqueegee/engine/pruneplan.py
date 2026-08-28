@@ -9,6 +9,10 @@
 반투명 레이어가 하나라도 있으면 소유자 모델이 성립하지 않아 중단한다
 (불투명 플랜 전용 — `painter`의 알파 플랜에는 못 쓴다). 마스크 레이어는 항상 유지.
 
+같은 소유자 모형 위에 손이 셋이다: `prune_plan`(기여 0 제거) ·
+`prune_impact`(예산에 맞춰 영향 하위부터 컷) · `prune_price`(§16 사후 가격 —
+기여가 λ 문턱에 못 미치는 장을 되판다). 영향 계산은 `_layer_impact` 한 벌이다.
+
 소유자 래스터는 2배 슈퍼샘플 + 전 레이어 포함 패딩(rect 밖 돌출 유효) —
 서브픽셀 슬리버가 0픽셀로 뭉개져 가시 레이어가 제거되는 것을 방지.
 """
@@ -79,31 +83,23 @@ def prune_plan(plan: LayerPlan, catalog: Catalog, min_vis: float = 0.0,
                      units_per_px=plan.units_per_px, layers=keep), stats
 
 
-def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
-                 protect_labels: tuple[str, ...] = ("ink",),
-                 bg: int = 255,
-                 weight: np.ndarray | None = None) -> tuple[LayerPlan, dict]:
-    """시각 영향이 작은 레이어부터 잘라 예산에 맞춘 새 플랜 반환 (cel 노선용).
+def _layer_impact(plan: LayerPlan, catalog: Catalog, bg: int,
+                  weight: np.ndarray | None,
+                  sil: np.ndarray | None = None):
+    """레이어별 (시각 영향, 소유 px, 그라디언트 여부) — `prune_impact` 문서의 그 자.
 
-    영향 = Σ(소유 px의 ΔE_Lab(내 색, 제거 시 드러나는 색)). 소유 px는 위에서
-    아무도 안 덮으므로 "드러나는 색" = 그 레이어를 찍기 직전의 캔버스 색이다
-    — 소유자 1패스 + 증분 렌더 1패스로 정확히 구한다 (단일 제거 기준; 동시
-    다중 제거의 연쇄 노출은 근사). 같은 색 겹침은 영향 0이라 먼저 잘리고,
-    흰 배경이 뚫리는 자리는 영향이 커서 남는다 — vis px 기준(min_vis)이
-    만들던 반점이 없다. `protect_labels`(선화 획)와 마스크·그라데이션은 지키고,
-    소유 px 0인 레이어는 무조건 정리한다.
+    영향 = Σ(소유 px의 ΔE_Lab(내 색, 제거 시 드러나는 색) × 중요도). 배경이
+    드러나는 px에는 색 불문 바닥(`_BG_PEN`)을 문다. 예산에 맞추는 컷
+    (`prune_impact`)과 사후 가격(`prune_price`)이 같은 자를 쓴다.
 
-    `weight`는 이미지 좌표계(h, w) 곱 배수 맵(`importance.masking_weight`) —
-    같은 색차라도 평평한 면 위가 더 눈에 띈다는 것을 반영한다. 배경 노출의
-    상수 바닥(_BG_PEN)에는 안 곱한다: 그건 "색 불문 핀홀 보호"라 중요도와
-    무관하다.
-
-    컷의 단위는 레이어가 아니라 **획 그룹**(`Layer.stroke`)이다 — 한 획에서
-    나온 마디는 전부 살리거나 전부 버린다. 아래 원자화 주석 참조.
+    `sil`(실루엣 마스크, 이미지 좌표계)을 주면 **실루엣 밖을 칠한 몫은 기여가
+    아니라 해악**으로 센다 (부호를 뒤집는다). 그 자리에는 원화가 없으므로
+    덮을수록 나빠지는데, 바닥 벌점(`_BG_PEN`)은 "밑이 안 칠해졌다"만 보고
+    그런 스필을 **가장 값진 장**으로 읽는다 — 컷에서는 그 오독이 무해했지만
+    (실루엣 밖을 지켜도 장수만 쓴다) 사후 가격에서는 정반대로 작동한다.
+    안 주면 종전 그대로다.
     """
     layers = plan.layers
-    if len(layers) <= budget:
-        return plan, {"before": len(layers), "after": len(layers), "removed": 0}
     grad = [catalog[l.shape].gradient is not None for l in layers]
     for i, l in enumerate(layers):
         if not l.mask and not grad[i] and l.alpha < 99.5:
@@ -151,6 +147,12 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
     canvas_f = canvas.reshape(-1, 3)
     painted_f = painted.ravel()
     # 중요도 맵을 소유자 래스터와 같은 격자(패딩 + 슈퍼샘플)로 올린다
+    sf = None
+    if sil is not None:
+        spad = np.zeros((h + 2 * pad, w + 2 * pad), np.uint8)
+        spad[pad:pad + h, pad:pad + w] = sil.astype(np.uint8)
+        sf = cv2.resize(spad, (ow, oh),
+                        interpolation=cv2.INTER_NEAREST).ravel().astype(bool)
     wf = None
     if weight is not None:
         wpad = np.ones((h + 2 * pad, w + 2 * pad), np.float32)
@@ -172,7 +174,12 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
             if wf is not None:
                 d *= wf[sel_own]
             bgpx = painted_f[sel_own] == 0
-            d[bgpx] = np.maximum(d[bgpx] * _BG_MULT, _BG_PEN)
+            if sf is None:
+                d[bgpx] = np.maximum(d[bgpx] * _BG_MULT, _BG_PEN)
+            else:
+                out = ~sf[sel_own]
+                d[bgpx & ~out] = np.maximum(d[bgpx & ~out] * _BG_MULT, _BG_PEN)
+                d[out] = -d[out]           # 실루엣 밖은 기여가 아니라 해악
             impact[i] = float(d.sum()) / (_SS * _SS)
         color = (bg, bg, bg) if l.mask else l.rgb()
         pval = 0 if l.mask else 1          # 마스크는 배경을 되살린다
@@ -187,7 +194,89 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
                 poly_buf ^= mm
             canvas[poly_buf.astype(bool)] = color
             painted[poly_buf.astype(bool)] = pval
+    return impact, vis, grad
 
+
+def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
+                protect_labels: tuple[str, ...] = ("ink", "hole"),
+                bg: int = 255, weight: np.ndarray | None = None,
+                sil: np.ndarray | None = None,
+                rounds: int = 3) -> tuple[LayerPlan, dict]:
+    """§16 **사후 가격** — 다 그려 놓고 값을 다시 묻는다.
+
+    가격 설계는 살 때 "이 한 장이 λ만큼 버는가"를 묻는다. 그런데 그 답은
+    **산 시점의 잔여**에 대한 것이다: 뒤에 그린 면이 그 자리를 덮어 버리면
+    실제 기여는 그보다 훨씬 작아진다. 배치가 끝난 판에서 다시 물으면
+    "샀는데 안 보이는 장"이 그대로 나온다 — 그것이 곧 부스러기 도형
+    (`metrics.tiny_visible_ratio`)이고, 조각붙임의 한 축이다.
+
+    자는 새로 안 만든다. 기여는 `prune_impact`가 예산 컷에 쓰는 그 영향
+    (Σ 소유 px의 값×ΔE, 배경 노출은 바닥 벌점)이고, 문턱은 같은 단위의
+    수리 문턱 `price.repair_min_gain(λ)`이다 — "지금 이 자리에 이 장을
+    **새로 사겠는가**"를 묻는 것과 같은 부등식이다. 못 미치면 되판다.
+
+    `protect_labels`는 손대지 않는다 — 획(`ink`)은 선 노선과 공유하는
+    산출물이고, 구멍 메움(`hole`)은 게이트가 지키는 자리다. 배경이 드러나는
+    장은 영향의 바닥 벌점 때문에 문턱을 한참 넘어 저절로 남는다.
+
+    `sil`(실루엣)을 주면 **실루엣 밖으로 샌 몫은 기여에서 뺀다** (`_layer_impact`
+    문서) — 큰 바탕 도형이 실루엣을 넘어가면 그 자리는 인게임에서 차 도색 위에
+    남는 자국이다. 안쪽에서 버는 것보다 밖에서 흘리는 것이 크면 되판다.
+
+    한 장을 되팔면 그 밑이 드러나 이웃 장의 기여가 바뀌므로 **수렴까지**
+    돈다 (`rounds`는 폭주 방지 뚜껑).
+    """
+    stats = {"before": len(plan.layers), "removed": 0, "rounds": 0}
+    for _ in range(max(1, rounds)):
+        layers = plan.layers
+        impact, _vis, grad = _layer_impact(plan, catalog, bg, weight, sil)
+        groups: dict[int, list[int]] = {}
+        for i, l in enumerate(layers):
+            if l.mask or grad[i] or l.label in protect_labels:
+                continue
+            groups.setdefault(l.stroke if l.stroke >= 0 else ~i, []).append(i)
+        cut: set[int] = set()
+        for _k, g in sorted(groups.items()):        # 결정적 순회
+            if float(impact[g].mean()) < min_impact:
+                cut.update(g)
+        if not cut:
+            break
+        plan = LayerPlan(source_image=plan.source_image,
+                         image_size=plan.image_size,
+                         units_per_px=plan.units_per_px,
+                         layers=[l for i, l in enumerate(layers) if i not in cut])
+        stats["removed"] += len(cut)
+        stats["rounds"] += 1
+    stats["after"] = len(plan.layers)
+    return plan, stats
+
+
+def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
+                 protect_labels: tuple[str, ...] = ("ink",),
+                 bg: int = 255,
+                 weight: np.ndarray | None = None) -> tuple[LayerPlan, dict]:
+    """시각 영향이 작은 레이어부터 잘라 예산에 맞춘 새 플랜 반환 (cel 노선용).
+
+    영향 = Σ(소유 px의 ΔE_Lab(내 색, 제거 시 드러나는 색)). 소유 px는 위에서
+    아무도 안 덮으므로 "드러나는 색" = 그 레이어를 찍기 직전의 캔버스 색이다
+    — 소유자 1패스 + 증분 렌더 1패스로 정확히 구한다 (단일 제거 기준; 동시
+    다중 제거의 연쇄 노출은 근사). 같은 색 겹침은 영향 0이라 먼저 잘리고,
+    흰 배경이 뚫리는 자리는 영향이 커서 남는다 — vis px 기준(min_vis)이
+    만들던 반점이 없다. `protect_labels`(선화 획)와 마스크·그라데이션은 지키고,
+    소유 px 0인 레이어는 무조건 정리한다.
+
+    `weight`는 이미지 좌표계(h, w) 곱 배수 맵(`importance.masking_weight`) —
+    같은 색차라도 평평한 면 위가 더 눈에 띈다는 것을 반영한다. 배경 노출의
+    상수 바닥(_BG_PEN)에는 안 곱한다: 그건 "색 불문 핀홀 보호"라 중요도와
+    무관하다.
+
+    컷의 단위는 레이어가 아니라 **획 그룹**(`Layer.stroke`)이다 — 한 획에서
+    나온 마디는 전부 살리거나 전부 버린다. 아래 원자화 주석 참조.
+    """
+    layers = plan.layers
+    if len(layers) <= budget:
+        return plan, {"before": len(layers), "after": len(layers), "removed": 0}
+    impact, vis, grad = _layer_impact(plan, catalog, bg, weight)
     # 획 그룹 원자화 — 한 획에서 나온 마디(`stroke` 같은 값)는 전부 살리거나
     # 전부 버린다. 중간 마디만 잘리면 그 자리가 빈틈이 되어 획이 점선으로
     # 읽힌다. 그룹의 순위는 **마디당 평균 영향** — 합으로 매기면 긴 획은 마디

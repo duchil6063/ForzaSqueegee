@@ -39,6 +39,7 @@ import os
 
 import numpy as np
 
+from .. import celaxes
 from .marks import _MARK_DE, _MARK_RATIO
 
 # ── 비용의 저울 (전 이미지 공통 — 타깃별 손튜닝 금지) ────────────────────
@@ -63,6 +64,22 @@ _KAPPA = float(os.environ.get("FS_RAG_KAPPA", 0.5))
 _IMP_P = float(os.environ.get("FS_RAG_IMP", 1.0))
 # 무늬 보호 조각의 색 재현 손해 배수 — 지우면 특징이 통째로 사라지는 조각
 _MARK_MUL = float(os.environ.get("FS_RAG_MARK", 4.0))
+
+
+def _de_seen(de: float | np.ndarray):
+    """§15 — **안 보이는 색차는 색차가 아니다.** ΔE에서 JND 하한을 뺀 나머지.
+
+    비용식의 색 재현 손해는 ΔE²에 비례한다 — 그런데 그 ΔE에는 바닥이 없어서,
+    **아무도 못 보는 차이**에도 값을 매긴다. 넓은 두 면이 ΔE 3으로 갈려 있으면
+    면적이 커서 손해 항이 λ를 넘고, 그 경계가 그대로 남아 도형을 따로 산다.
+    화면은 한 픽셀도 안 달라지는데 장수만 든다 — 요청 §1의 "가짜 경계"가
+    분해 단계에 남는 자리가 여기다.
+
+    하한은 새 상수가 아니라 `marks._MARK_DE`다 — 같은 파일이 "진짜 안 보이는
+    조각(JND 미만)까지 지키지 않기 위한 하한"으로 이미 쓰고 있고, 무늬 보호
+    조각 판정이 그 값으로 "보이나"를 가른다. 같은 물음이므로 같은 자를 쓴다.
+    """
+    return np.maximum(0.0, np.asarray(de, np.float64) - _MARK_DE)
 
 
 def complexity(area, peri):
@@ -205,9 +222,16 @@ class RegionGraph:
         bnd, gsum, lsum = e
         aa, ab = self.area[a], self.area[b]
         de = float(np.linalg.norm(self.col[a] - self.col[b]))
+        mark = self._mark(a) or self._mark(b)
+        # §15 — 안 보이는 차이는 값이 없다. **무늬 보호 조각은 뺀다**: 그
+        # 판정의 뜻이 "훨씬 큰 평평한 면 위라 마스킹이 없어 작은 색차도 또렷이
+        # 보인다"이므로(`marks` 문서), 하필 그 자리에 "안 보인다"의 하한을
+        # 걸면 눈 흰자·코 그림자가 통째로 병합된다
+        if celaxes.on("MERGEJND") and not mark:
+            de = float(_de_seen(de))
         imp = (aa * self.imp[a] + ab * self.imp[b]) / max(aa + ab, 1.0)
         recon = (aa * ab / max(aa + ab, 1.0)) * (de / _DE_REF) ** 2 * imp ** _IMP_P
-        if self._mark(a) or self._mark(b):
+        if mark:
             recon *= _MARK_MUL
         gnorm = min(3.0, (gsum / max(bnd, 1.0)) / self.g_ref)
         # **경계를 지키는 값은 그 경계가 보일 때만 든다.** 선 밑 경계라고 무조건

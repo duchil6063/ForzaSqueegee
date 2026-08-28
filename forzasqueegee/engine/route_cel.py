@@ -338,6 +338,36 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         if buys:
             log(f"  유예 덮개 {len(buys)}장 구매 (예산 잔여 {room}장 중)")
     _hlog("유예 덮개 후")
+    # §16 **사후 가격** — 다 그린 판에서 값을 다시 묻는다 (`prune_price` 문서).
+    # 살 때의 값은 그 시점 잔여 기준이라, 뒤에 그린 면이 덮은 자리는 값이
+    # 사라진다. 문턱은 수리와 같은 λ 환산(`repair_min_gain`)이고 획·메움은
+    # 안 건드린다 — 배경이 드러나는 장은 영향의 바닥 벌점이 지킨다
+    if celaxes.on("POSTPRICE"):
+        from .pruneplan import prune_price
+
+        plan, pp = prune_price(plan, cat, repair_min_gain(lam), weight=val,
+                               sil=cel.labels >= 0)
+        stats["postprice"] = pp["removed"]
+        if pp["removed"]:
+            log(f"  사후 가격: {pp['before']} → {pp['after']}장 "
+                f"(기여가 수리 문턱({repair_min_gain(lam):,.0f})에 못 미치는 "
+                f"{pp['removed']}장 되팜, {pp['rounds']}바퀴)")
+            # 되팔면 그 밑이 드러난다. 영향의 바닥 벌점(`_BG_PEN`)이 배경을
+            # 여는 장을 지키지만 그것은 **한 장씩 뺐을 때**의 셈이라, 위아래
+            # 두 장이 같은 바퀴에 팔리면 연쇄로 배경이 열릴 수 있다 (실측
+            # C20-09: 구멍 게이트 탈락). 그래서 여기서 반드시 되메운다 —
+            # 먼저 이웃을 늘려 공짜로 흡수하고(레이어 0장), 그래도 남으면
+            # 되판 만큼의 잔여 안에서 메움을 산다. 게이트가 지키는 자리다
+            if count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
+                                   value=val, price=lam):
+                grow_covers(plan, cel, cat, log=log, passes=6)
+                n_h = fill_holes(plan, cel, cat, log=log, min_px=HOLE_MIN_PX,
+                                 max_layers=max(0, shapes - len(plan.layers)),
+                                 value=val, price=lam)
+                stats["hole_layers"] += n_h
+                if n_h:
+                    grow_covers(plan, cel, cat, log=log, passes=6)
+    _hlog("사후 가격 후")
     if _dbg:
         plan.save(run_file(out, "plan_preft.json"))
     # 전역 미세 조정 (DiffCompositing 이산 이식) — 완성된 스택 전체를 놓고
