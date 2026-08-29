@@ -27,6 +27,9 @@ __pycache__/
 .venv/
 venv/
 
+# 전용 파이썬 런타임 (ForzaSqueegee.bat이 python.org 임베더블을 받아 편다)
+runtime/
+
 # 빌드 산출물 (배포는 저장소 + ForzaSqueegee.bat이다 — 얼린 exe는 안 만든다)
 build/
 dist/

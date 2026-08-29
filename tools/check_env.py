@@ -6,6 +6,7 @@
 
     python tools/check_env.py          # 맞으면 0, 아니면 1
     python tools/check_env.py --quiet  # 찍지 않고 코드만
+    python tools/check_env.py --deep   # 판 대조에 더해 실제로 임포트까지 해 본다
 
 표준 라이브러리만 쓴다 — 꾸러미가 아직 없을 때 도는 자리다. 출력은 콘솔
 코드페이지(cp949)에 실리므로 ASCII 문장부호만 쓴다.
@@ -68,5 +69,35 @@ def check(quiet: bool = False) -> int:
     return 1 if bad else 0
 
 
+# 꾸러미 이름 → 실제로 임포트해 볼 모듈. 판은 맞는데 못 뜨는 경우가 있다 —
+# 네이티브 확장이 시스템 DLL(msvcp140 등)을 못 찾을 때다. 매 실행마다 재면
+# 몇 초씩 늘어나므로 설치 직후(--deep)에만 잰다.
+_IMPORTS = (("numpy", "numpy"), ("opencv-python", "cv2"),
+            ("Pillow", "PIL.Image"), ("PySide6", "PySide6.QtWidgets"),
+            ("onnxruntime", "onnxruntime"))
+
+
+def deep(quiet: bool = False) -> int:
+    """핀 임포트를 실제로 해 본다. 못 뜨는 것이 있으면 1."""
+    import importlib
+
+    say = (lambda *a: None) if quiet else print
+    bad = 0
+    for pkg, mod in _IMPORTS:
+        try:
+            importlib.import_module(mod)
+        except Exception as e:                     # noqa: BLE001 — 원인 불문 보고
+            bad += 1
+            say(f"  {pkg}: 임포트 실패 - {e}")
+            if "DLL" in str(e):
+                say("    Visual C++ 재배포 패키지가 없으면 이렇게 된다. 설치:")
+                say("    https://aka.ms/vs/17/release/vc_redist.x64.exe")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
-    sys.exit(check("--quiet" in sys.argv))
+    quiet = "--quiet" in sys.argv
+    rc = check(quiet)
+    if "--deep" in sys.argv:
+        rc = deep(quiet) or rc
+    sys.exit(rc)

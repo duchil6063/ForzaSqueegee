@@ -20,27 +20,33 @@ FH6에는 이미지를 그대로 불러오는 기능이 없습니다. 리버리�
 | | |
 |---|---|
 | OS | Windows 11 (HDR은 꺼 주세요) |
-| 파이썬 | 3.12 ~ 3.14 — 설치할 때 **"Add python.exe to PATH"를 꼭 체크** |
+| 파이썬 | **따로 필요 없습니다** — 첫 실행 때 전용 파이썬을 이 폴더 안에 받아 둡니다 |
 | 게임 | FH6, **창 모드**. Steam판은 알아서 찾고, 그 외에는 폴더를 직접 지정 |
-| 디스크 | 저장소 50MB + 파이썬 패키지 890MB + 모델 332MB |
+| 디스크 | 저장소 50MB + 전용 파이썬·패키지 900MB + 모델 332MB |
 
 ## 설치와 실행
 
 받은 폴더에서 **`ForzaSqueegee.bat`을 더블클릭**하면 됩니다. 창이 뜨면 이미지를
 끌어다 놓고, 레이어 수를 정한 뒤 생성을 누르세요.
 
-처음 실행할 때 필요한 패키지(PySide6 · OpenCV · NumPy · Pillow · onnxruntime)를
-알아서 설치합니다. 내려받는 용량은 약 310MB, 설치하고 나면 약 890MB를 차지합니다
-(그중 640MB가 PySide6입니다). 회선이 빠르면 1분 남짓이면 끝납니다.
+처음 실행할 때 전용 파이썬(3.12 임베더블, 11MB)과 필요한 패키지(PySide6 ·
+OpenCV · NumPy · Pillow · onnxruntime, 내려받기 약 310MB)를 **전부 이 폴더의
+`runtime/` 안에** 받아 둡니다. 다 놓이면 약 900MB를 차지하고(그중 640MB가
+PySide6), 회선이 빠르면 1분 남짓이면 끝납니다. PC에 깔린 파이썬·아나콘다·다른
+버전의 패키지가 뭐가 있든 **서로 전혀 닿지 않습니다** — 전용 파이썬은
+PYTHONPATH도 레지스트리도 안 읽습니다. 지울 때는 폴더를 지우면 끝입니다.
+(예전 판이 만들어 둔 `.venv`가 아직 핀과 맞으면 그대로 씁니다.)
 
-패키지는 **버전을 고정해 뒀습니다**([pyproject.toml](pyproject.toml)). 도형을
-배치하는 단계가 수치 최적화라 NumPy나 onnxruntime 버전이 다르면 다른 국소
-최적해에 앉기 때문입니다.
+파이썬과 패키지는 **버전을 고정해 뒀습니다**([pyproject.toml](pyproject.toml)).
+도형을 배치하는 단계가 수치 최적화라 NumPy나 onnxruntime 버전이 다르면 다른
+국소 최적해에 앉기 때문입니다.
 
-명령줄이 익숙하다면:
+명령줄이 익숙하다면 — 아래 예시들의 `python`은 함께 받아 둔
+`runtime\python.exe`로 읽으세요 (직접 관리하는 파이썬 3.12~3.14에 핀 그대로
+깔아 써도 됩니다):
 
 ```
-python -m forzasqueegee make 그림.png -o out/내도안
+runtime\python.exe -m forzasqueegee make 그림.png -o out/내도안
 ```
 
 선화 추출·배경 제거·업스케일에 쓰는 ONNX 모델 4종(합쳐서 332MB)은 저장소에 없고,
@@ -204,6 +210,11 @@ python tools/fls_build.py          # 패치를 얹어서 빌드
 - 생성 시간은 cel 노선 기준 이미지 한 장에 2~7분(CPU만 쓰고 메모리는 최대 4.7GB),
   painter 노선은 수십 초에서 수 분입니다. painter는 OpenCL/Vulkan을 지원하는 GPU가
   필요한데, 게임이 돌아가는 PC라면 이미 갖고 있는 셈입니다.
+- **안 될 때**: 창이 안 뜨거나 도중에 죽으면 `work\logs\crash.log`가 남습니다 —
+  제보할 때 이 파일을 붙여 주세요. cv2·onnxruntime 임포트 실패는 대개
+  [Visual C++ 재배포 패키지](https://aka.ms/vs/17/release/vc_redist.x64.exe)가 없는
+  경우입니다. 환경이 꼬였다 싶으면 `runtime/` 폴더를 지우고 다시 실행하세요 —
+  처음부터 깨끗하게 다시 놓입니다.
 
 ## 라이선스
 
