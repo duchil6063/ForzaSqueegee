@@ -20,7 +20,8 @@ from .pipeline import (_one_region, _reach_check, _source_bundle, read_rgba,
 def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
                  shapes: int, cat, source_image: str, log, progress=None,
                  value: np.ndarray | None = None, price: float = 0.0,
-                 route: str = "line", basic_gray=None, detail_gray=None):
+                 route: str = "line", basic_gray=None, detail_gray=None,
+                 native_gray=None, labels=None, regions=None):
     """**선 도안** — 공통 선 재구성 엔진을 부르는 자리.
 
     lm0(작업 해상도 선 지도)를 이어(`bridge_line_gaps`) 증거 지도를 짓고
@@ -30,7 +31,17 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
     px에 제 선 색을 입힌 색 표본이다.
 
     `basic_gray`·`detail_gray`는 **이진화 전** 선화 지도다 (중간본 해상도) —
-    있으면 신뢰도 증거로 실린다. `value`·`price`는 cel 노선의 잉크 가격이다.
+    있으면 신뢰도 증거로 실린다. `native_gray`는 **SR을 안 태운 원화 해상도**
+    basic 판이다 (§25) — "SR 판만 본 선인가"를 가르는 자로만 쓰고 경로 원천
+    으로는 안 쓴다. `value`·`price`는 cel 노선의 잉크 가격이다.
+
+    `labels`·`regions`는 **잠정 색 영역**이다 (§26, cel 노선만). 없으면 배치용
+    셀은 실루엣 한 장이고 획의 양옆 판정은 색차(`side_de`)만 본다. 주면 획이
+    **무엇을 가르고 있는지**를 실제 면 지도에서 읽어(`evidence.sample`의 `bnd`)
+    역할 판정과 잉크 가격이 그것을 쓴다 — 색이 거의 같은 두 면을 가르는 획은
+    색면이 절대 못 그리는 자리라 값을 깎아 준다 (`celfit.engine._ink_mul` ⑤).
+    영역은 이 단이 끝난 뒤 **놓인 획에 다시 스냅**되므로(`celart.snap`),
+    선과 면이 서로를 한 번씩 보정하는 두 방향이 된다.
     """
     from .celart import CelArt, _fill_bg_nearest
     from .celfit import bridge_line_gaps, build_maps, fit_line_plan
@@ -71,10 +82,14 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
         # 목표가 다리를 바탕색이 아니라 제 선 색으로 보게 한다
         src_rgb = np.where(bridge[..., None], _fill_bg_nearest(src_rgb, lm_paths),
                            src_rgb)
-    # 배치용 셀 — 실루엣 한 영역. 획 채점판의 의미(배경 침범 벌점·우선순위)가
-    # cel 노선의 선화 단계와 같아지는 최소 구성이다
-    cel = CelArt(size=(w, h), labels=np.where(sel, 0, -1).astype(np.int32),
-                 regions=_one_region(sel, src_rgb[sel].mean(axis=0)),
+    # 배치용 셀 — 잠정 색 영역이 오면 그것을, 아니면 실루엣 한 영역. 획
+    # 채점판이 보는 것은 어느 쪽이든 `labels < 0`(배경)뿐이고, 갈리는 것은
+    # 획의 양옆 판정이다 (`evidence.sample`의 `bnd` — 이 획이 무엇을 가르나)
+    cel = CelArt(size=(w, h),
+                 labels=(labels if labels is not None
+                         else np.where(sel, 0, -1).astype(np.int32)),
+                 regions=(regions if regions is not None
+                          else _one_region(sel, src_rgb[sel].mean(axis=0))),
                  line_mask=line_mask, src_rgb=src_rgb)
     # 값 지도는 **가격과 별개로** 늘 짓는다 — 획 평가가 "주변보다 눈에 띄는가"를
     # 여기서 읽기 때문이다 (`evidence.StrokeEvidence.importance`). 가격을 안
@@ -87,7 +102,9 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
     maps = build_maps(
         lineart.to_conf(basic_gray, w, h) if basic_gray is not None else None,
         lineart.to_conf(detail_gray, w, h) if detail_gray is not None else None,
-        line_mask, lm0, src_rgb, sel, val, bridge)
+        line_mask, lm0, src_rgb, sel, val, bridge,
+        native_gray=lineart.to_conf(native_gray, w, h)
+        if native_gray is not None else None)
     log("획 배치 중…")
     plan, stats = fit_line_plan(cel, cat, budget=shapes,
                                 source_image=source_image, log=log,
@@ -118,7 +135,8 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
 
     from . import lineart, upscale
 
-    big, line_gray, detail_gray = _source_bundle(read_rgba(image), size, log)
+    big, line_gray, detail_gray, native_gray = _source_bundle(
+        read_rgba(image), size, log)
     if line_gray is None:
         raise SystemExit(
             "line 노선은 선화 모델이 필수다 — models/anilines_basic.onnx와 "
@@ -141,7 +159,8 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     plan, stats, line_mask, src_rgb = _line_design(
         rgba, sel, lm0, shapes, cat, str(image), log,
         progress=(lambda f, t: progress(0.02 + f * 0.88, t)) if progress else None,
-        route="line", basic_gray=line_gray, detail_gray=detail_gray)
+        route="line", basic_gray=line_gray, detail_gray=detail_gray,
+        native_gray=native_gray)
     rec = stats.pop("_rec", None)
 
     # 선화 목표 — cel.png의 자리다. labels가 선 마스크인 CelArt의 flat_render가

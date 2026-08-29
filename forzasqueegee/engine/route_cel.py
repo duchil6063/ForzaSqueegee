@@ -69,7 +69,8 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 중간본(SR 결과 또는 원본) → 작업 해상도. 캔버스 유닛은 해상도 독립이라
     # 인게임 결과는 같고, 셀 분해(평활·팔레트·뼈대)의 정밀도만 올라간다.
     # 선화는 줄이기 전 중간본에서 뽑아 여기서 작업 해상도로 맞춘다
-    big, line_gray, detail_gray = _source_bundle(read_rgba(image), size, log)
+    big, line_gray, detail_gray, native_gray = _source_bundle(
+        read_rgba(image), size, log)
     rgba = upscale.fit(big, size)
     h, w = rgba.shape[:2]
     opaque = bool(rgba[..., 3].min() >= 250)
@@ -100,29 +101,36 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     val = place_weight(np.ascontiguousarray(src0), sel)
     lam = price_of(val)
     log(f"  가격 λ = {lam:.0f} (값 픽셀) — 한 장이 이만큼 못 벌면 안 산다")
-    if not classic:
-        log(f"  선화: 선 픽셀 {int(lm0.sum()):,}개")
-        if progress:
-            progress(0.01, "선 도안")
-        line_plan, line_stats, line_mask, src_line = _line_design(
-            rgba, sel, lm0, shapes, cat, str(image), log,
-            progress=(lambda f, t: progress(0.01 + f * 0.34, t))
-            if progress else None,
-            value=val, price=lam, route="cel",
-            basic_gray=line_gray, detail_gray=detail_gray)
-        line_rec = line_stats.pop("_rec", None)
-
     log("셀 재해석 중…")
     if progress:
-        progress(0.02 if classic else 0.36, "셀 재해석")
+        progress(0.01, "셀 재해석")
     # 영역 상한은 예산에 안 묶는다 — 무엇을 그릴지(분해)와 몇 장을
     # 쓸지(가격)는 다른 물음이다. 묶어 두면 예산을 내릴 때 눈·코·입이
     # **분해 단계에서** 병합돼 사라진다 (실측 700장: 영역 120개, 입이 통째로
     # 없어졌다). 분해는 늘 상한(`_MAX_REGIONS`)까지 내고, 그중 값이 안 되는
     # 영역이 도형을 못 받을 뿐이라 특징이 통째로 사라지지 않는다
+    #
+    # §26 **분해가 선 도안보다 먼저다.** 분해는 놓인 획이 아니라 원본 선
+    # 지도(`lm0`)를 안내로 쓰므로 순서를 앞당겨도 입력이 같고, 그렇게 얻은
+    # **잠정 영역**을 선 도안이 증거로 쓴다 — 획마다 "무엇을 가르고 있나"를
+    # 실제 면 지도에서 읽는다 (`evidence.sample`의 `bnd`). 그러고 나서 영역
+    # 라벨을 **놓인 획에 다시 스냅**하므로(아래), 선과 면이 서로를 한 번씩
+    # 보정하는 두 방향이 된다: 면 지도가 선을 고르고, 선이 면 경계를 앉힌다.
     cel = decompose(rgba, max_regions=_MAX_REGIONS, line_mask=lm0, log=log,
                     value=val, price=lam, debug=bool(os.environ.get("FS_CEL_DEBUG")))
     if not classic:
+        log(f"  선화: 선 픽셀 {int(lm0.sum()):,}개")
+        if progress:
+            progress(0.04, "선 도안")
+        line_plan, line_stats, line_mask, src_line = _line_design(
+            rgba, sel, lm0, shapes, cat, str(image), log,
+            progress=(lambda f, t: progress(0.04 + f * 0.34, t))
+            if progress else None,
+            value=val, price=lam, route="cel",
+            basic_gray=line_gray, detail_gray=detail_gray,
+            native_gray=native_gray,
+            labels=cel.labels, regions=cel.regions)
+        line_rec = line_stats.pop("_rec", None)
         # ③의 채비 — 채움 목표 = **선 도안에 스냅한 셀** (`snap_labels_to_ink`
         # 문서). 획 라스터·캔버스 배율은 배치와 같은 식이고(`fit_plan` upp),
         # 스냅 반경은 게임 격자(최소 도형 반폭)다. line_mask(이은 선 지도)와

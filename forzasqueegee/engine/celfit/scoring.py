@@ -83,23 +83,70 @@ _PEN_FAR = float(os.environ.get("FS_LINE_FAR", 3.0))
 _CORE_GAIN = float(os.environ.get("FS_LINE_CORE_GAIN", 0.25))
 
 
-# ── §9 이음 당김 — **이웃 영역과 공유하는 경계를 함께 본다.**
-# 영역마다 따로 맞추면 두 면이 만나는 자리에서 셋 중 하나가 난다: 틈(둘 다
-# 못 미침) · 반대색 슬리버(먼저 그린 쪽이 넘어와 안 덮임) · 그 자리를 줍는
-# 보정 도형. 물림 밴드를 **무비용**으로 두는 것만으로는 하강이 거기까지 갈
-# 이유가 없다 — 이득이 0이면 안 가는 게 최적이다.
+# ── §24 **덧칠 띠 — 보이는 목표와 칠하는 목표를 가른다.**
+# 영역마다 제 라벨까지만 정확히 칠하면 두 면이 만나는 자리에서 셋 중 하나가
+# 난다: 틈(둘 다 못 미침) · 반대색 슬리버(먼저 그린 쪽이 넘어와 안 덮임) ·
+# 그 자리를 줍는 보정 도형. 틈이 특히 나쁘다 — 그 자리는 인게임에서 차
+# 도색이 그대로 비친다.
 #
-# 그래서 먼저 그린 이웃 위의 물림 밴드에 **작은 값**을 준다. 나중 면이 이기는
-# 것이 그리기 순서의 규칙이므로 그 1px은 이쪽이 덮는 것이 맞고, 그러면 두
-# 면이 밴드 중앙에서 만나 틈도 슬리버도 안 남는다 (선이 있는 경계에서는
-# 애초에 스냅이 밴드 중앙선에 경계를 앉혀 두었다 — 같은 규칙의 선 있는 판).
-# 1.0(진짜 목표 px)보다 작아야 한다 — 이 값이 배치를 끌고 가면 안 된다.
+# 틈이 나는 까닭은 배치가 **1x 격자**에서 "덮었다"를 판정하는데 게임은
+# 벡터로 그리기 때문이다. 픽셀 중심이 도형 안에 들면 배치는 그 픽셀을 덮은
+# 것으로 치지만, 2배 표본에서는 그 픽셀의 넷 중 셋이 비어 있을 수 있다
+# (`coverage` 문서). 양쪽 면이 같은 경계에서 각자 멈추면 그 반 픽셀이 그대로
+# 남는다 — 실측(W7 11장) 봉인 전 미커버 표본의 **군집 90%가 크기 4px 이하로
+# 색 경계에 붙어 있었다**.
 #
-# 방향이 하나인 것은 그리기 순서 때문이다: 두 면을 같은 저울에 놓고 함께
-# 푸는 대신, **나중 면이 이음을 가져간다**는 규칙 하나로 같은 결과를 낸다
-# (먼저 그린 쪽이 이 자리를 양보하는 것이 곧 순서의 뜻이다). 남는 어긋남은
-# 잔차 진단의 `boundary` 갈래가 잡아 §12가 기존 도형을 밀어 고친다.
-_SEAM_PULL = float(os.environ.get("FS_CEL_SEAM", 0.35))
+# 그래서 목표를 둘로 가른다:
+#
+# - **보이는 목표** (`mask`·`residual`) — 이 면이 화면에서 차지해야 할 자리.
+#   값(`worth`)·커버리지·막대·마무리가 보는 자는 여전히 이것 하나다.
+# - **칠하는 목표** (`band_res`) — 그 위에 **덧칠해도 되는** 자리. 여기를
+#   덮는 것은 값이 아니고(가격·커버리지는 안 본다) 배치 점수에서만 작은
+#   무게로 센다. 하강이 경계에서 멈추지 않고 **한 겹 넘어가** 이웃과 겹치게
+#   만드는 것이 목적이고, 겹친 자리는 아래 규칙으로 언제나 누군가가 덮는다.
+#
+# 덧칠이 허용되는 자리는 셋이고, 깊이는 상수가 아니라 **격자**가 정한다:
+#
+# ① **나중에 그릴 면 위** — 두 몫(`kd` = 이동 스텝 0.5유닛의 두 배)까지.
+#    틈의 폭은 양쪽이 각자 물러선 만큼이고 물러섬의 한 몫이 이동 스텝이라,
+#    둘이 마주 물러서면 최악이 두 몫이다. 그 면이 나중에 덮으므로 안 보인다.
+# ② **먼저 그린 면 위** — 한 겹만. 경계의 주인은 나중 면이라는 그리기 순서의
+#    규칙 그대로다. 그 위는 아무도 안 덮으니 한 겹을 넘으면 색이 그대로 보인다.
+# ③ **놓인 획 밑** — 획 반폭 + 한 겹까지. 선화는 모든 면 위에 얹히므로 그
+#    밑은 무엇을 칠하든 안 보인다. 스냅이 색 경계를 획 중앙선에 앉혀 두었으니
+#    (`celart.snap`) 양쪽 면이 여기서 만나 서로를 덮는다.
+#
+# 실루엣 **밖**은 안 넣는다 — 거기는 덮어 줄 나중 면도 획도 없다.
+# 무늬 보호 조각(`celart.marks`)도 뺀다 — 큰 면이 눈 흰자·코 그림자를
+# 1px씩 먹는 것이 이 덧칠의 유일한 해악이다.
+#
+# **띠는 잔여처럼 닳는다.** 이미 덮은 띠 픽셀은 값을 잃는다 — 안 그러면 같은
+# 자리를 다시 덮는 도형이 계속 이득을 받아 하강이 그리로 쏠린다.
+#
+# 값이 1(진짜 목표 px와 같은 무게)보다 작아야 한다 — **이 당김이 배치를 끌고
+# 가면 안 되고**, 밀지 않으면 안 가는 자리라는 것만 알려 주면 된다. 실측
+# (D1↔D2, 09)에서 1.0은 채움을 352 → 453장으로 불리고 봉인 전 미커버를
+# 4,408 → 4,830표본으로 **되레 늘렸다**: 띠가 이득의 한 축이 되면 하강이 제
+# 잔여 대신 띠를 좇아 한 장이 맡는 몫이 줄고, 그만큼 도형이 늘면서 도형끼리
+# 만나는 자리(= 틈이 나는 자리)도 함께 는다.
+_BAND_GAIN = float(os.environ.get("FS_CEL_BAND", 0.35))
+
+# ── §24-b **늘리기 전용의 보수적인 자** — "가장자리는 반만 덮은 것이다."
+# 채점 라스터는 1x다: 반올림한 폴리곤을 `fillPoly`로 그려 **중심이 안에 든
+# 픽셀**을 덮었다고 센다. 게임은 벡터라 그 픽셀의 2배 표본 넷 중 셋이 비어
+# 있을 수 있고, 이웃 도형이 같은 자리에서 똑같이 멈추면 그 반 픽셀이 그대로
+# 미커버로 남는다 (실측 A0-09: 미커버 군집의 48%가 **채움 도형끼리 만나는
+# 자리**의 노치였다 — 배경도 획도 아닌, 제 면 안이다).
+#
+# 자를 하나 더 두지 않고 **같은 라스터를 한 겹 깎아** 쓴다: 확정할 때
+# 잔여에서는 도형 마스크를 그대로 빼되, **늘리기가 보는 잔여**에서는 한 겹
+# 깎은 것만 뺀다. 그러면 도형 가장자리 한 겹이 "아직 안 덮은 자리"로 남고,
+# 늘리기(`layered.grow_fill` — 레이어 0장)가 그 자리를 겨눠 도형을 한 스텝
+# 키운다. 두 도형이 만나는 자리는 그렇게 **겹쳐서** 만난다.
+#
+# 이 자를 보는 것은 늘리기뿐이다. 사는 자리(채움·막대·마무리·가격)는 전부
+# 원래 잔여를 보므로 **도형을 더 사지 않는다** — 공짜인 손에만 목표를 준다.
+_EDGE_SLACK = int(os.environ.get("FS_EDGE_SLACK", 1))
 
 # ── §17 **실루엣 밖은 값이 아니라 금지다.**
 # 실루엣 밖 스필은 px당 `_PEN_BG`로 **값을 매겨** 왔다. 그 값(12)은 한 번
@@ -117,6 +164,14 @@ _SEAM_PULL = float(os.environ.get("FS_CEL_SEAM", 0.35))
 # (`geometry._min_span`) 눈금에만 설 수 있으므로 그 한 칸까지의 물림은
 # **강제**다 (같은 자를 `snap_labels_to_ink` 반경과 껍질 컷이 쓴다).
 # 그 밖으로 나가는 후보는 점수가 아니라 자격에서 진다.
+
+
+def _shrink(m: np.ndarray) -> np.ndarray:
+    """도형 마스크에서 가장자리 `_EDGE_SLACK` 겹을 깎는다 (§24-b)."""
+    if _EDGE_SLACK <= 0:
+        return m
+    return cv2.erode(m.astype(np.uint8), np.ones((3, 3), np.uint8),
+                     iterations=_EDGE_SLACK).astype(bool)
 
 
 class _Scorer:
@@ -140,6 +195,10 @@ class _Scorer:
         self.cat, self.upp, self.w, self.h, self.roi = cat, upp, w, h, roi
         self.mask = mask                  # 내 면 전체 (bool, ROI)
         self.residual = mask.copy()       # 아직 안 덮인 내 면
+        # §24-b 늘리기 전용 잔여 — 도형 가장자리 한 겹은 안 덮은 것으로 친다.
+        # 면 채움(`seam`)에서만 쓴다 — 획 배치에는 늘리기 단이 없어서, 두면
+        # 확정마다 침식 한 번이 순수한 비용이다
+        self.res_edge = mask.copy() if (seam and _EDGE_SLACK > 0) else None
         self.val = val                    # 값 맵 ROI (가격 설계) — None이면 px 수
         self.pen_waste = pen_waste
         self.guard = guard                # ROI 밖 허용 여유 (None = 기본식)
@@ -190,46 +249,37 @@ class _Scorer:
             # 격자 유도값이고, 세로로 긴 구도일수록 1보다 작아진다
             grade *= min(1.0, upp / 0.5)
             self.pen_out = max(self.pen_waste, grade)
-        # §9 이음 당김 — 먼저 그린 이웃 위의 물림 밴드 (무늬 보호 조각은 뺀다:
-        # 큰 면이 눈 흰자·코 그림자를 1px씩 먹는 것이 이 당김의 유일한 해악이다)
-        self.seam = None
-        if seam and _SEAM_PULL > 0.0:
-            # §20 **경계의 주인** — 물림 밴드를 앞뒤 안 가리고 당긴다.
-            #
-            # 당김이 **먼저 그린** 이웃 쪽으로만 걸리면, 이 면이 먼저일 때
-            # 반대쪽(나중에 그릴 이웃) 위의 물림은 벌점만 면제되고 이득이 0이라
-            # 하강이 거기 갈 이유가 없다. 그러면 이 면은 제 경계에서 멈추고
-            # 나중 면도 제 경계에서 멈춰, 그 사이 양자화 몫이 **빈 자리**로
-            # 남는다 (실측 S1-09: 봉인 전 미커버 4,077표본 — 태반이 그 자리다).
-            #
-            # 빈 자리와 겹침 중에서는 겹침이 옳다. 겹친 자리는 **나중 면이
-            # 덮으므로** 안 보이고, 나중 면이 조금 모자라면 이쪽 색이 한 겹
-            # 비칠 뿐이다 — 그쪽은 색이 틀린 것이고 빈 자리는 차 도색이
-            # 비치는 것이다. 값이 작은 것(`_SEAM_PULL` < 1)도 그대로다:
-            # 이 당김이 배치를 끌고 가면 안 되고, 밀지 않으면 안 가는
-            # 자리라는 것만 알려 주면 된다.
-            #
-            # 실루엣 **밖**은 여전히 뺀다 — 거기는 덮어 줄 나중 면이 없다.
-            sm_ = self.free & forbid
-            # **나중 쪽은 더 깊이 판다.** 틈의 폭은 양쪽이 각자 물러선
-            # 만큼이고, 물러섬의 한 몫은 게임 **이동 스텝**(0.5유닛)이다 —
+        # §24 덧칠 띠 — **칠하는 목표**. 보이는 목표(mask)와 갈린다 (위 문서).
+        # 세 자리를 격자에서 유도한 깊이만큼 연다: 나중 면 두 몫 · 먼저 그린
+        # 면 한 겹 · 놓인 획 밑은 획 반폭까지. 무늬 보호 조각은 뺀다
+        self.band_res = None
+        if seam and _BAND_GAIN > 0.0:
+            # ② 먼저 그린 면 위 한 겹 (`free`가 이미 1px 물림 밴드다)
+            bd = self.free & forbid
+            # ① 나중에 그릴 면 위 두 몫 — 틈의 폭은 양쪽이 각자 물러선
+            # 만큼이고, 물러섬의 한 몫은 게임 **이동 스텝**(0.5유닛)이다.
             # 둘이 마주 물러서면 최악이 두 몫이므로 겹침도 두 몫이라야
-            # 틈이 원리적으로 안 생긴다. 상수가 아니라 격자 유도값이다
-            # (`0.5/upp`가 한 몫 px, 그 둘이 아래 `kd`).
-            #
-            # 깊이가 앞뒤로 다른 것이 요점이다: 먼저 그린 이웃 쪽은
-            # 한 겹만 문다(그 위는 아무도 안 덮으니 색이 그대로 보인다),
-            # 나중 이웃 쪽은 두 몫까지 판다(어차피 그 면이 덮는다).
-            # 경계의 주인은 **나중 면**이고, 먼저 그린 면은 그 밑을 받친다.
+            # 틈이 원리적으로 안 생긴다 (`1.0/upp` = 두 몫 px)
             kd = max(1, int(round(1.0 / max(upp, 1e-6))))
             deep = cv2.dilate(mask.astype(np.uint8),
                               cv2.getStructuringElement(
                                   cv2.MORPH_ELLIPSE,
                                   (2 * kd + 1, 2 * kd + 1))).astype(bool)
-            sm_ = sm_ | (deep & ~mask & ~forbid & ~bg)
+            bd = bd | (deep & ~mask & ~forbid & ~bg)
+            # ③ 놓인 획 밑 — 스냅이 색 경계를 획 **중앙선**에 앉혀 두었으므로
+            # (`celart.snap`) 건너편 가장자리까지 가려면 획 반폭이 더 든다.
+            # 최소 도형 반폭(`_min_span`)이 그 눈금이다 — 새 상수가 아니다
+            if ink is not None:
+                rk = kd + max(1, int(round(_min_span(upp))))
+                wide = cv2.dilate(mask.astype(np.uint8),
+                                  cv2.getStructuringElement(
+                                      cv2.MORPH_ELLIPSE,
+                                      (2 * rk + 1, 2 * rk + 1))).astype(bool)
+                bd = bd | (wide & ink & ~mask & ~bg)
             if protect is not None:
-                sm_ = sm_ & ~protect
-            self.seam = sm_ if sm_.any() else None
+                bd = bd & ~protect
+            # 띠도 잔여처럼 닳는다 — 이미 덮은 자리는 값을 잃는다
+            self.band_res = bd if bd.any() else None
         # §17 실루엣에서 **격자 한 칸보다 멀리** 있는 배경 — 여기를 무는 후보는
         # 자격에서 진다 (점수로 안 다툰다). 획 배치는 안 건다: 획은 제 밴드
         # 안에서만 놓이고 실루엣 테를 따라 그어야 한다
@@ -286,10 +336,18 @@ class _Scorer:
         self._memo.clear()
 
     def commit(self, m: np.ndarray) -> None:
-        """배치 확정 — 잔여에서 m을 지운다. 점수가 잔여에 의존하므로 메모도 비운다."""
+        """배치 확정 — 잔여(와 덧칠 띠)에서 m을 지운다. 메모도 비운다."""
         if self._journal is not None:
-            self._journal.append((None, (m & self.residual).copy()))
+            self._journal.append(
+                (None, (m & self.residual).copy(),
+                 None if self.band_res is None else (m & self.band_res).copy(),
+                 None if self.res_edge is None
+                 else (_shrink(m) & self.res_edge).copy()))
         self.residual &= ~m
+        if self.band_res is not None:
+            self.band_res &= ~m
+        if self.res_edge is not None:
+            self.res_edge &= ~_shrink(m)
         self._memo.clear()
 
     def commit_box(self, m: np.ndarray, box: tuple[int, int, int, int]) -> None:
@@ -300,9 +358,43 @@ class _Scorer:
         bx0, by0, bx1, by1 = box
         if self._journal is not None:
             self._journal.append(
-                (box, (m & self.residual[by0:by1, bx0:bx1]).copy()))
+                (box, (m & self.residual[by0:by1, bx0:bx1]).copy(),
+                 None if self.band_res is None
+                 else (m & self.band_res[by0:by1, bx0:bx1]).copy(),
+                 None if self.res_edge is None
+                 else (_shrink(m) & self.res_edge[by0:by1, bx0:bx1]).copy()))
         self.residual[by0:by1, bx0:bx1] &= ~m
+        if self.band_res is not None:
+            self.band_res[by0:by1, bx0:bx1] &= ~m
+        if self.res_edge is not None:
+            self.res_edge[by0:by1, bx0:bx1] &= ~_shrink(m)
         self._memo.clear()
+
+    def eats(self, m: np.ndarray, box: tuple[int, int, int, int] | None) -> bool:
+        """이 도형이 **아직 덜 덮인 자리**에 걸쳐 있나 — 늘리기의 자격 판정.
+
+        자가 셋이고 갈수록 무르다:
+
+        - **보이는 잔여** — 아직 아무도 안 칠한 내 면.
+        - **덧칠 띠** (§24) — 경계를 한 겹 넘어 이웃과 겹칠 자리.
+        - **가장자리 잔여** (§24-b) — 1x에서는 덮였지만 **반만** 덮인 자리.
+          도형의 테는 언제나 여기에 걸리므로, 이 자는 사실상 "제 면 안에
+          아직 반 픽셀이라도 성긴 자리가 남아 있는 도형은 계속 늘린다"는
+          뜻이다. 멈추는 것은 이 자가 아니라 **점수**다 (`grow_fill`은
+          점수가 내려가면 안 늘린다) — 먼저 그린 면·배경·실루엣 자격이
+          바깥 테두리를 그대로 지키므로, 도형은 제 면과 덧칠 띠를 다 채운
+          자리에서 저절로 선다. 실측(09): 도형당 평균 1.8스텝.
+        """
+        if m is None or box is None:
+            return False
+        bx0, by0, bx1, by1 = box
+        if (m & self.residual[by0:by1, bx0:bx1]).any():
+            return True
+        if (self.band_res is not None
+                and (m & self.band_res[by0:by1, bx0:bx1]).any()):
+            return True
+        return (self.res_edge is not None
+                and bool((m & self.res_edge[by0:by1, bx0:bx1]).any()))
 
     def begin(self) -> list:
         """되돌릴 수 있는 구간을 연다 — 반환한 일지를 `rollback`에 준다.
@@ -315,13 +407,21 @@ class _Scorer:
         return self._journal
 
     def rollback(self, journal: list, mark: int = 0) -> None:
-        """`mark` 이후에 지운 잔여를 되돌린다 (일지는 그 자리에서 자른다)."""
-        for box, removed in reversed(journal[mark:]):
+        """`mark` 이후에 지운 잔여·띠를 되돌린다 (일지는 그 자리에서 자른다)."""
+        for box, removed, bnd, edg in reversed(journal[mark:]):
             if box is None:
                 self.residual |= removed
+                if bnd is not None and self.band_res is not None:
+                    self.band_res |= bnd
+                if edg is not None and self.res_edge is not None:
+                    self.res_edge |= edg
             else:
                 bx0, by0, bx1, by1 = box
                 self.residual[by0:by1, bx0:bx1] |= removed
+                if bnd is not None and self.band_res is not None:
+                    self.band_res[by0:by1, bx0:bx1] |= bnd
+                if edg is not None and self.res_edge is not None:
+                    self.res_edge[by0:by1, bx0:bx1] |= edg
         del journal[mark:]
         self._memo.clear()
 
@@ -389,8 +489,8 @@ class _Scorer:
         s = (new - _PEN_BG * bg - _PEN_FORBID * forb - self.pen_waste * waste)
         if self.pen_out:
             s -= self.pen_out * cnt(self.outb[by0:by1, bx0:bx1])
-        if self.seam is not None:          # §9 — 이음은 나중 면이 덮는다
-            s += _SEAM_PULL * cnt(self.seam[by0:by1, bx0:bx1])
+        if self.band_res is not None:      # §24 — 덧칠 띠는 잔여처럼 닳는다
+            s += _BAND_GAIN * cnt(self.band_res[by0:by1, bx0:bx1])
         if self.limit is not None:         # 밴드 밖 제 성분 위 잉크도 낭비다
             s -= self.pen_waste * cnt(self.mask[by0:by1, bx0:bx1]
                                       & ~self.limit[by0:by1, bx0:bx1])

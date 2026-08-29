@@ -39,6 +39,40 @@ _RIND_W_MUL = float(os.environ.get("FS_RIND_W_MUL", 1.5))
 _RIND_LEN = float(os.environ.get("FS_RIND_LEN", 8))
 
 
+# ── 획형 판정 — **이 영역은 획인가, 가는 면인가.**
+#
+# 가늘다는 것만으로는 못 가른다. 셀 분해는 선화가 안 지운 선 조각도, 눈
+# 흰자·머리칼 하이라이트·리본·가는 음영도 똑같이 가는 영역으로 낸다. 앞엣것은
+# 뼈대를 따라 획으로 그어야 하고 뒤엣것은 **면으로 채워야** 한다 — 획으로
+# 보내면 짧은 조각은 경로 길이 문턱에 걸려 통째로 안 그려지고(그 자리가
+# 그대로 미커버가 된다), 그려져도 획 라벨을 받아 프루닝에서 선 대접을 받는다.
+#
+# 자는 둘이고 **둘 다 이미 재고 있는 것**이다:
+#
+# ① **가늘다** — 픽셀 85%가 경계에서 `_THIN_R`px 안. "최대 내접 반경"만 보면
+#    선의 교차점(굵다) 때문에 타원 채움으로 넘어가 얼룩이 된다.
+# ② **길다** — 면적 / 폭². 폭 w·길이 L인 띠는 면적이 wL이므로 이 값이 곧
+#    L/w(가로세로비)다. 둥근 조각은 1 근처, 획은 대개 다섯을 넘는다. 뼈대를
+#    다시 안 뽑고 거리변환 하나로 나오는 닫힌 셈이라 값이 싸다.
+#
+# 문턱 3은 **면 채움이 한 장으로 끝낼 수 있는 가로세로비**다: 채움 어휘의
+# 씨앗이 2차 모멘트 정합이라(`_seed_moment`) 3:1까지는 도형 한 장이 그대로
+# 맞고, 그보다 길어지면 한 장으로는 못 덮어 마디로 쪼개는 쪽이 싸다.
+_THIN_R = float(os.environ.get("FS_THIN_R", 3.2))
+_THIN_ELONG = float(os.environ.get("FS_THIN_ELONG", 3.0))
+
+
+def region_shape(mask: np.ndarray, dt: np.ndarray) -> tuple[bool, float, float]:
+    """(획형인가, 폭 중앙값 px, 가로세로비) — `dt`는 mask의 거리변환."""
+    d = dt[mask]
+    if not d.size:
+        return False, 0.0, 0.0
+    thin = float(np.percentile(d, 85)) <= _THIN_R
+    wmed = 2.0 * float(np.median(d))
+    elong = float(np.count_nonzero(mask)) / max(wmed * wmed, 1.0)
+    return bool(thin and elong >= _THIN_ELONG), wmed, elong
+
+
 def _win_pts(sc: _Scorer, px: int, py: int, r0: float) -> tuple[np.ndarray, float]:
     """봉우리 주변 창(4r0)의 잔여 점 구름 — 씨앗 둘이 같은 증거를 쓴다."""
     ys, xs = np.nonzero(sc.residual)

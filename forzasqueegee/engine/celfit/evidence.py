@@ -38,8 +38,9 @@ class EvidenceMaps:
 
     conf: np.ndarray             # float32 [0,1] — basic·detail의 합 (지속성의 자)
     conf_pyr: tuple               # conf를 `_PERSIST_SCALES`배씩 줄인 판들
-    basic: np.ndarray            # float32 [0,1] — AniLines basic 신뢰도
+    basic: np.ndarray            # float32 [0,1] — AniLines basic 신뢰도 (SR 중간본)
     detail: np.ndarray | None    # float32 [0,1] — detail 모델 (없으면 None)
+    native: np.ndarray | None    # float32 [0,1] — **원화 해상도** basic (§25)
     mask: np.ndarray             # bool — 뼈대를 뽑는 선 지도 (다리 포함)
     basic_mask: np.ndarray       # bool — 이진화한 basic
     detail_only: np.ndarray | None   # bool — detail에만 있는 선
@@ -61,6 +62,11 @@ class StrokeEvidence:
     basic: float = 0.0          # 선화 basic 신뢰도 (경로 위 중앙값)
     detail: float = 0.0         # detail 신뢰도 (없으면 basic과 같다)
     detail_only: float = 0.0    # detail에만 있는 px 비율
+    native: float = 0.0         # **원화 해상도** basic 신뢰도 (없으면 basic)
+    # §25 **여러 판이 함께 보나** — SR 판이 본 정도를 원화 판이 확인해 주는 몫
+    # [0,1]. 1이면 두 판이 합치하고, 0이면 SR(또는 detail) 판 혼자 본 선이다.
+    # 원화 판이 없으면(SR을 안 태웠거나 모델이 없으면) 1 — **폴백은 그대로**다.
+    support: float = 1.0
     dark: float = 0.0           # 원화 어두움
     side_de: float = 0.0        # 양옆 색차 (Lab 노름)
     sil: float = 0.0            # 실루엣 인접 표본 비율
@@ -100,7 +106,8 @@ class StrokeEvidence:
 def build_maps(basic_gray: np.ndarray | None, detail_gray: np.ndarray | None,
                mask: np.ndarray, basic_mask: np.ndarray,
                src_rgb: np.ndarray, sel: np.ndarray, value: np.ndarray,
-               bridge: np.ndarray | None = None) -> EvidenceMaps:
+               bridge: np.ndarray | None = None,
+               native_gray: np.ndarray | None = None) -> EvidenceMaps:
     """증거 지도 묶음을 짓는다 (전부 작업 해상도).
 
     `basic_gray`·`detail_gray`는 **이진화 전** 밝기 지도(255=배경·0=선)다 —
@@ -111,6 +118,10 @@ def build_maps(basic_gray: np.ndarray | None, detail_gray: np.ndarray | None,
         basic = np.clip((255.0 - basic_gray.astype(np.float32)) / 255.0, 0.0, 1.0)
     else:
         basic = basic_mask.astype(np.float32)
+    native = None
+    if native_gray is not None:
+        native = np.clip((255.0 - native_gray.astype(np.float32)) / 255.0,
+                         0.0, 1.0)
     detail = det_only = None
     if detail_gray is not None:
         detail = np.clip((255.0 - detail_gray.astype(np.float32)) / 255.0, 0.0, 1.0)
@@ -141,7 +152,7 @@ def build_maps(basic_gray: np.ndarray | None, detail_gray: np.ndarray | None,
                            interpolation=cv2.INTER_AREA)
                 for s in _PERSIST_SCALES)
     return EvidenceMaps(conf=conf, conf_pyr=pyr,
-                        basic=basic, detail=detail, mask=mask,
+                        basic=basic, detail=detail, native=native, mask=mask,
                         basic_mask=basic_mask, detail_only=det_only,
                         dark=dark, edge=edge, sil=sil,
                         value=value.astype(np.float32), bridge=bridge)
@@ -258,6 +269,19 @@ def sample(path: np.ndarray, wmed: float, widths: np.ndarray,
                  else ev.basic)
     ev.detail_only = (float(np.mean(maps.detail_only[gy, gx]))
                       if maps.detail_only is not None else 0.0)
+    # §25 다중 원천 합치 — SR 판이 본 만큼을 **원화 해상도 판**이 확인해 주나.
+    # 자를 `conf`가 아니라 역할 판정이 쓰는 그 합성 신뢰도로 두는 것이 요점이다
+    # (`graph._DETAIL_W`) — detail에만 있는 선은 basic이 0이라 분모가 detail
+    # 쪽에서 오고, 원화 판이 그 자리를 못 보면 지지가 그대로 떨어진다
+    from .graph import _DETAIL_W
+
+    seen_sr = max(ev.basic, _DETAIL_W * ev.detail)
+    if maps.native is not None:
+        ev.native = float(np.median(maps.native[gy, gx]))
+        ev.support = float(min(1.0, ev.native / max(seen_sr, 1e-3)))
+    else:
+        ev.native = ev.basic
+        ev.support = 1.0
     ev.dark = float(np.median(maps.dark[gy, gx]))
     ev.edge_agree = float(np.mean(maps.edge[gy, gx]))
     ev.importance = float(np.mean(maps.value[gy, gx]))

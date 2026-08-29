@@ -272,16 +272,35 @@ def _bundle_cache_path(rgba: np.ndarray, size: int):
 def _source_bundle(rgba: np.ndarray, size: int, log):
     """노선이 받을 중간본 + 그 해상도의 선화 지도를 만든다.
 
-    반환 (중간본, basic 지도, detail 지도). 선화를 **작업 해상도로 줄이기
-    전에** 뽑는 것이 요점이다 — 축소가 가는 선을 씻어 점선으로 만든다
-    (점선도가 몇 배로 뛴다).
+    반환 (중간본, basic 지도, detail 지도, **원화 판** 지도). 선화를 **작업
+    해상도로 줄이기 전에** 뽑는 것이 요점이다 — 축소가 가는 선을 씻어 점선으로
+    만든다 (점선도가 몇 배로 뛴다).
 
     detail 판은 **있으면 쓴다** — Basic이 놓친 세부선을 낮은 우선순위 증거로
     얹는 자리다 (`celfit.evidence`). 모델이 없으면 None이고 Basic만으로 돈다.
 
+    ## §25 원천이 하나면 그 모델의 판단이 곧 도안이다
+
+    선화 판 하나(SR 중간본의 basic)를 진실로 삼으면 **SR이 지어낸 선**과
+    **원화에 실제로 있는 선**이 같은 무게를 받는다. SR은 4배로 늘리며 없던
+    윤곽을 매끈하게 만들어 내고, detail 판은 basic의 사각지대를 메우는 대신
+    해칭·잎사귀 노이즈를 함께 얹는다 (실측 09: 선 px +80%, 그중 48%가 detail
+    전용).
+
+    그래서 **원화 해상도에서 한 판 더 뽑는다** — SR을 안 태운 입력에 같은
+    basic 모델을 걸고, 그 지도를 중간본 해상도로 늘려 나란히 둔다. 두 판이
+    함께 본 선은 강한 증거이고, SR 판에만 있는 선은 값을 더 받아야 산다
+    (`celfit.engine._ink_mul`). 지우지 않고 **비싸게** 만드는 것이 요점이다 —
+    사라질 선도 제 값을 하면 그어야 하고, 무엇이 값인지는 이미 λ가 답한다.
+
+    SR을 안 태웠으면(원본이 이미 크거나 모델이 없으면) basic이 곧 원화 판이라
+    이 지도는 None이고, 아래 단은 지지를 1로 본다 — **모델 부재 폴백은 그대로**다.
+
     `FS_BUNDLE_CACHE=1`이면 결과를 `work/cache/bundle`에 재사용한다
     (계측 전용 — `_bundle_cache_path` 문서).
     """
+    import cv2
+
     from . import lineart, upscale
     from .celart import _fill_bg_nearest
 
@@ -290,9 +309,10 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         z = np.load(cache)
         log("  앞단 캐시 재사용 (FS_BUNDLE_CACHE)")
         return (z["big"], z["line"] if "line" in z else None,
-                z["detail"] if "detail" in z else None)
+                z["detail"] if "detail" in z else None,
+                z["native"] if "native" in z else None)
     big = upscale.prepare(rgba, size, log=log)
-    detail = None
+    detail = native = None
     sel = big[..., 3] >= 128
     rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
     line = lineart.extract(rgb, log=log, cap=True)
@@ -300,14 +320,28 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
         if detail is not None:
             log("  선화 detail 판도 증거로 얹는다")
+    if line is not None and big.shape[:2] != rgba.shape[:2]:
+        # §25 — SR을 태웠으면 **원화 해상도에서도** 같은 basic 모델을 건다.
+        # 지도를 중간본 크기로 늘려 나란히 둘 뿐, 경로 원천으로는 안 쓴다
+        # (원천은 여전히 중간본 판이다 — 여기서는 "SR만 본 선인가"만 묻는다)
+        sel0 = rgba[..., 3] >= 128
+        rgb0 = (_fill_bg_nearest(rgba[..., :3], sel0) if not sel0.all()
+                else rgba[..., :3])
+        nat = lineart.extract(rgb0, log=log, cap=True)
+        if nat is not None:
+            native = cv2.resize(nat, (big.shape[1], big.shape[0]),
+                                interpolation=cv2.INTER_LINEAR)
+            log("  원화 해상도 선화도 증거로 얹는다 (SR 전용 선을 가른다)")
     if cache is not None:
         got = {"big": big}
         if line is not None:
             got["line"] = line
         if detail is not None:
             got["detail"] = detail
+        if native is not None:
+            got["native"] = native
         np.savez_compressed(cache, **got)
-    return big, line, detail
+    return big, line, detail, native
 
 
 def _reach_check(plan, cat) -> dict:

@@ -31,8 +31,8 @@ from .evidence import (EvidenceMaps, fill_neighborhood, junction_degrees,
                        sample)
 from .geometry import _min_span
 from .graph import (_CONF, _DE, _DETAIL_W, _ISO_LEN_REL, _LINE_FRAG_REL,
-                    FEATURE, NOISE, TEXTURE, LogicalStroke, classify,
-                    continue_strokes, texture_representatives)
+                    _SIL, _SUP_OK, FEATURE, NOISE, TEXTURE, LogicalStroke,
+                    classify, continue_strokes, texture_representatives)
 from .grammar import (_FAT_MAX_MUL, _FAT_MIN_AREA, _LINE_W_REL, _WCAP_CV,
                       _fill_fat, _patch_seams)
 from .merge import merge_costrokes
@@ -50,6 +50,11 @@ _SMOOTH = int(os.environ.get("FS_LINE_SMOOTH", 5))
 # 완전히 성립하는 획은 값을 **두 배** 해야 산다"는 뜻이다 (`_ink_mul`).
 _PERSIST_W = float(os.environ.get("FS_LINE_PERSIST", 1.0))
 _EXPL_W = float(os.environ.get("FS_LINE_EXPL", 1.0))
+# §25 다중 원천 합치가 잉크 가격에 실리는 무게 (`_ink_mul` ④).
+_SUPPORT_W = float(os.environ.get("FS_LINE_SUPPORT", 1.0))
+# §26 분리 이득이 잉크 가격을 깎는 몫 (`_ink_mul` ⑤). 0.5면 "색이 못 그리는
+# 경계를 온전히 맡는 획은 반값"이다 — 면제가 아니라 할인이다.
+_SEP_W = float(os.environ.get("FS_LINE_SEP", 0.5))
 # §23 — 획의 값을 **그 획이 부를 도형 수**로 나눈다 (0이면 한 획 = λ 하나).
 _SHAPE_PRICE = float(os.environ.get("FS_LINE_SHAPE_PRICE", 1.0))
 # 이상 띠의 여유 px (`_Scorer.set_band`의 core) — 원화 띠 폭에 더하는 몫.
@@ -341,6 +346,13 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
         "detail_evidence": bool(maps.has_detail),
         "detail_only_strokes": sum(1 for s in rec.strokes
                                    if s.ev.detail_only >= 0.5),
+        # §25 — 원화 해상도 판이 확인해 준 획의 몫 (원천이 하나면 0에 붙는다)
+        "native_evidence": maps.native is not None,
+        "sr_only_strokes": sum(1 for s in rec.strokes
+                               if s.ev.support < _SUP_OK),
+        "support_med": (round(float(np.median([s.ev.support
+                                               for s in rec.strokes])), 3)
+                        if rec.strokes else 1.0),
     })
     if rec.fat_fills:
         log(f"  덩어리 채움 {rec.fat_fills}장 (선으로 못 긋는 폭 — 모멘트 타원)")
@@ -353,11 +365,12 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
 
 
 def _ink_mul(s, pol, base: float) -> float:
-    """이 획의 잉크 가격 **배수** — 사람이 생략할 선일수록 비싸다 (§21·§22).
+    """이 획의 잉크 가격 **배수** — 사람이 생략할 선일수록 비싸다.
 
     지우는 것이 아니라 비싸게 만드는 것이 요점이다. 무엇을 그릴지는 이미 λ가
     답하고 있고(`price`), 여기서 하는 일은 그 저울에 **사람이 실제로 쓰는
-    두 가지 이유**를 얹는 것뿐이다. 값이 크면 이 조건들이 다 성립해도 그린다.
+    이유들**을 얹는 것뿐이다. 값이 크면 이 조건들이 다 성립해도 그린다.
+    항은 다섯이고 넷은 값을 올리며 마지막 하나만 깎는다 (§21~§26).
 
     ① **지속성** (`ev.persist`, §21) — 눈을 가늘게 뜨면 사라지는 선인가.
        머리칼 열 가닥·옷 주름 반복처럼 모아 보면 한 덩어리로 읽히는 선을
@@ -372,6 +385,9 @@ def _ink_mul(s, pol, base: float) -> float:
        색이 같은데 선 증거가 세면 이 배수가 1이라 그대로 지켜진다 — 그 선은
        색으로는 절대 안 생기는 구조다. line 노선에는 안 건다 (`fill_below`):
        거기는 받쳐 줄 색면이 없어 선이 빠지면 그 자리가 통째로 빈다.
+
+    ④ **원천이 하나인가** (§25) — 아래 코드 주석. ⑤ **분리 이득** (§26) —
+       유일하게 값을 **깎는** 항이다.
 
     문턱을 새로 만들지 않았다 — `_DE`·`_CONF`는 역할 판정이 "색으로 설명되는
     경계"와 "선화가 확실히 본 선"을 가르는 데 이미 쓰는 그 자다.
@@ -399,6 +415,32 @@ def _ink_mul(s, pol, base: float) -> float:
         expl = (min(1.0, max(0.0, s.ev.side_de / _DE - 1.0))
                 * min(1.0, max(0.0, 1.0 - conf / _CONF)))
         m *= 1.0 + _EXPL_W * expl
+    if _SUPPORT_W:
+        # ④ **원천이 하나인가** (§25) — SR 중간본의 선화 판 하나만 이 선을
+        # 봤다면 그것은 모델이 지어낸 것일 수 있다. 지우지 않고 **비싸게**
+        # 만든다: 원화 해상도 판이 확인해 주거나(`support`), 양옆 색이 실제로
+        # 갈리거나(`side_de`), 실루엣을 타고 있으면(`sil`) 지지가 선다 —
+        # 셋 중 가장 센 것을 쓴다. 지지가 하나도 없으면 값을 두 배로 받는다.
+        #
+        # 원화 판이 없으면 `support`가 1이라 이 항은 **무동작**이다
+        # (SR을 안 태웠거나 모델이 없는 경우 — 폴백 불변).
+        corrob = max(s.ev.support,
+                     min(1.0, s.ev.side_de / _DE),
+                     min(1.0, s.ev.sil / max(_SIL, 1e-6)))
+        m *= 1.0 + _SUPPORT_W * min(1.0, max(0.0, 1.0 - corrob))
+    if _SEP_W and pol.fill_below:
+        # ⑤ **이 획이 아니면 그 경계가 없다** (§26, cel 노선만). 잠정 색 영역
+        # 위에서 읽은 양옆 라벨이 갈리는데(`bnd`) 색은 거의 같으면(`side_de`가
+        # 역할 문턱 아래), 그 자리는 색면이 원리적으로 못 그린다 — 채움을 아무리
+        # 잘해도 두 면이 같은 색이라 경계가 안 보인다. 그런 획은 값을 깎아 준다.
+        #
+        # §22(경계 설명력)의 짝이다: 그쪽은 "색이 이미 그렸으니 비싸다"이고
+        # 이쪽은 "색이 못 그리니 싸다"라 두 항이 겹치지 않는다 (`side_de`가
+        # 높으면 이 항이 0, 낮으면 §22가 0).
+        #
+        # 잠정 영역을 안 주면(line 노선) `bnd`가 0이라 **무동작**이다.
+        need = s.ev.bnd * min(1.0, max(0.0, 1.0 - s.ev.side_de / _DE))
+        m *= 1.0 - _SEP_W * need
     return m
 
 

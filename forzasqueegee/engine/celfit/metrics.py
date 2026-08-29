@@ -11,7 +11,9 @@
     작은 중요 영역 보존               눈·코 그림자·하이라이트가 살아남았나
     경계 넘김률                       색이 선을 넘어간 자리의 비율
     선/색면 틈 · 반대색 슬리버        맞물림이 어긋난 자리
-    보정 도형 · 잔차 수리             마지막 수단을 몇 번 썼나
+    보정 도형 · 잔차 수리 · **수리 몫**   마지막 수단을 몇 번 썼나
+    **경계 충실도 p95**               목표 색 경계가 도안에서 몇 px 밀렸나
+    **위상** (조각남 · 구멍 늘음)     면이 부스러기로 흩어지지 않았나
     중요도 가중 재현 오차             눈에 띄는 자리에 가중한 색 오차
     바탕 덮음 · 보이는 장/영역        한 형태를 **한 장**이 맡고 있나
     도형 갈아타기 · 쓴 종수           한 면을 같은 종류로 끝냈나
@@ -200,6 +202,45 @@ def _mark_regions(cel: CelArt, border: dict, peri: np.ndarray,
     return out
 
 
+def _topo_one(m: np.ndarray) -> tuple[int, int]:
+    """(성분 수, 구멍 수) — 한 겹 여백을 두르고 배경 성분으로 구멍을 센다."""
+    u = np.pad(m.astype(np.uint8), 1)
+    n_c, _ = cv2.connectedComponents(u, connectivity=8)
+    n_b, _ = cv2.connectedComponents((1 - u).astype(np.uint8), connectivity=4)
+    return int(n_c - 1), int(max(0, n_b - 2))
+
+
+def _topology(cel: CelArt, de: np.ndarray, min_area: int = 40) -> dict:
+    """영역마다 **제 색으로 칠해진 자리**의 위상을 목표와 견준다.
+
+    성분 수가 늘면 그 면이 조각났다는 뜻이고, 구멍 수가 늘면 면 한가운데가
+    뚫렸다는 뜻이다. 둘 다 평균 색 오차로는 안 보이는 결함이다. 셈은 영역
+    bbox 안에서만 돌아 값이 싸다.
+    """
+    lb = cel.labels
+    ok = de <= _THR
+    split = []
+    hole_add = []
+    for r in cel.regions:
+        if r.area < min_area:
+            continue
+        x0, y0, x1, y1 = r.bbox
+        mt = lb[y0:y1, x0:x1] == r.rid
+        mr = mt & ok[y0:y1, x0:x1]
+        ct, ht = _topo_one(mt)
+        cr, hr = _topo_one(mr)
+        if ct <= 0:
+            continue
+        split.append(cr / ct)
+        hole_add.append(hr - ht)
+    if not split:
+        return {}
+    return {"topo_split_med": round(float(np.median(split)), 3),
+            "topo_split_mean": round(float(np.mean(split)), 3),
+            "topo_hole_add_mean": round(float(np.mean(hole_add)), 3),
+            "topo_regions": len(split)}
+
+
 def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                  value: np.ndarray | None = None, price: float = 0.0,
                  min_px: int = 4, extra: dict | None = None) -> dict:
@@ -218,11 +259,19 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     n_ink = sum(1 for x in labels if x == "ink")
     n_hole = sum(1 for x in labels if x == "hole")
     n_fix = sum(1 for x in labels if x == "fix")
+    n_seal = sum(1 for x in labels if x == "seal")
+    ntot = max(1, len(plan.layers))
     out: dict = {
         "total_shapes": len(plan.layers),
         "line_shapes": n_ink,
-        "fill_shapes": len(plan.layers) - n_ink - n_hole - n_fix,
-        "correction_shapes": n_hole + n_fix,
+        "fill_shapes": len(plan.layers) - n_ink - n_hole - n_fix - n_seal,
+        "correction_shapes": n_hole + n_fix + n_seal,
+        "seal_shapes": n_seal,
+        # **사후 수리에 얼마를 쓰나** — 메움·수리·봉인이 총장수에서 차지하는 몫.
+        # 이 노선의 목표는 "빈 자리를 나중에 때우지 않는다"이므로, 상류 배치가
+        # 나아지면 여기가 내려가야 한다 (내려가지 않으면 상류가 아니라 하류를
+        # 고친 것이다)
+        "repair_layer_ratio": round((n_hole + n_fix + n_seal) / ntot, 4),
     }
 
     # ── 영역당 도형 수 — **면 도형만** 센다 (획은 영역의 몫이 아니다)
@@ -255,6 +304,10 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     if fill_i:
         fv = vis[fill_i]
         out["visible_area_med"] = float(np.median(fv))
+        # 한 장이 평균 몇 px를 **보이게** 맡나 — 장수당 이득의 자.
+        # 중앙값은 부스러기 쪽 꼬리를 못 보고, 평균은 큰 바탕 한 장이 얼마를
+        # 맡고 있는지를 함께 담는다 (둘이 벌어지면 조각붙임이다)
+        out["visible_area_mean"] = round(float(fv.mean()), 1)
         out["tiny_visible_ratio"] = round(float((fv < 40).mean()), 4)
         out["dead_shape_ratio"] = round(float((fv == 0).mean()), 4)
     ink_i = [i for i, x in enumerate(labels) if x == "ink"]
@@ -384,6 +437,32 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         vs = value[seen].astype(np.float64)
         out["imp_error_seen"] = round(float((vs * de_seen[seen]).sum()
                                             / max(vs.sum(), 1e-9)), 4)
+
+    # ── **경계 충실도** — 셀 목표의 색 경계가 도안에서 몇 px 밀렸나 (p95).
+    # 평균 ΔE는 경계 양자화에 먹혀 이 축을 못 본다 (위 "보이는 오차" 문서).
+    # 여기서는 자리를 직접 잰다: 목표 경계 픽셀마다 **가장 가까운 도안 경계**
+    # 까지의 거리를 재고 그 분포의 95%를 낸다. 밀림이 한 겹(격자)이면 1 근처,
+    # 면이 통째로 어긋났으면 크게 뜬다
+    rb = np.zeros(de.shape, bool)
+    rd = np.linalg.norm(render[:, :-1].astype(np.float32)
+                        - render[:, 1:].astype(np.float32), axis=2) > 0
+    rb[:, :-1] |= rd
+    rb[:, 1:] |= rd
+    rv = np.linalg.norm(render[:-1].astype(np.float32)
+                        - render[1:].astype(np.float32), axis=2) > 0
+    rb[:-1] |= rv
+    rb[1:] |= rv
+    tb = ce & (cel.labels >= 0)            # 목표 색 경계 (위에서 이미 쟀다)
+    if tb.any() and rb.any():
+        dist = cv2.distanceTransform((~rb).astype(np.uint8), cv2.DIST_L2, 5)
+        out["boundary_d95"] = round(float(np.percentile(dist[tb], 95)), 3)
+        out["boundary_d_med"] = round(float(np.median(dist[tb])), 3)
+
+    # ── **위상** — 면이 조각나거나 구멍이 뚫렸나. 색 오차는 "얼마나 틀렸나"만
+    # 재고 "몇 조각으로 갈렸나"는 못 잰다. 영역마다 제 색으로 제대로 칠해진
+    # 자리(`de <= _THR`)를 놓고 성분 수와 구멍 수를 목표와 견준다 — 사람 도안이
+    # 한 덩이로 유지하는 형태를 기계가 부스러기로 흩는지가 여기서 보인다
+    out.update(_topology(cel, de, min_area=40))
 
     # ── 중요도 가중 재현 오차 — 값 맵으로 가중한 ΔE (눈에 띄는 자리 우선)
     insil = cel.labels >= 0

@@ -218,10 +218,19 @@ def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8) -> int:
                 c.sx = round(c.sx + (dx if c.sx >= 0 else -dx), 4)
                 c.sy = round(c.sy + (dy if c.sy >= 0 else -dy), 4)
                 s, m, box = sc._score_impl(c)
-                if m is None or s <= base:
+                # **점수가 내려가지만 않으면 늘린다** (같아도 늘린다). 겹치기
+                # 위한 확장은 이득이 0이다 — 1x 라스터가 이미 "덮었다"고 보기
+                # 때문이다. 그런데 그 겹침이 바로 2배 표본의 틈을 막는 손이라,
+                # 여기서 이득을 요구하면 원리적으로 안 일어난다. 벌점은 그대로
+                # 걸려 있어(먼저 그린 면·배경) 밖으로는 못 나간다
+                if m is None or s < base:
                     continue
-                bx0, by0, bx1, by1 = box
-                if not (m & sc.residual[by0:by1, bx0:bx1]).any():
+                # 안 덮은 자리를 실제로 먹어야 늘린다. 자가 셋이다: 보이는
+                # 잔여 · **덧칠 띠**(경계를 한 겹 넘는 확장) · **가장자리 잔여**
+                # (§24-b — 도형끼리 만나는 자리의 반 픽셀). 뒤 둘은 잔여를
+                # 하나도 안 먹지만 그것이 틈을 막는 손이다. 셋 다 단조로 줄어
+                # 늘리기는 반드시 멈춘다
+                if not sc.eats(m, box):
                     continue
                 sc.commit_box(m, box)
                 layers[i] = c
@@ -253,7 +262,8 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
             return n
         cm = cc == ci
         free = free_first and n == 0
-        # 가격 — 덩어리가 통째로 λ에 못 미치면 어떤 도형으로도 값을 못 한다
+        # 가격 — 덩어리가 통째로 λ에 못 미치면 어떤 도형으로도 값을 못 한다.
+        # **값은 보이는 잔여로만 센다** — 덧칠 띠는 값이 아니다
         if price and not free and sc.worth_of(cm) < price:
             sc.commit(cm)                  # 포기 — 잔여에서 지워 다음 덩어리로
             continue

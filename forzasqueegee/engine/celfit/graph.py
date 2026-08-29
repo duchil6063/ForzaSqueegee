@@ -32,7 +32,10 @@ NOISE = "NOISE"                      # 부스러기
 ROLES = (SILHOUETTE, STRUCTURE, INTERNAL_CONTOUR, COLOR_BOUNDARY,
          FEATURE, TEXTURE, NOISE)
 # 보호 등급 — 예산 컷·단순화가 이 순서를 따른다 (작을수록 먼저 지킨다)
-ROLE_RANK = {SILHOUETTE: 0, FEATURE: 1, STRUCTURE: 1, INTERNAL_CONTOUR: 2,
+# 내부 윤곽은 **색면이 절대 못 그리는 경계**다 (양옆 면이 다른데 색은 같다) —
+# 그 획이 빠지면 그 자리에 경계가 아예 없어지므로 구조선과 같은 급이다.
+# 색으로도 갈리는 경계(COLOR_BOUNDARY)는 선이 빠져도 색이 그려 주므로 한 단 뒤.
+ROLE_RANK = {SILHOUETTE: 0, FEATURE: 1, STRUCTURE: 1, INTERNAL_CONTOUR: 1,
              COLOR_BOUNDARY: 2, TEXTURE: 3, NOISE: 4}
 
 
@@ -70,12 +73,20 @@ class LogicalStroke:
     def rank(self) -> int:
         """보호 등급 — 작을수록 먼저 지킨다.
 
-        **detail 판에만 있던 선은 한 단 내린다** (요청 §1 "낮은 우선순위 detail
-        후보"). 실루엣은 그 자체로 최상위라 안 내린다 — 내리면 detail이 처음
-        찾아 준 윤곽이 도로 예산 컷에 먼저 걸린다.
+        **원천이 하나뿐인 선은 한 단 내린다.** 둘이다:
+
+        - detail 판에만 있던 선 (`detail_only`) — basic 쪽 확인이 없다.
+        - **SR 판만 본 선** (`support` < `_SUP_OK`, §25) — 원화 해상도 판이
+          그 자리를 못 봤다. SR은 4배로 늘리며 없던 윤곽을 지어내므로, 그
+          지지가 없는 선은 컷이 먼저 가져가야 한다.
+
+        실루엣은 그 자체로 최상위라 안 내린다 — 내리면 detail이 처음 찾아 준
+        윤곽이 도로 예산 컷에 먼저 걸린다. 원화 판이 없으면 `support`가 1이라
+        (`evidence.StrokeEvidence`) 이 조건은 **무동작**이다 — 폴백 불변.
         """
         r = ROLE_RANK.get(self.role, 3)
-        if self.ev.detail_only >= 0.5 and r >= 1:
+        if r >= 1 and (self.ev.detail_only >= 0.5
+                       or self.ev.support < _SUP_OK):
             r += 1
         return r
 
@@ -253,6 +264,10 @@ _CONF = 0.55         # 선 신뢰도 — 이상이면 선화가 확실히 본 �
 # (09 실측: 선 px +80%, 그중 48%가 detail 전용), 같은 값으로 세면 노이즈가
 # 부스러기 보호를 통째로 뚫는다. 0.8이면 detail 0.69가 basic 0.55 자리다
 _DETAIL_W = float(os.environ.get("FS_DETAIL_W", 0.8))
+# §25 원화 해상도 판의 확인이 이만큼은 돼야 "여러 판이 함께 봤다"로 친다.
+# 0.5는 "SR 판이 본 정도의 절반은 원화에서도 보인다"이고, 그 아래가 곧
+# **SR이 지어낸 선**이다 (원화에서 흔적이 절반도 안 남는다).
+_SUP_OK = float(os.environ.get("FS_SUPPORT_OK", 0.5))
 # 무늬 판정 — 넷을 **함께** 넘어야 무늬다 (하나만으로는 머리칼 다발과 안 갈린다)
 _TEX_REPEAT = 0.70   # 나란한 이웃에 덮인 표본 비율
 _TEX_PAR = 1.6       # 표본당 평행 이웃 수

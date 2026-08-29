@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 
 import cv2
 import numpy as np
@@ -16,13 +17,18 @@ from ..catalog import Catalog
 from ..celart import CelArt, mark_mask
 from ..model import Layer, LayerPlan
 from ..price import _PRICE_INK
-from .fill import _fit_bars
+from .fill import _fit_bars, region_shape
 from .geometry import _ink_cover, _min_span
 from .layered import fill_region, grow_fill, mop_up
 from .lines import _fit_lines
 from .scoring import _COVER_STOP, _MAX_PER_REGION, _PEN_WASTE_FILL, _Scorer
 from .stroke import _CURVE_STATS, _stroke_forms
 from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
+
+# 아직 한 장도 못 받은 영역에서 마무리가 줍는 덩어리의 하한 (px).
+# "보이는 구멍"(route_cel.HOLE_MIN_PX = 4px 군집)의 넓이 급이다 —
+# 그보다 작은 조각은 봉인이 군집당 한 장으로 더 싸게 처리한다.
+_MOP_MIN_FIRST = int(os.environ.get("FS_MOP_MIN_FIRST", 12))
 
 
 def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
@@ -68,7 +74,10 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     stats = {"regions": len(cel.regions), "skipped": 0, "uncovered_px": 0,
              "grown_fill": 0,
              "fill_layers": 0, "bar_layers": 0, "mop_layers": 0, "line_layers": 0,
-             "big10_layers": 0, "cap_hit": 0, "share_hit": 0}
+             "big10_layers": 0, "cap_hit": 0, "share_hit": 0,
+             # 획형으로 간 영역 · 도형을 한 장도 못 받은 영역 (P0 계측)
+             "stroke_regions": 0, "stroke_px": 0,
+             "empty_regions": 0, "empty_px": 0}
     # 유예 덮개 — 순이득이 λ×_FIX_DE_REPAIR~λ×_FIX_DE 구간인 획 덮개.
     # 지금 사면 포화 장에서 재컷이 채움을 밀어내므로(2단 수리와 같은 실측),
     # 배치·메움·수리가 끝나 예산 잔여가 확정된 뒤 파이프라인이 남는 만큼만
@@ -140,10 +149,14 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         roi = (x0, y0, x1, y1)
         omap = order_img[y0:y1, x0:x1]
         mask = cel.labels[y0:y1, x0:x1] == reg.rid
-        # 획형 판정 — 픽셀 85%가 경계에서 3.2px 안이면 선·가닥이다. "최대 내접
-        # 반경"만 보면 선의 교차점(굵다) 때문에 타원 채움으로 넘어가 얼룩이 된다
+        # 획형 판정 — 가늘고 **길어야** 획이다 (`fill.region_shape`). 가늘기만
+        # 보면 눈 흰자·하이라이트 같은 가는 **면**이 획 쪽으로 넘어가, 경로
+        # 길이 문턱에 걸려 통째로 안 그려진다
         dt0 = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
-        strokelike = float(np.percentile(dt0[mask], 85)) <= 3.2
+        strokelike, _wmed, _elong = region_shape(mask, dt0)
+        if strokelike:
+            stats["stroke_regions"] += 1
+            stats["stroke_px"] += int(reg.area)
         if reg.area >= 100 and not strokelike:
             # 닫기→열기로 1px대 요철·목을 정리 — 사람이 안 그리는 미세 위글에
             # 도형을 쓰지 않는다 (선·작은 영역은 뭉개질 수 있어 건너뛴다)
@@ -191,10 +204,18 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         # 군집당 1장)이 더 싸게 처리하므로 여기서 예산을 쓰지 않는다
         # (실측: min_blob 12일 때 mop 549장 — 채움 예산을 갉아먹었다)
         if n_reg < cap:
-            n_mop = mop_up(plan, sc, cat, reg.color, cap - n_reg, 40, price,
+            # 아직 한 장도 못 받은 영역에서는 덩어리 하한을 **보이는 구멍**
+            # 크기까지 내린다 — 안 그러면 40px 미만의 작은 면이 통째로 안
+            # 칠해진 채로 봉인까지 내려간다 (그 자리는 구멍 하나가 아니라
+            # 색이 통째로 빠진 자리다). 첫 장 λ 면제도 그때라야 뜻이 산다
+            n_mop = mop_up(plan, sc, cat, reg.color, cap - n_reg,
+                           40 if n_reg else _MOP_MIN_FIRST, price,
                            n_reg == 0)
             stats["mop_layers"] += n_mop
             n_reg += n_mop
+        if n_reg == 0:
+            stats["empty_regions"] += 1
+            stats["empty_px"] += int(reg.area)
         stats["uncovered_px"] += int(np.count_nonzero(sc.residual))
         if oi < 10:                        # 큰 면이 얼마를 먹나 (계획 3 계측)
             stats["big10_layers"] += n_reg
