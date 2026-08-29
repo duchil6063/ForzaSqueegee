@@ -94,6 +94,60 @@ def _ink_of(cat: Catalog, lay: Layer, upp: float, w: int, h: int):
     return m.astype(bool), x0, y0
 
 
+def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
+                    log=print) -> int:
+    """획 그룹 색 = **발자국 아래 원화의 평균색** — 강제 굵기의 단색 최적해.
+
+    획 색은 뼈대 중심선 표본의 중앙값으로 태어난다 (`engine.build_strokes`) —
+    선의 **심** 색이다. 원화 선이 놓인 획보다 가늘면(안티에일리어스 심 1~2px를
+    최소 도형 폭 2~4px로 그린다) 그 단색이 심 색이라, 발자국의 태반을 차지하는
+    옅은 어깨까지 심 색으로 칠해 선이 원화보다 훨씬 무겁게 읽힌다 (실측 X0
+    01·09: 획의 60~65%가 발자국 아래 목표보다 밝기 5+ 어둡고 중앙 −8~−12.
+    09 무릎 윤곽: 놓인 색 (157,130,135) vs 발자국 목표 평균 (227,196,194)).
+
+    주어진 발자국에서 단색 한 장의 최소제곱 최적은 **덮는 px의 목표 평균**이다
+    — 배치가 끝난 뒤 sid 그룹마다 발자국을 다시 떠서 그 평균으로 갈아 끼운다.
+    굵기가 원화와 같은 진한 선은 발자국이 곧 선이라 평균이 심 색 그대로다
+    (안 바뀐다). 한 획 = 단색 규약은 그대로다 — 그룹 하나에 색 하나.
+    실루엣 밖 px는 평균에서 뺀다 (배경은 목표가 아니다).
+    """
+    src = cel.src_rgb
+    if src is None:
+        return 0
+    w, h = cel.size
+    sil = cel.labels >= 0
+    groups: dict[int, list[Layer]] = {}
+    for lay in plan.layers:
+        if lay.label == "ink" and not lay.mask and lay.stroke >= 0:
+            groups.setdefault(lay.stroke, []).append(lay)
+    n = 0
+    for lays in groups.values():
+        acc = np.zeros(3, np.float64)
+        cnt = 0
+        for lay in lays:
+            got = _ink_of(cat, lay, upp, w, h)
+            if got is None:
+                continue
+            m, x0, y0 = got
+            mb = m & sil[y0:y0 + m.shape[0], x0:x0 + m.shape[1]]
+            if not mb.any():
+                continue
+            acc += src[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][mb] \
+                .reshape(-1, 3).sum(axis=0)
+            cnt += int(mb.sum())
+        if not cnt:
+            continue
+        c = tuple(int(round(v / cnt)) for v in acc)
+        if max(abs(a - b) for a, b in zip(c, lays[0].color)) <= 2:
+            continue                       # 이미 그 색이다 — 손 안 댄다
+        for lay in lays:
+            lay.color = c
+        n += 1
+    if n:
+        log(f"  획 색 보정 {n}그룹 — 발자국 아래 원화 평균색")
+    return n
+
+
 def align_to_regions(layers: list, cat: Catalog, upp: float, w: int, h: int,
                      line_mask: np.ndarray, labels: np.ndarray,
                      log=print) -> int:

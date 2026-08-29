@@ -20,7 +20,7 @@ from ..price import _PRICE_INK
 from .fill import _fit_bars, region_shape
 from .geometry import _ink_cover, _min_span
 from .layered import fill_region, grow_fill, mop_up
-from .lines import _fit_lines
+from .lines import _fit_lines, recolor_strokes
 from .scoring import _COVER_STOP, _MAX_PER_REGION, _PEN_WASTE_FILL, _Scorer
 from .stroke import _CURVE_STATS, _stroke_forms
 from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
@@ -152,6 +152,8 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         stats["_rec"] = line_st.pop("_rec", None)
         stats.update({k: v for k, v in line_st.items() if k not in stats})
         line_layers = lp.layers
+        # 폴백도 같은 손 — 획 색은 발자국 아래 원화 평균 (`recolor_strokes`)
+        stats["recolored_strokes"] = recolor_strokes(lp, cel, cat, upp, log=log)
         stats["line_layers"] = n_line
         budget = budget - n_line
         # 획이 덮는 자리 — 면 배치에서 공짜다 (`_Scorer` 문서). 획은 이미
@@ -329,6 +331,8 @@ def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     n = _fit_lines(plan, cel, cat, upp, budget, forms, log, sids=sids,
                    carve=False, progress=progress, stats=stats,
                    value=value, price=price * _PRICE_INK, maps=maps, pol=pol)
+    # 획 색을 발자국 아래 원화 평균으로 — 강제 굵기의 단색 최적 (`recolor_strokes`)
+    stats["recolored_strokes"] = recolor_strokes(plan, cel, cat, upp, log=log)
     stats["line_layers"] = n
     stats["strokes"] = len({l.stroke for l in plan.layers if l.stroke >= 0})
     if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측 (fit_plan과 동일)
