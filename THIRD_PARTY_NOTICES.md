@@ -86,9 +86,9 @@ GitHub 릴리스로 배포한다 (제품의 [FLS 편집기]가 그것을 받아 
 - 짓는 법 — `python tools/fls_build.py` (고정 커밋을 받아 패치를 얹고 짓는다)
 - 릴리스에 올릴 두 벌 짓기 — `python tools/fls_build.py --package`
 
-패치는 셋이다: Qt 플러그인 경로 이식성 고침, 면 기하 덤프 + [Itasha] 메뉴 +
-창 없는 `--itasha-dump`, 그리고 그 메뉴를 이타샤 전부와 비닐 그룹 내보내기로
-넓힌 것. 무엇을 왜 바꿨는지는 `tools/fls-patch/README.md`에 표로 있다.
+패치는 셋이다: Qt 플러그인 경로 이식성 고침, [Itasha] 메뉴 + 창 없는 면
+기하 덤프(`--itasha-dump`) + 선으로 가르기, 그리고 한국어 UI(언어 설정 포함,
+한국어 기본). 무엇을 왜 바꿨는지는 `tools/fls-patch/README.md`에 표로 있다.
 
 **그 패치 파일들 자체가 AGPL-3.0-or-later다** — AGPL 저작물의 수정본이므로
 저장소 뿌리의 MIT가 적용되지 않는다 (전문 `tools/fls-patch/LICENSE`). 우리가

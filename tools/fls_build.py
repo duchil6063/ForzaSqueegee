@@ -218,6 +218,13 @@ def deploy() -> None:
     # zlib을 공유로 지었으므로 그 DLL도 옆에 서야 한다 (없으면 조용히 안 뜬다)
     for dll in (PREFIX / "bin").glob("*.dll"):
         shutil.copy2(dll, BUILD / dll.name)
+    # 편집기 자체 문자열은 내장 표(패치 0003)가 옮기고, Qt 표준 대화상자
+    # (확인/취소·색 고르기)는 Qt의 한국어 번역이 옮긴다. windeployqt는
+    # --no-translations라(전 언어를 다 실어 온다) 한국어 한 벌만 손으로 싣는다.
+    qt_ko = QT_DIR / "translations" / "qtbase_ko.qm"
+    if qt_ko.is_file():
+        (BUILD / "translations").mkdir(exist_ok=True)
+        shutil.copy2(qt_ko, BUILD / "translations" / qt_ko.name)
     VENDOR.mkdir(parents=True, exist_ok=True)
     # **떠 있는 편집기를 밟지 않는다.** 실행 중이면 exe가 잠겨 있어 지우다가
     # 반쯤 비운 자리를 남긴다 — 지우기 전에 알아채고 사람에게 닫으라고 한다.

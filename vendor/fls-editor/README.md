@@ -2,14 +2,16 @@
 
 제품 창의 [FLS 편집기 열기]가 띄우는 네이티브 편집기다. **이타샤가 여기서
 지어진다** — [Itasha] 메뉴의 항목들이 우리 엔진(`python -m forzasqueegee
-flsedit`)을 불러 리버리 프로젝트를 고쳐 다시 연다.
+flsedit`)을 불러 리버리 프로젝트를 고쳐 다시 연다. 우리 빌드는 **한국어
+UI가 기본**이고, 설정 [일반]의 언어 콤보로 English와 오갈 수 있다(재시작
+적용).
 
 바이너리는 저장소에 안 들어간다 (이 README만 남는다). 받거나 지어야 한다.
 
 ## 받기 (기본)
 
 ```
-python tools/get_fls.py              # 우리 빌드 — [Itasha] 메뉴가 있다
+python tools/get_fls.py              # 우리 빌드 — [Itasha] 메뉴·한국어 UI
 python tools/get_fls.py --official   # 업스트림 공식 릴리스 — 메뉴 없음
 python tools/get_fls.py --check      # 지금 있는 것만 확인
 ```
