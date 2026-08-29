@@ -14,8 +14,11 @@ KFPS Fabric 비닐 편집기를 `vendor/kfps-editor/`에 동봉하고(도형 메
 출처·커밋·해시는 `vendor/galatea/README.md`·`vendor/kfps-editor/README.md`·
 `vendor/fls-editor/README.md` 참조.
 
-실행 시 pip로 설치되는 라이브러리(numpy, opencv-python, Pillow, PySide6,
-onnxruntime)는 이 배포물에 동봉되지 않으며 각 프로젝트의 라이선스를 따른다.
+실행 시 `ForzaSqueegee.bat`이 python.org에서 받아 펴는 파이썬 임베더블
+런타임(`runtime/`, PSF-2.0)과 pip(MIT), pip로 설치되는 라이브러리(numpy,
+opencv-python, Pillow, PySide6, onnxruntime)는 이 배포물에 동봉되지 않으며
+각 프로젝트의 라이선스를 따른다. PySide6(LGPL-3.0)는 수정 없이 동적
+임포트로만 쓴다.
 
 ---
 
