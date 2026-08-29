@@ -108,11 +108,6 @@ def to_conf(gray: np.ndarray, w: int, h: int) -> np.ndarray:
 
 def available(variant: str = "basic") -> bool:
     """쓸 수 있는 자리인가 — 모델 파일은 `extract()`가 받으므로 여기서 안 본다."""
-    import os
-    if os.environ.get("FS_CEL_NOLINES"):   # 비교 실험용 — 고전(선화 없음) 강제
-        return False
-    if variant == "detail" and os.environ.get("FS_NO_DETAIL"):
-        return False
     try:
         import onnxruntime  # noqa: F401
         return True

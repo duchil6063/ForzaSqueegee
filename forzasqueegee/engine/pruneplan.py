@@ -97,7 +97,7 @@ def _layer_impact(plan: LayerPlan, catalog: Catalog, bg: int,
     덮을수록 나빠지는데, 바닥 벌점(`_BG_PEN`)은 "밑이 안 칠해졌다"만 보고
     그런 스필을 **가장 값진 장**으로 읽는다 — 컷에서는 그 오독이 무해했지만
     (실루엣 밖을 지켜도 장수만 쓴다) 사후 가격에서는 정반대로 작동한다.
-    안 주면 종전 그대로다.
+    안 주면 그 뒤집기를 안 한다.
     """
     layers = plan.layers
     grad = [catalog[l.shape].gradient is not None for l in layers]

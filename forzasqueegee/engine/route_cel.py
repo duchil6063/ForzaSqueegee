@@ -41,7 +41,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     중앙선)에 서므로 **색이 선을 못 넘고**, 채움 목표가 획 밑 제 몫까지
     포함하므로 색면과 획 사이에 **빈 틈이 없으며** (구멍·커버리지 게이트가
     그것을 지킨다), 같은 영역(= 같은 색)만 획 아래를 지나간다. 획 위
-    스필은 공짜(`_INK_FREE`)·나중 면 위 스필은 나중 면이 덮는다(painter 순서).
+    스필은 공짜(`_Scorer`의 ink 지도)·나중 면 위 스필은 나중 면이 덮는다.
 
     선화 모델이 없거나 선이 안 나오면 **선·면 동시 배치로 폴백**한다 (한 버튼
     원칙 — cel 노선은 모델 없이도 끝까지 돈다).
@@ -58,7 +58,6 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     from .catalog import Catalog, default_catalog_path
     from .celart import (_ALPHA_OPAQUE, _MAX_REGIONS, decompose,
                          rebuild_regions, snap_labels_to_ink)
-    from . import celaxes
     from .celfit import (_ink_cover, count_hole_clusters, coverage, fill_holes,
                          fit_plan, fix_min_gain, grow_covers, price_of,
                          repair_min_gain, repair_mismatch, silhouette_cover)
@@ -203,7 +202,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 중요도 가중 — 같은 색차라도 평평한 면 위(눈·입·손가락·소품)가 더 눈에
     # 띈다. 모델 없이 원화의 중심-주변 대비로 잰다 (importance.py)
     imp = None
-    if cel.src_rgb is not None and not os.environ.get("FS_NO_IMPORTANCE"):
+    if cel.src_rgb is not None:
         imp = masking_weight(cel.src_rgb, cel.labels >= 0)
     stats["hole_layers"] = 0
     stats["fix_layers"] = 0
@@ -225,28 +224,26 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             pass
     _hlog("배치 직후")
     # §12 **잔차 초점 패스** — 보정 도형을 사기 전에 기존 도형을 먼저 움직인다.
-    # 종전에는 미세 조정이 맨 마지막이라, 구멍 메움·잔차 수리가 이미 도형을
-    # 사 버린 뒤였다. 같은 기계를 잔차 자리에 초점을 맞춰 **먼저** 돌리면
-    # 그 자리 중 상당수가 이동·스케일·회전만으로 닫히고, 남은 것만 산다
+    # 미세 조정이 맨 마지막이면 구멍 메움·잔차 수리가 이미 도형을 사 버린
+    # 뒤다. 같은 기계를 잔차 자리에 초점을 맞춰 **먼저** 돌리면 그 자리 중
+    # 상당수가 이동·스케일·회전만으로 닫히고, 남은 것만 산다
     from .celfit import residual as _resid
+    from .finetune import refine_plan as _refine
 
     act_before = None                      # 겹판용 — 배치 직후의 "고칠 자리"
-    if celaxes.on("RESIDUAL"):
-        from .finetune import refine_plan as _refine
-
-        res0 = _resid.analyze(plan, cel, cat, value=val,
-                              price=repair_min_gain(lam), min_px=HOLE_MIN_PX)
-        stats.update({k: v for k, v in res0.items() if k.startswith("res_")})
-        if os.environ.get("FS_CEL_DEBUG"):
-            act_before = res0["actionable"].copy()
-        only = _resid.focus_layers(plan, cat, cel, res0["actionable"],
-                                   res0["owner"])
-        if only and not os.environ.get("FS_NO_FINETUNE"):
-            log("잔차 초점 조정 중…")
-            st = _refine(plan, cel, cat, log=log, max_passes=2, only=only,
-                         tag="잔차 초점")
-            stats["res_focus_layers"] = len(only)
-            stats["res_focus_moves"] = st["accepts"]
+    res0 = _resid.analyze(plan, cel, cat, value=val,
+                          price=repair_min_gain(lam), min_px=HOLE_MIN_PX)
+    stats.update({k: v for k, v in res0.items() if k.startswith("res_")})
+    if os.environ.get("FS_CEL_DEBUG"):
+        act_before = res0["actionable"].copy()
+    only = _resid.focus_layers(plan, cat, cel, res0["actionable"],
+                               res0["owner"])
+    if only:
+        log("잔차 초점 조정 중…")
+        st = _refine(plan, cel, cat, log=log, max_passes=2, only=only,
+                     tag="잔차 초점")
+        stats["res_focus_layers"] = len(only)
+        stats["res_focus_moves"] = st["accepts"]
     # 수렴하면 조기 종료라 상한은 여유 있게 — 3,000은 3라운드에 끝나고(불변),
     # 낮은 상한은 컷이 깊어 수렴이 느리다. 12는 포화 장 실측이다 — 선+채움
     # 3,355장의 컷↔메움 초과가 라운드마다 십수 장씩 잦아들며 단조 수렴하므로
@@ -260,22 +257,20 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             keep_layers = list(plan.layers)
             # §18 자격 보호 — 혼자 덮고 있는 장은 값 불문 못 자른다. 라벨
             # 보호(양보 있음)와 급이 다르다 (`celfit.coverage` 문서)
-            uniq = (coverage.unique_layers(plan, cel, cat)
-                    if celaxes.on("SEAL") else frozenset())
+            uniq = coverage.unique_layers(plan, cel, cat)
             # 보호 합이 예산을 넘으면 prune_impact가 보호도 영향 하위부터
             # 양보시킨다 — 항상 정확히 예산으로 내려온다
             plan, _ = prune_impact(plan, cat, budget=shapes,
                                    protect_labels=("hole",), weight=imp,
                                    protect_idx=uniq)
-            if celaxes.on("SEAL"):
-                # 한 장씩은 안전한 두 장이 같은 표본을 나눠 덮고 있을 수 있다 —
-                # 동시 제거의 연쇄만 여기서 되짚는다 (되살리면 예산을 몇 장
-                # 넘길 수 있고, 다음 라운드의 컷이 그것을 도로 맞춘다)
-                fixed, back = coverage.repair_cut(
-                    keep_layers, plan.layers, cel, cat, plan.units_per_px)
-                if back:
-                    plan.layers[:] = fixed
-                    log(f"  컷 되짚기: {back}장 복구 (동시 제거가 연 구멍)")
+            # 한 장씩은 안전한 두 장이 같은 표본을 나눠 덮고 있을 수 있다 —
+            # 동시 제거의 연쇄만 여기서 되짚는다 (되살리면 예산을 몇 장
+            # 넘길 수 있고, 다음 라운드의 컷이 그것을 도로 맞춘다)
+            fixed, back = coverage.repair_cut(
+                keep_layers, plan.layers, cel, cat, plan.units_per_px)
+            if back:
+                plan.layers[:] = fixed
+                log(f"  컷 되짚기: {back}장 복구 (동시 제거가 연 구멍)")
             log(f"  정리{it + 1}: {before} → {len(plan.layers)}장 (시각 영향 하위 컷)")
             stats["pruned_to"] = len(plan.layers)
             _hlog(f"정리{it + 1} 후")
@@ -357,64 +352,57 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 살 때의 값은 그 시점 잔여 기준이라, 뒤에 그린 면이 덮은 자리는 값이
     # 사라진다. 문턱은 수리와 같은 λ 환산(`repair_min_gain`)이고 획·메움은
     # 안 건드린다 — 배경이 드러나는 장은 영향의 바닥 벌점이 지킨다
-    if celaxes.on("POSTPRICE"):
-        from .pruneplan import prune_price
+    from .pruneplan import prune_price
 
-        sold_before = list(plan.layers)
-        plan, pp = prune_price(
-            plan, cat, repair_min_gain(lam), weight=val,
-            sil=cel.labels >= 0,
-            protect_idx=(coverage.unique_layers(plan, cel, cat)
-                         if celaxes.on("SEAL") else frozenset()))
-        if celaxes.on("SEAL"):
-            fixed, back = coverage.repair_cut(sold_before, plan.layers, cel,
-                                              cat, plan.units_per_px)
-            if back:
-                plan.layers[:] = fixed
-                pp["removed"] -= back
-                pp["after"] = len(plan.layers)
-        stats["postprice"] = pp["removed"]
-        if pp["removed"]:
-            log(f"  사후 가격: {pp['before']} → {pp['after']}장 "
-                f"(기여가 수리 문턱({repair_min_gain(lam):,.0f})에 못 미치는 "
-                f"{pp['removed']}장 되팜, {pp['rounds']}바퀴)")
-            # 되팔면 그 밑이 드러난다. 영향의 바닥 벌점(`_BG_PEN`)이 배경을
-            # 여는 장을 지키지만 그것은 **한 장씩 뺐을 때**의 셈이라, 위아래
-            # 두 장이 같은 바퀴에 팔리면 연쇄로 배경이 열릴 수 있다 (실측
-            # C20-09: 구멍 게이트 탈락). 그래서 여기서 반드시 되메운다 —
-            # 먼저 이웃을 늘려 공짜로 흡수하고(레이어 0장), 그래도 남으면
-            # 되판 만큼의 잔여 안에서 메움을 산다. 게이트가 지키는 자리다
-            if count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
-                                   value=val, price=lam):
+    sold_before = list(plan.layers)
+    plan, pp = prune_price(
+        plan, cat, repair_min_gain(lam), weight=val,
+        sil=cel.labels >= 0,
+        protect_idx=coverage.unique_layers(plan, cel, cat))
+    fixed, back = coverage.repair_cut(sold_before, plan.layers, cel,
+                                      cat, plan.units_per_px)
+    if back:
+        plan.layers[:] = fixed
+        pp["removed"] -= back
+        pp["after"] = len(plan.layers)
+    stats["postprice"] = pp["removed"]
+    if pp["removed"]:
+        log(f"  사후 가격: {pp['before']} → {pp['after']}장 "
+            f"(기여가 수리 문턱({repair_min_gain(lam):,.0f})에 못 미치는 "
+            f"{pp['removed']}장 되팜, {pp['rounds']}바퀴)")
+        # 되팔면 그 밑이 드러난다. 영향의 바닥 벌점(`_BG_PEN`)이 배경을
+        # 여는 장을 지키지만 그것은 **한 장씩 뺐을 때**의 셈이라, 위아래
+        # 두 장이 같은 바퀴에 팔리면 연쇄로 배경이 열릴 수 있다 (실측
+        # C20-09: 구멍 게이트 탈락). 그래서 여기서 반드시 되메운다 —
+        # 먼저 이웃을 늘려 공짜로 흡수하고(레이어 0장), 그래도 남으면
+        # 되판 만큼의 잔여 안에서 메움을 산다. 게이트가 지키는 자리다
+        if count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
+                               value=val, price=lam):
+            grow_covers(plan, cel, cat, log=log, passes=6)
+            n_h = fill_holes(plan, cel, cat, log=log, min_px=HOLE_MIN_PX,
+                             max_layers=max(0, shapes - len(plan.layers)),
+                             value=val, price=lam)
+            stats["hole_layers"] += n_h
+            if n_h:
                 grow_covers(plan, cel, cat, log=log, passes=6)
-                n_h = fill_holes(plan, cel, cat, log=log, min_px=HOLE_MIN_PX,
-                                 max_layers=max(0, shapes - len(plan.layers)),
-                                 value=val, price=lam)
-                stats["hole_layers"] += n_h
-                if n_h:
-                    grow_covers(plan, cel, cat, log=log, passes=6)
     _hlog("사후 가격 후")
     if _dbg:
         plan.save(run_file(out, "plan_preft.json"))
     # 전역 미세 조정 (DiffCompositing 이산 이식) — 완성된 스택 전체를 놓고
     # 레이어 기하를 양자화 스텝 이웃으로 좌표하강. 레이어 수·순서·색 불변,
     # 실루엣 신규 노출 기각이라 위 게이트들(상한·구멍)이 그대로 성립한다
-    if not os.environ.get("FS_NO_FINETUNE"):
-        from .finetune import refine_plan
-
-        log("전역 미세 조정 중…")
-        stats["finetune"] = refine_plan(
-            plan, cel, cat, log=log,
-            progress=(lambda f, t: progress(0.95 + f * 0.04, t))
-            if progress else None)
+    log("전역 미세 조정 중…")
+    stats["finetune"] = _refine(
+        plan, cel, cat, log=log,
+        progress=(lambda f, t: progress(0.95 + f * 0.04, t))
+        if progress else None)
     # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
     # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).
     # 성장(레이어 0장)으로 먼저 먹고, 남은 것만 최소 도형이 맡는다
-    if celaxes.on("SEAL"):
-        log("커버리지 봉인 중…")
-        stats.update(coverage.seal_coverage(plan, cel, cat, log=log,
-                                            budget=shapes, weight=imp))
+    log("커버리지 봉인 중…")
+    stats.update(coverage.seal_coverage(plan, cel, cat, log=log,
+                                        budget=shapes, weight=imp))
     stats.update(coverage.measure(plan, cel, cat))
     stats["hole_left"] = count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
                                              value=val, price=lam)
@@ -530,7 +518,6 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                         "ink_near": stats.get("ink_near"),
                         "ink_stray": stats.get("ink_stray")},
             "structure": struct,
-            "cel_ablation": celaxes.names(),
             "checks": checks,
             "verdict": ("판정: 걸린 것 없음" if not bad else
                         "판정: " + " · ".join(c["text"] for c in bad))}

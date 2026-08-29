@@ -25,8 +25,6 @@ import os
 import cv2
 import numpy as np
 
-from .. import celaxes
-
 # 팔레트 후보 (작은 것부터, 오차 기준 채택). 상한 48 — 24에서 멈추면 색이
 # 조밀한 그림(레이스·홍채·볼터치)에서 평균 오차가 5.9까지 남아 작은 고채도
 # 특징이 이웃 톤에 씻긴다 (실측 04: 홍채 적색 파편화·볼터치 소실. 48이면 4.1로
@@ -91,7 +89,7 @@ def quantize(lab: np.ndarray, sel: np.ndarray, log=print):
         if mean_de <= _K_MEAN_DE and tail <= _K_TAIL:
             break
     extra = 0
-    if _K_TAIL_EXTRA > 0 and celaxes.on("TAIL"):
+    if _K_TAIL_EXTRA > 0:
         ctr2 = _tail_centers(lab, sel, resid, ctr)
         if len(ctr2) > len(ctr):
             lbl2 = _assign(data, ctr2)

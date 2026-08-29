@@ -40,9 +40,8 @@ _RASTER = 160          # 중심선·폭을 재는 등방 래스터 해상도
 _N = 16                # 중심선 대응점 수 (아핀 맞춤과 같은 수)
 _SDF = 32              # 부호 거리장 해상도
 _PYR = (32, 16, 8)     # 저해상 래스터 피라미드
-_SDF_N = 32            # 모멘트 정규화 라스터 한 변 (§6 후보 순위)
 _CURVB = 32            # 외곽 곡률 프로파일 표본 수
-_SCHEMA = 3            # 캐시 스키마 판 (칸이 늘면 올린다 — 옛 캐시는 무시된다)
+_SCHEMA = 4            # 캐시 스키마 판 (칸이 바뀌면 올린다 — 옛 캐시는 무시된다)
 
 
 @dataclass(frozen=True)
@@ -77,7 +76,6 @@ class ShapeDesc:
     branches: int            # 세선화 가지 수 (끝점 + 분기점)
     mom: tuple               # 주 모멘트 (λ1, λ2) — 면적으로 정규화
     curvb: np.ndarray        # (_CURVB,) 외곽 곡률 프로파일 (둘레 등간격)
-    npyr: np.ndarray         # (_SDF_N,_SDF_N) bool — **모멘트 정규화** 라스터
 
     @property
     def ext_min(self) -> float:
@@ -176,36 +174,6 @@ def _sdf(m: np.ndarray) -> np.ndarray:
     return cv2.resize(f / r, (_SDF, _SDF), interpolation=cv2.INTER_AREA).astype(np.float32)
 
 
-def norm_raster(m: np.ndarray, n: int = _SDF_N) -> np.ndarray:
-    """마스크 → **모멘트 정규화** 라스터 (n,n) bool — 형태 대조의 공통 자.
-
-    우리 배치 자유도는 회전 + 축별 스케일(전단 없음)이다. 그러니 두 형태를
-    "같은 모양인가"로 견주려면 **그 자유도만큼 미리 정규화**해 놓아야 한다:
-    무게중심으로 옮기고, 주축으로 돌리고, 축마다 표준편차로 나눈다. 남는
-    자유도는 축 부호 넷뿐이라 대조가 유한하다 (미러는 음수 스케일로 낸다).
-
-    창은 ±2.5σ — 이보다 좁으면 뾰족한 도형의 끝이 잘리고, 넓으면 몸통이
-    가운데 몇 칸으로 뭉쳐 구분이 안 선다.
-    """
-    ys, xs = np.nonzero(m)
-    if len(ys) < 8:
-        return np.zeros((n, n), bool)
-    if len(ys) > 20000:                    # 큰 마스크는 균일 솎기 (결정적)
-        step = len(ys) // 20000 + 1
-        ys, xs = ys[::step], xs[::step]
-    p = np.stack([xs, ys], axis=1).astype(np.float64)
-    mu = p.mean(0)
-    cov = np.cov((p - mu).T)
-    ev, evec = np.linalg.eigh(cov)
-    idx = np.argsort(-ev)
-    sig = np.sqrt(np.maximum(ev[idx], 1e-9))
-    q = (p - mu) @ evec[:, idx] / sig
-    g = np.clip(((q + 2.5) / 5.0 * n).astype(np.int64), 0, n - 1)
-    out = np.zeros((n, n), bool)
-    out[g[:, 1], g[:, 0]] = True
-    return out
-
-
 def _boundary(m: np.ndarray):
     """(외곽 컨투어, 면적 px, 둘레 px) — 가장 큰 성분 하나."""
     cnts, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL,
@@ -285,7 +253,6 @@ def _describe(sh) -> ShapeDesc | None:
     concave = _concavity(cnt)
     curvb = _curv_profile(cnt) / max(u, 1e-9)
     branches = _branch_count(skel)
-    npyr = norm_raster(m)
     ys_m, xs_m = np.nonzero(m)
     cm = np.cov(np.stack([xs_m, ys_m]).astype(np.float64)) if len(ys_m) > 2         else np.eye(2)
     ev_m = np.sort(np.maximum(np.linalg.eigvalsh(cm), 1e-9))[::-1]
@@ -355,7 +322,7 @@ def _describe(sh) -> ShapeDesc | None:
         taper=taper, slim=slim, ecc=ecc, sym=sym, convex=conv,
         sdf=sdf, pyr=pyr,
         area=area_u, peri=peri_u, circ=circ, concave=concave,
-        branches=branches, mom=mom, curvb=curvb, npyr=npyr)
+        branches=branches, mom=mom, curvb=curvb)
 
 
 def reachable(cat: Catalog) -> tuple[str, ...]:
@@ -419,7 +386,7 @@ def _load_cache(path: Path, names: tuple[str, ...]) -> dict | None:
                 area=float(sc[12]), peri=float(sc[13]), circ=float(sc[14]),
                 concave=float(sc[15]), branches=int(sc[16]),
                 mom=(float(sc[17]), float(sc[18])),
-                curvb=z[f"{n}/kb"], npyr=z[f"{n}/np"])
+                curvb=z[f"{n}/kb"])
         return out
     except Exception:                          # noqa: BLE001 — 캐시는 재생성 가능
         return None
@@ -437,7 +404,6 @@ def _save_cache(path: Path, descs: dict) -> None:
             d[f"{n}/t1"] = s.tan1.astype(np.float32)
             d[f"{n}/sdf"] = s.sdf
             d[f"{n}/kb"] = s.curvb.astype(np.float32)
-            d[f"{n}/np"] = s.npyr
             for i, p in enumerate(s.pyr):
                 d[f"{n}/p{i}"] = p
             d[f"{n}/scal"] = np.array(
@@ -619,62 +585,3 @@ def straight_thin(cat: Catalog, upp: float, target_px: float,
         if w <= target_px:
             out.append((w, n))
     return tuple(n for _, n in sorted(out))
-
-
-# ── §6 채움 후보 순위 — **영역의 모습이 어휘를 고른다** ────────────────
-# 종전에는 타원·사각을 늘 먼저 놓고 나머지 여섯을 뒤에 붙였다. 그것은 어휘가
-# 여덟일 때의 타협이고, 어휘를 넓히면(도달 520종 중 불투명·뚱뚱한 76종) 전부
-# 씨앗 채점을 돌릴 수 없다. 여기서는 **모멘트 정규화 라스터의 IoU**로 먼저
-# 줄인다 — 회전·비등방 스케일·미러를 미리 정규화했으므로, 남는 것은 "우리
-# 자유도로 옮겨 놓았을 때 이 영역과 얼마나 겹치나"뿐이다. 잔차를 잘 줍는
-# 도형이 아니라 **닮은 도형**이 앞에 서는 것이 요점이다 (전자는 불꽃·폭발처럼
-# 가장자리가 너덜한 도형을 뽑아 지각 지표를 나쁘게 했다 — `vocabulary` 실측).
-_RANK_POSES = 4                       # 축 부호 넷 (미러는 음수 스케일이 낸다)
-_RANK_CACHE: dict = {}
-
-
-def _rank_bank(cat: Catalog, vocab: tuple[str, ...]):
-    """어휘의 정규화 라스터 은행 — (이름 index, (4K, n²) float32)."""
-    key = (id(cat), vocab)
-    got = _RANK_CACHE.get(key)
-    if got is not None:
-        return got
-    des = descriptors(cat)
-    names, rows = [], []
-    for n in vocab:
-        d = des.get(n)
-        if d is None or not d.npyr.any():
-            continue
-        for k in range(_RANK_POSES):
-            m = d.npyr
-            if k & 1:
-                m = m[:, ::-1]
-            if k & 2:
-                m = m[::-1]
-            rows.append(m.reshape(-1).astype(np.float32))
-        names.append(n)
-    bank = (np.stack(rows) if rows else np.zeros((0, _SDF_N * _SDF_N), np.float32))
-    got = (tuple(names), bank, bank.sum(1))
-    _RANK_CACHE[key] = got
-    return got
-
-
-def fill_rank(cat: Catalog, mask: np.ndarray, vocab: tuple[str, ...],
-              top: int = 8) -> tuple[str, ...]:
-    """이 잔여 덩어리를 닮은 순으로 어휘를 정렬해 앞 `top`개를 준다.
-
-    닮음은 정규화 라스터 IoU다. 동점은 **어휘 순서**로 갈린다 — 어휘를 넓혀도
-    기존 어휘의 판정이 안 흔들리게 하는 것이 이 노선의 규칙이다.
-    """
-    names, bank, bsum = _rank_bank(cat, vocab)
-    if not names:
-        return vocab[:top]
-    r = norm_raster(mask).reshape(-1).astype(np.float32)
-    rs = float(r.sum())
-    if rs <= 0:
-        return vocab[:top]
-    inter = bank @ r
-    iou = inter / np.maximum(bsum + rs - inter, 1e-6)
-    best = iou.reshape(len(names), _RANK_POSES).max(1)
-    order = sorted(range(len(names)), key=lambda i: (-float(best[i]), i))
-    return tuple(names[i] for i in order[:max(1, top)])

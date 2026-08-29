@@ -41,17 +41,13 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
     h, w = lm0.shape
     src_rgb = _fill_bg_nearest(rgba[..., :3], sel) if not sel.all() \
         else np.ascontiguousarray(rgba[..., :3])
-    from .celfit import ablation
-
-    if not ablation.evidence():          # 대조군 — 마스크만 증거로 (§10)
-        basic_gray = detail_gray = None
-    # detail 전용 선을 **경로 원천에 합류**시킨다 (`FS_DETAIL_PATHS=0`으로 끈다).
+    # detail 전용 선을 **경로 원천에 합류**시킨다.
     # 증거로만 두면 detail이 처음 찾아 준 선은 값만 재고 못 긋는다 — 뼈대를
     # 뽑는 원천이 이 마스크 하나이기 때문이다. 합류시키면 그 자리에도 경로가
     # 서고, 역할 등급이 한 단 낮아 예산 컷·가격이 먼저 문다
     # (`graph.LogicalStroke.rank`).
     #
-    # **기본 켬 근거 (표준 10장 실측)**: 배치의 천장인 `outline_src`(실루엣 테를
+    # **근거 (표준 10장 실측)**: 배치의 천장인 `outline_src`(실루엣 테를
     # 선 지도가 덮는 몫)가 0.834 → 0.938로 오르고, 실제 실루엣 윤곽이
     # 0.799 → 0.919(+12.0%p)가 된다. 즉 "원화가 실루엣에 선을 안 그렸다"고
     # 보고해 오던 자리의 태반은 **원화가 아니라 basic 판의 사각지대**였다.
@@ -59,7 +55,7 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
     # 시간 +35%다. detail을 **증거로만** 쓰는 것은 거의 무효였다 (+34장·
     # 커버리지 +0.04%p) — 신뢰도는 역할 판정의 입력일 뿐 경로를 안 만든다.
     lm_paths = lm0
-    if detail_gray is not None and os.environ.get("FS_DETAIL_PATHS", "1") != "0":
+    if detail_gray is not None:
         extra = lineart.to_mask(detail_gray, w, h) & sel & ~lm0
         n_ex = int(extra.sum())
         if n_ex:
@@ -169,14 +165,13 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     if os.environ.get("FS_LINE_DEBUG", "1") != "0":
         linedebug.overlay(out, rec, (w, h), line_mask)
 
-    if not os.environ.get("FS_NO_FINETUNE"):
-        from .finetune import refine_plan
+    from .finetune import refine_plan
 
-        log("전역 미세 조정 중…")
-        stats["finetune"] = refine_plan(
-            plan, tgt, cat, log=log,
-            progress=(lambda f, t: progress(0.92 + f * 0.07, t))
-            if progress else None)
+    log("전역 미세 조정 중…")
+    stats["finetune"] = refine_plan(
+        plan, tgt, cat, log=log,
+        progress=(lambda f, t: progress(0.92 + f * 0.07, t))
+        if progress else None)
     plan.save(run_file(out, "plan.json"))
 
     # 2× 렌더 후 축소 — cel 노선과 같은 이유 (인게임은 벡터라 경계가 매끈하다)

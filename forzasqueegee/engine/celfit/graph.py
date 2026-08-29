@@ -81,7 +81,7 @@ class LogicalStroke:
 
 
 # ── 이어긋기 (§ stroke continuation) ───────────────────────────────────
-# 접선 각차 상한 (도) — 이보다 벌어진 짝은 아예 안 본다. 35°는 옛 이음의 값이고
+# 접선 각차 상한 (도) — 이보다 벌어진 짝은 아예 안 본다. 35°는 접선 이음의 값이고
 # 여기서는 **후보 문턱**일 뿐이다 (실제 선택은 아래 비용이 한다).
 _JOIN_ANGLE = float(os.environ.get("FS_JOIN_ANGLE", 50.0))
 # 비용 가중 — 전부 무차원으로 정규화한 뒤 더한다.
@@ -93,20 +93,19 @@ _W_SHAPE = 0.5      # 합친 뒤 늘어나는 마디 수 (음수면 이득)
 _COST_MAX = float(os.environ.get("FS_JOIN_COST", 1.10))   # 이보다 비싸면 안 잇는다
 # **주요 contour 우선** (§3 — 긴 선이 짧은 곁가지 때문에 끊기지 않게).
 #
-# 접합점 하나에서 이을 수 있는 짝이 여럿일 때 종전에는 **가장 싼 짝** 하나만
+# 접합점 하나에서 이을 수 있는 짝이 여럿일 때 **가장 싼 짝** 하나만
 # 잇고 나머지 끝은 그 자리에서 버려졌다 (`_merge`가 접합점 id를 소비한다).
 # 그래서 긴 A·긴 B·짧은 C가 만나는 T자에서 cost(A,C)가 조금이라도 싸면 A는
 # 곁가지 C로 꺾여 나가고 **B는 영영 고아가 된다** — 사람이 한 획으로 긋는
 # 주요 윤곽이 곁가지 하나 때문에 두 동강 나는 자리다.
 #
-# 새 비용 항을 더하지 않는다. 바꾸는 것은 **선택 규칙** 둘이다:
-# ① 접합점을 **가장 긴 가닥이 붙은 순서로** 푼다 (종전은 접합점 id 순 = 임의).
-#    주요 윤곽이 제 짝을 먼저 고른다.
+# 새 비용 항을 더하지 않는다. 규칙은 둘이다:
+# ① 접합점을 **가장 긴 가닥이 붙은 순서로** 푼다 — 주요 윤곽이 제 짝을
+#    먼저 고른다 (id 순으로 풀면 순서가 임의라 짧은 가닥이 먼저 채 간다).
 # ② 그 접합점에서 최선 비용의 `_JOIN_SLACK` 안에 드는 짝들 중 **양쪽이 다
 #    긴 짝**을 고른다 (자 = 짧은 쪽 길이). 후보가 하나뿐이면 아무 일도 안 한다.
 # 비용 문턱(`_COST_MAX`)은 그대로다 — 안 이을 짝을 새로 잇지는 않는다.
 _JOIN_SLACK = float(os.environ.get("FS_JOIN_SLACK", 0.25))
-_JOIN_MAIN = os.environ.get("FS_JOIN_MAIN", "1") != "0"
 
 
 def _tan(path: np.ndarray, head: bool) -> np.ndarray:
@@ -166,7 +165,7 @@ def continue_strokes(strokes: list[LogicalStroke]) -> list[LogicalStroke]:
     간선 단위로 각각 맞추면 하나의 자연스러운 획이 접합점마다 끊긴다. 접합점의
     끝 조합을 전부 재 이을 만한 짝을 고른다 — 한 번에 접합점 하나당 한 쌍씩,
     남은 끝은 다음 라운드에서 다시 겨룬다. 접합점을 푸는 순서와 그 안에서 짝을
-    고르는 규칙은 **주요 윤곽이 먼저**다 (`_JOIN_MAIN` 문서).
+    고르는 규칙은 **주요 윤곽이 먼저**다 (`_JOIN_SLACK` 위 문서).
 
     **잉크 뒷받침은 구조가 보증한다**: 여기서 잇는 두 끝은 같은 접합점 뭉치를
     나눠 쓰는 사이라 그 사이에 선 픽셀이 반드시 있다. 떨어진 조각을 잇는 일
@@ -185,9 +184,8 @@ def continue_strokes(strokes: list[LogicalStroke]) -> list[LogicalStroke]:
         merged: set[int] = set()
         new: list[LogicalStroke] = []
         plen = [float(len(t.path)) for t in items]
-        # ① 가장 긴 가닥이 붙은 접합점부터 (`_JOIN_MAIN` 문서)
-        order = (sorted(ends, key=lambda k: (-max(plen[a] for a, _ in ends[k]), k))
-                 if _JOIN_MAIN else sorted(ends))
+        # ① 가장 긴 가닥이 붙은 접합점부터 (`_join_cost` 위 문서)
+        order = sorted(ends, key=lambda k: (-max(plen[a] for a, _ in ends[k]), k))
         for key in order:
             lst = ends[key]
             cands = []
@@ -203,9 +201,8 @@ def continue_strokes(strokes: list[LogicalStroke]) -> list[LogicalStroke]:
                 continue
             # ② 최선 비용의 여유 안에서 **양쪽이 다 긴** 짝 (동점은 비용 순)
             lo = min(c[0] for c in cands)
-            best = (min((c for c in cands if c[0] <= lo + _JOIN_SLACK),
-                        key=lambda c: (-c[1], c[0], c[2], c[4]))
-                    if _JOIN_MAIN else min(cands, key=lambda c: (c[0], c[2], c[4])))
+            best = min((c for c in cands if c[0] <= lo + _JOIN_SLACK),
+                       key=lambda c: (-c[1], c[0], c[2], c[4]))
             _, _, i, hi, j, hj = best
             new.append(_merge(items[i], hi, items[j], hj))
             merged.update((i, j))
@@ -269,16 +266,13 @@ _TEX_DEG = int(os.environ.get("FS_TEX_DEG", 4))
 
 
 def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
-             min_w: float, simple: bool = False) -> None:
+             min_w: float) -> None:
     """획마다 역할을 매긴다 (제자리 수정).
 
     순서가 뜻이다 — 보호 조건을 먼저 묻고 무늬·부스러기는 마지막에 남는 것에만
     묻는다. 그래서 레이스 무늬 한가운데의 콧선·입가도 무늬로 안 걸린다.
     **AA 반점(길이 < iso_px)은 무엇으로도 못 살린다** — 그 크기는 최소 도형
     으로도 못 그려서, 살려 봐야 놓을 도형이 없다.
-
-    `simple=True`는 역할 판정을 통째로 끈 대조군이다 (ablation): 실루엣·고립·
-    파편 셋만 옛 규칙 그대로 가른다 — 선 신뢰도 보호도, 무늬 판정도 없다.
     """
     for s in strokes:
         ev = s.ev
@@ -295,9 +289,6 @@ def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
         if ev.repeat <= 1e-6 and ev.free_ends == 2 and not speck:
             s.role = FEATURE
             continue
-        if simple:
-            s.role = NOISE if short else STRUCTURE
-            continue
         # ③ 부스러기 — 반점이거나, 짧으면서 옅고 아무 보호도 못 받는다.
         #    **명확한 선 신뢰도는 보호다** (짧은 콧선·눈꺼풀 주름) — 다만 반점
         #    아래로는 보호가 무의미하다
@@ -309,11 +300,9 @@ def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
         #    밀도), 주변 획들보다 안 띈다(상대 값). 세 조건이 "여럿이 같은
         #    리듬으로 놓여 있다"를 말한다.
         #
-        #    종전에는 여기에 위상 조건(갇힘·자유 끝 0·접합점 차수 4+)이 더
-        #    있었다. 그 셋은 **그물·레이스만** 잡는다 — 표준 11장에서 무늬
-        #    판정이 한 개도 안 났고(report `texture_dropped` 0), 머리칼 다발
-        #    처럼 한쪽 끝이 열린 반복은 전부 빠져나갔다. 위상은 "선망 안쪽인가"를
-        #    묻지 "여럿이 같은 리듬인가"를 안 묻는다.
+        #    위상 조건(갇힘·자유 끝 0·접합점 차수 4+)은 안 묻는다 — 그것은
+        #    "선망 안쪽인가"를 묻지 "여럿이 같은 리듬인가"를 안 묻고, 머리칼
+        #    다발처럼 한쪽 끝이 열린 반복을 통째로 놓친다.
         #
         #    **무늬라고 지우는 것이 아니다.** 이 라벨은 다발마다 대표 몇 가닥만
         #    남기는 자리로 보낸다 (`texture_representatives`) — 사람이 머리칼
@@ -399,7 +388,7 @@ def texture_representatives(strokes: list[LogicalStroke]) -> set[int]:
       (동점은 입력 순서 — 결정적이다).
 
     표준 11장에서는 이 손이 아무것도 안 버린다 — 다발이 안 잡히기 때문이다
-    (`policy._TEXTURE_SIMPLIFY` 문서의 실측). 단일 인물화가 아니라 반복 해칭·
+    (`policy` 무늬 단순화 문서의 실측). 단일 인물화가 아니라 반복 해칭·
     레이스가 있는 그림에서 도는 자리다.
     """
     tex = [s for s in strokes if s.role == TEXTURE]

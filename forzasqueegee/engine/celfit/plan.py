@@ -12,17 +12,15 @@ import itertools
 import cv2
 import numpy as np
 
-from .. import celaxes
 from ..catalog import Catalog
 from ..celart import CelArt, mark_mask
 from ..model import Layer, LayerPlan
 from ..price import _PRICE_INK
-from .fill import _fit_bars, _mop_up
+from .fill import _fit_bars
 from .geometry import _ink_cover, _min_span
 from .layered import fill_region, grow_fill, mop_up
 from .lines import _fit_lines
-from .scoring import (_COVER_STOP, _INK_FREE, _MAX_PER_REGION,
-                      _NO_FREESPILL, _PEN_WASTE, _PEN_WASTE_FILL, _Scorer)
+from .scoring import _COVER_STOP, _MAX_PER_REGION, _PEN_WASTE_FILL, _Scorer
 from .stroke import _CURVE_STATS, _stroke_forms
 from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
 
@@ -42,7 +40,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     `ink_free`는 **밖에서 이미 배치된 획**의 커버 지도다 (cel 노선 — 선
     도안이 먼저 서고 이 함수는 면만 채울 때. `cel.line_mask`는 None으로
     온다). 의미는 안에서 계산하는 지도와 같다 — 획이 덮는 자리는 면 채점의
-    공짜 (`_Scorer` ink · `_INK_FREE`).
+    공짜 (`_Scorer`의 ink 지도).
 
     `sid_start`는 **획 그룹 id의 시작 번호**다. cel 노선은 선 도안을 먼저
     딴 판(`fit_line_plan`)과 이 함수를 **따로** 부르고 두 판의 레이어를 한
@@ -87,7 +85,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     # 획 레이어는 그리기 순서상 맨 뒤(모든 면 위)로 가야 하므로 따로 모았다가
     # 영역 채움이 끝난 뒤 붙인다 — 사람의 마지막 선따기 순서와 같다
     line_layers: list[Layer] = []
-    ink_cov: np.ndarray | None = ink_free if _INK_FREE else None
+    ink_cov: np.ndarray | None = ink_free
     if cel.line_mask is not None:
         lp = LayerPlan(image_size=(w, h), units_per_px=upp)
         # 선 예산은 **최종 상한 기준**으로 받는다 (fit 여유 배수에 비례시키면
@@ -109,12 +107,12 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         budget = budget - n_line
         # 획이 덮는 자리 — 면 배치에서 공짜다 (`_Scorer` 문서). 획은 이미
         # 전부 놓였으므로 지도가 확정이다
-        if _INK_FREE and line_layers:
+        if line_layers:
             ink_cov = _ink_cover(line_layers, cat, upp, w, h)
             stats["ink_free_px"] = int(ink_cov.sum())
     # §9 이음 당김의 예외 — 무늬 보호 조각 (`celart.marks`). 큰 면이 눈
     # 흰자·코 그림자를 1px씩 먹는 것이 이 당김의 유일한 해악이라 그 자리만 뺀다
-    protect = mark_mask(cel) if celaxes.on("PAIR") else None
+    protect = mark_mask(cel)
     total = len(cel.regions)
     # 남은 영역 면적 합 (뒤부터 누적) — 영역별 예산 = 남은 예산 × 면적 비중.
     # 큰 영역이 예산을 독식해 후순위 영역이 통째로 빠지는 것을 막는다
@@ -157,10 +155,10 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                 mask = m8.astype(bool)
         forbid = omap < oi                 # 먼저 그린 면 + 배경(-1)
         sc = _Scorer(cat, upp, w, h, roi, mask, forbid, omap < 0, guard=8.0,
-                     pen_waste=(_PEN_WASTE if _NO_FREESPILL else _PEN_WASTE_FILL),
+                     pen_waste=_PEN_WASTE_FILL,
                      ink=ink_cov[y0:y1, x0:x1] if ink_cov is not None else None,
                      val=value[y0:y1, x0:x1] if value is not None else None,
-                     seam=celaxes.on("PAIR"),
+                     seam=True,
                      protect=protect[y0:y1, x0:x1] if protect is not None else None,
                      silcap=True)
 
@@ -176,7 +174,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         # **사기 전에 늘린다** — 경계 부스러기를 이미 놓은 도형의 한 스텝
         # 확장으로 먼저 먹는다 (레이어 0장). 그러고도 남는 것만 막대·마무리가
         # 산다 (`layered.grow_fill` 문서)
-        if celaxes.on("GROWFIRST") and n_reg:
+        if n_reg:
             stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
         # 가는 잔여 → 획 사슬
         if n_reg < cap and np.count_nonzero(sc.residual) > (1.0 - _COVER_STOP) * area:
@@ -187,16 +185,14 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
             stats["bar_layers"] += n_bar
             n_reg += n_bar
         # 막대가 놓인 뒤 한 번 더 — 새로 놓인 막대도 늘릴 자리가 생긴다
-        if celaxes.on("GROWFIRST") and n_reg:
+        if n_reg:
             stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
         # 마무리 — 남은 큰 덩어리만 줍는다. 작은 조각은 구멍 메움(컷 뒤,
         # 군집당 1장)이 더 싸게 처리하므로 여기서 예산을 쓰지 않는다
         # (실측: min_blob 12일 때 mop 549장 — 채움 예산을 갉아먹었다)
         if n_reg < cap:
-            n_mop = (mop_up(plan, sc, cat, reg.color, cap - n_reg, 40, price,
-                            n_reg == 0) if celaxes.on("LAYERED")
-                     else _mop_up(plan, sc, reg.color, cap - n_reg, min_blob=40,
-                                  price=price, free_first=n_reg == 0))
+            n_mop = mop_up(plan, sc, cat, reg.color, cap - n_reg, 40, price,
+                           n_reg == 0)
             stats["mop_layers"] += n_mop
             n_reg += n_mop
         stats["uncovered_px"] += int(np.count_nonzero(sc.residual))

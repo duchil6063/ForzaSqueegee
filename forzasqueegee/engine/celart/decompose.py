@@ -37,15 +37,12 @@ import os
 import cv2
 import numpy as np
 
-from .. import celaxes
-from ..model import UNITS_PER_SCALE
 from ..price import price_of
-from . import atoms, dense, inkfill, legacy, palette, prep
-from .marks import mark_mask
+from . import atoms, dense, inkfill, palette, prep
 from .model import _ALPHA_OPAQUE, CelArt
 from .prep import _fill_bg_nearest
 from .rag import RegionGraph
-from .snap import region_table, regularize
+from .snap import region_table
 
 # 영역 수 상한 — **뚜껑이지 목표가 아니다.** 가격 설계(값이 안 되는 영역은
 # 도형을 안 받는다)에서 잰 무릎이 650이고, 그래프 병합이 이 수까지 못 내려온
@@ -58,7 +55,6 @@ _MAX_REGIONS = int(os.environ.get("FS_MAX_REGIONS", 650))
 def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
               line_mask: np.ndarray | None = None,
               log=print, value: np.ndarray | None = None,
-              merge_gain: float = 0.0,
               price: float = 0.0, debug: bool = False) -> CelArt:
     """RGBA(작업 해상도) → CelArt. 결정적(시드 고정).
 
@@ -88,12 +84,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         line_mask = lineart.hysteresis(lm) & sel if lm is not None else None
     if line_mask is not None:
         log(f"  선화: 선 픽셀 {int(line_mask.sum()):,}개")
-        if celaxes.on("INKFILL"):
-            src = inkfill.complete(src, sel, line_mask, log)[0]
-        else:
-            # 대조군 — 종전의 유클리드 최근접 채움 (자가 직선이라 가는 구조를
-            # 뛰어넘는다: 그 도약이 곧 "색이 선을 넘었다"이다)
-            src = _fill_bg_nearest(src, sel & ~line_mask)
+        src = inkfill.complete(src, sel, line_mask, log)[0]
 
     # 1) 평활 — mean-shift가 부드러운 음영을 톤 면으로 뭉친다
     sm = prep.smooth(src)
@@ -115,44 +106,24 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         labels = atoms.watershed_atoms(lbl, K, sel, guide, barrier, log)
     else:
         labels = atoms.cc_atoms(lbl, K, sel)
-    if celaxes.on("OVERSEG"):
-        labels = atoms.oversegment(labels, lab, sel, guide, log)
+    labels = atoms.oversegment(labels, lab, sel, guide, log)
     if debug:
         trace["atom_labels"] = labels.copy()
 
     # 4) 병합 — 무엇이 한 덩어리인가 (§3·§4)
     lam = price if price > 0.0 else price_of(
         value if value is not None else np.ones((h, w), np.float32))
-    if celaxes.on("RAG"):
-        n = int(labels.max()) + 1 if labels.max() >= 0 else 0
-        feat = None
-        if celaxes.on("DENSE") and n:
-            feat = dense.region_features(src, labels, sel, n, log=log)
-        g = RegionGraph(labels, lab, sel, ink=line_mask, imp=value, feat=feat)
-        if debug:
-            trace["marks_before"] = g.mark_ids()
-        labels = g.merge(lam, max_regions, log)
-        trace.update(g.stats)
-        trace["dense"] = feat is not None
-    else:
-        labels = legacy.merge_regions(labels, lab, sel, max_regions, log,
-                                      value=value, merge_gain=merge_gain)
+    n = int(labels.max()) + 1 if labels.max() >= 0 else 0
+    feat = dense.region_features(src, labels, sel, n, log=log) if n else None
+    g = RegionGraph(labels, lab, sel, ink=line_mask, imp=value, feat=feat)
+    if debug:
+        trace["marks_before"] = g.mark_ids()
+    labels = g.merge(lam, max_regions, log)
+    trace.update(g.stats)
+    trace["dense"] = feat is not None
 
     # 5) 영역 표 — 대표색은 평활 이미지의 영역 평균 (팔레트 중심보다 국소 충실)
     regions = region_table(labels, sm, sel, w, h)
-
-    # 5b) 경계 펴기 (기본 꺼짐) — `snap.regularize` 문서. 무늬 보호 조각을
-    #     지키려면 판정에 영역 표가 있어야 하므로 표를 짓고 나서 편다
-    mult = os.environ.get("FS_CEL_SMOOTH", "")
-    if mult and float(mult) > 0:
-        upp = 900.0 / h                       # celfit과 같은 캔버스 배율
-        r = int(round(float(mult) * 0.01 * UNITS_PER_SCALE / upp))
-        if r >= 1:
-            keep = mark_mask(CelArt(size=(w, h), labels=labels, regions=regions))
-            labels = regularize(labels, sel, r, keep)
-            regions = region_table(labels, sm, sel, w, h)
-            log(f"  경계 펴기 r={r}px (×{float(mult):g} 최소 반폭) · "
-                f"무늬 보호 {int(keep.sum()):,}px")
 
     log(f"  영역 {len(regions)}개 (병합 후)")
     trace["regions_decomposed"] = len(regions)

@@ -28,7 +28,6 @@ from .geometry import _layer, _min_span
 from .scoring import _MIN_GAIN, _Scorer, _descend
 from .skeleton import (_cross2, _paths, _prune_spurs, _rdp_idx, _resample,
                        _thin)
-from . import ablation
 from . import chain
 from . import intent as I
 from .descriptor import placed_profile, placed_widths
@@ -88,7 +87,7 @@ _SPLIT_MIN = int(os.environ.get("FS_SPLIT_MIN", 20))
 # A_29 0.129 · U_70 0.108 · U_46 0.104(폭/길이).
 _STROKE_TAPER = float(os.environ.get("FS_STROKE_TAPER", 2.5))
 _STROKE_SLIM = float(os.environ.get("FS_STROKE_SLIM", 0.065))
-# **놓인 폭이 원화 획 폭의 몇 배까지인가** (line 축 `FS_LINE_WIDTH`).
+# **놓인 폭이 원화 획 폭의 몇 배까지인가** (line 노선의 폭 충실도).
 # 위 둘은 "획처럼 생겼나"의 자이지 "이 획만큼 가는가"의 자가 아니다 —
 # 길이에 비례한 상대 문턱이라, 100px 경로에 폭 6px 도형이 slim 0.06으로
 # 그대로 통과한다. 실측(01, 배치된 획 도형의 능선 폭 대 그 획의 원화 띠 폭):
@@ -135,7 +134,7 @@ _W_TANG = float(os.environ.get("FS_TANGENT", 0.2))
 # 0.45는 회귀가 고른 값이다. 어휘 38종의 등방 분포로는 0.49(I_39)와
 # 0.62(U_13) 사이가 비어 있어 0.55가 자연스러워 보이지만, **놓인 뒤**의 비는
 # 비등방 스케일에 따라 움직인다 — 실측(01·04)에서 0.55와 0.45의 차는
-# 뾰족한 끝 0.2% ↔ 2.2%(둘 다 종전 40%에서 내려온 값)인데 도형은 2.0%,
+# 뾰족한 끝 0.2% ↔ 2.2%(문법을 안 걸면 40%다)인데 도형은 2.0%,
 # 이음 보수는 5% 적다. 어중간한 테이퍼(U_31 0.47 · U_03 0.48 · I_39 0.49)를
 # 획으로 인정하는 쪽이 사람 획에도 가깝다 — 사람도 획 끝을 조금은 흘린다.
 _STROKE_END = float(os.environ.get("FS_STROKE_END", 0.45))
@@ -616,8 +615,7 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     획이 아니고, 원화 띠보다 훨씬 굵은 도형은 그 자리의 획이 아니라 덩어리다.
     """
     _CURVE_STATS["paths"] += 1
-    width_fit = line and ablation.width()
-    prof_fit = width_fit and ablation.profile()
+    width_fit = prof_fit = line
     min_w = 2.0 * _min_span(sc.upp)
     wtgt = max(wpx, min_w)
     # 목표 폭 프로파일 — 원화 띠 폭을 **어휘가 실제로 낼 수 있는 바닥**과 이
@@ -673,7 +671,7 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
             # **폭 충실도** — 놓인 폭이 원화 띠보다 이만큼 넘게 굵으면 획이
             # 아니라 덩어리다 (`_STROKE_WMAX`). 바닥은 게임이 낼 수 있는
             # 최소 도형 폭이다 — 그보다 가는 띠를 그리는 데 드는 초과는
-            # 강제된 것이라 벌할 수 없다 (`scoring._PEN_LINE_ADAPT`와 같은 수)
+            # 강제된 것이라 벌할 수 없다 (`scoring._PEN_LINE`의 배수와 같은 수)
             if width_fit and wu / sc.upp > _STROKE_WMAX * wtgt:
                 n_shape += 1
                 continue

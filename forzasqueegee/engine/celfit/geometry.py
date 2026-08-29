@@ -108,7 +108,7 @@ def _layer(shape: str, cx: float, cy: float, a: float, b: float, theta: float,
     `stroke`는 획 그룹 id — 한 획에서 나온 마디끼리 같은 값을 준다.
 
     `ext`는 도형의 로컬 반길이 (x, y)다 — 기본은 정규화 ±1 도형의 값
-    (`UNITS_PER_SCALE`)이라 안 주면 종전과 같다. **가는 획 도형**은 짧은 축의
+    (`UNITS_PER_SCALE`)이다. **가는 획 도형**은 짧은 축의
     반길이가 그보다 작아서, 같은 스케일 스텝으로 훨씬 가는 폭을 낼 수 있다
     (`descriptor.ShapeDesc.min_width_px`). `rot_off`는 그 도형의 긴 축이
     로컬 y일 때 더하는 각(도)이다.

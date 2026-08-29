@@ -84,17 +84,16 @@
 
 from __future__ import annotations
 
-from .. import celaxes
 from ..price import fix_min_gain, price_of, repair_min_gain
 from . import policy
 from .bridge import bridge_line_gaps
 from .candidates import Candidate
 from . import coverage
-from .descriptor import (descriptors, fill_rank, norm_raster, straight_thin,
-                         stroke_shapes, thin_shapes)
+from .descriptor import (descriptors, straight_thin, stroke_shapes,
+                         thin_shapes)
 from .engine import Reconstruction, build_strokes, place_strokes
 from .evidence import EvidenceMaps, StrokeEvidence, build_maps
-from .fill import _fit_bars, _mop_up, _place_fat
+from .fill import _fit_bars, _place_fat
 from .geometry import _ink_cover, _min_span, _poly_px
 from .graph import ROLES, LogicalStroke, classify, continue_strokes
 from .holes import (count_hole_clusters, fill_holes, grow_covers,
@@ -107,9 +106,8 @@ from .plan import fit_line_plan, fit_plan
 from .repair import repair_mismatch
 from .residual import analyze as residual_analyze
 from .residual import focus_layers, owner_map
-from .scoring import (_COVER_STOP, _INK_FREE, _MAX_PER_REGION, _MIN_GAIN,
-                      _NO_FREESPILL, _PEN_WASTE, _PEN_WASTE_FILL, _STROKE_R,
-                      _Scorer)
+from .scoring import (_COVER_STOP, _MAX_PER_REGION, _MIN_GAIN, _PEN_WASTE,
+                      _PEN_WASTE_FILL, _STROKE_R, _Scorer)
 from .select import _THIN_BND, _THIN_SIL
 from .skeleton import (_dt_along, _end_dir, _join_paths, _paths, _prune_spurs,
                        _thin)
@@ -120,11 +118,10 @@ __all__ = [
     # 노선 진입점
     "fit_plan", "fit_line_plan", "bridge_line_gaps",
     # 공통 선 재구성 엔진 — 두 노선이 함께 쓴다
-    "policy", "celaxes", "build_maps", "EvidenceMaps", "StrokeEvidence",
+    "policy", "build_maps", "EvidenceMaps", "StrokeEvidence",
     "LogicalStroke", "ROLES", "classify", "continue_strokes",
     "build_strokes", "place_strokes", "Reconstruction", "Candidate",
     "descriptors", "stroke_shapes", "thin_shapes", "straight_thin",
-    "fill_rank", "norm_raster",
     # 마무리 — 파이프라인이 배치 뒤에 돌린다
     "silhouette_cover", "count_hole_clusters", "grow_covers",
     "fill_holes", "repair_mismatch", "coverage",

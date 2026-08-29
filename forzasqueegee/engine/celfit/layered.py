@@ -7,11 +7,10 @@
 3. 중요한 오목·돌출 보정
 4. 작은 잔차는 시각 영향에 따라 생략
 
-종전 채움은 1번이 없었다 — 잔여의 **최대 내접 봉우리**에서 시작해 그 자리를
-정확히 맞추고, 남은 것을 또 맞추고를 반복했다. 그러면 한 장이면 될 면이
-"봉우리마다 한 장"으로 쪼개진다. 첫 장을 **영역 전체의
-2차 모멘트**에서 잡으면 그 한 장이 몸통을 통째로 덮고, 나머지는 진짜 보정만
-남는다.
+1번이 없으면 — 잔여의 **최대 내접 봉우리**에서 시작해 그 자리를 정확히 맞추고,
+남은 것을 또 맞추고를 반복하면 — 한 장이면 될 면이 "봉우리마다 한 장"으로
+쪼개진다. 첫 장을 **영역 전체의 2차 모멘트**에서 잡으면 그 한 장이 몸통을
+통째로 덮고, 나머지는 진짜 보정만 남는다.
 
 첫 장을 지나치게 정확히 맞추지 않는다. 그 한 장이 이웃 영역으로 삐져나가도
 **나중에 그릴 면이나 맨 위의 선이 가리는 자리**라면 값이 0이다 — 채점판이
@@ -45,18 +44,13 @@ import os
 import cv2
 import numpy as np
 
-from .. import celaxes
 from ..catalog import Catalog
 from ..celart.rag import complexity
 from ..model import Layer, LayerPlan
-from .descriptor import fill_rank
 from .fill import _grow_step, _place_fat, _seed_moment
 from .scoring import _MIN_GAIN, _STROKE_R, _Scorer, _descend
-from .vocabulary import _FILL_ALL, _FILL_BASE, _FILL_SHAPES, _FILL_WIN
+from .vocabulary import _FILL_SHAPES, _FILL_WIN
 
-# 바탕 후보로 세울 어휘 수 — 서술자 순위 상위 몇 종인가. 순위가 있으니 넓은
-# 어휘(불투명·뚱뚱한 76종)를 열어도 실제로 채점하는 것은 이 수만큼이다.
-_BASE_TOP = int(os.environ.get("FS_CEL_BASE_TOP", 6))
 # 후보 집합 덮개를 거는 **처음 몇 장**인가 (§8). 구조가 갈리는 것은 앞 몇
 # 장이고, 그 뒤는 잔차 보정이라 탐욕이 곧 최선이다 — 탐색 비용의 뚜껑이다.
 _SC_STEPS = int(os.environ.get("FS_CEL_SC_STEPS", 2))
@@ -85,16 +79,6 @@ def est_shapes(res: np.ndarray) -> float:
     if not keep.any():
         return 0.0
     return float(complexity(area[keep], np.maximum(peri[keep], 1.0)).sum())
-
-
-def _base_vocab(cat: Catalog, mask: np.ndarray) -> tuple[str, ...]:
-    """이 덩어리를 닮은 순의 채움 어휘 (§6). 축이 꺼지면 손으로 고른 여덟."""
-    if not celaxes.on("DESCFIT"):
-        return _FILL_SHAPES
-    ranked = fill_rank(cat, mask, _FILL_ALL, top=_BASE_TOP)
-    # 바탕(타원·사각)은 순위와 무관하게 늘 후보다 — 확장 어휘가 바탕을 이기려면
-    # `_FILL_MARGIN`배를 벌어야 한다는 규칙이 그 위에서 선다
-    return tuple(dict.fromkeys(_FILL_BASE + ranked))
 
 
 def _place_whole(sc: _Scorer, cat: Catalog, color, vocab: tuple[str, ...]
@@ -153,8 +137,7 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
     """영역 하나를 채운다 — 바탕 한 장 → 잔차 보정. 반환 = 쓴 도형 수."""
     n = 0
     blocked = np.zeros_like(sc.residual)   # 포기한 봉우리 (잔여는 남긴다)
-    setcover = celaxes.on("SETCOVER") and price > 0.0
-    layered = celaxes.on("LAYERED")
+    setcover = price > 0.0
     while (n < cap
            and np.count_nonzero(sc.residual) > (1.0 - cover_stop) * area):
         open_res = sc.residual & ~blocked
@@ -165,16 +148,15 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
         if r0 <= _STROKE_R:
             break
         py, px = np.unravel_index(int(dt.argmax()), dt.shape)
-        vocab = _base_vocab(cat, sc.residual)
         cands: list[tuple[float, Layer]] = []
-        # ① 봉우리 후보 — 종전의 자리 (좁은 목·오목 주머니는 여기서만 잡힌다)
-        got = _place_fat(sc, dt, px, py, r0, color, vocab=vocab)
+        # ① 봉우리 후보 (좁은 목·오목 주머니는 여기서만 잡힌다)
+        got = _place_fat(sc, dt, px, py, r0, color, vocab=_FILL_SHAPES)
         if got is not None:
             cands.append(got)
         # ② 바탕 후보 — **잔여 전체**의 모멘트 (§7). 첫 장에서 몸통을 통째로
         #    덮는 자리이고, 뒤 장에서도 남은 껍질을 한 장으로 두르는 안이 된다
-        if layered and (n < _SC_STEPS or n == 0):
-            whole = _place_whole(sc, cat, color, vocab)
+        if n < _SC_STEPS or n == 0:
+            whole = _place_whole(sc, cat, color, _FILL_SHAPES)
             if whole is not None:
                 cands.append(whole)
         if not cands:
@@ -182,7 +164,7 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
         free = n == 0
         if setcover and len(cands) > 1 and n < _SC_STEPS:
             # 동점은 **어휘가 아니라 후보 순서**로 갈린다 (봉우리 안이 먼저) —
-            # 결정적이고, 종전 동작이 동점에서 그대로 남는다
+            # 결정적이다
             scored = [(_cand_value(sc, q, price, free), i, g, q)
                       for i, (g, q) in enumerate(cands)]
             scored.sort(key=lambda t: (-t[0][0], t[1]))
@@ -213,9 +195,9 @@ def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8) -> int:
 
     영역 채움이 끝나면 남는 잔여의 태반은 **경계 부스러기**다: 게임 격자가
     스케일을 내림해 도형이 제 면보다 조금 작게 서기 때문이다 (`_grow_step`
-    문서 — 실측 잔여의 74%가 경계 인접). 종전에는 그 부스러기를 `_fit_bars`가
-    막대로, `mop_up`이 타원으로 **사서** 메웠다 — 그것이 "작은 patch를 여러 장
-    이어 붙인 느낌"의 자리다 (실측 01: 막대 249 + 마무리 158 = 채움 도형의 40%).
+    문서 — 실측 잔여의 74%가 경계 인접). 그 부스러기를 막대(`_fit_bars`)와
+    마무리(`mop_up`)로 **사서** 메우면 "작은 patch를 여러 장 이어 붙인 느낌"이
+    난다 (실측 01: 막대 249 + 마무리 158 = 채움 도형의 40%).
 
     같은 일을 하는 손이 이미 있다 (`holes.grow_covers`) — 다만 그것은 도안이
     다 선 **뒤**에 돌아, 그때는 이미 산 뒤다. 여기서는 사기 **전에** 같은
@@ -255,12 +237,10 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
            min_blob: int, price: float, free_first: bool) -> int:
     """남은 덩어리 줍기 — **덩어리마다 그 모양을 닮은 도형 한 장**.
 
-    종전 마무리(`fill._mop_up`)는 덩어리마다 작은 타원을 놓았다. 바탕 한
-    장(§7)으로 몸통을 덮고 나면 남는 것은 대개 **굽은 껍질**인데, 타원으로는
-    한 껍질에 두세 장이 든다 — 바탕이 아낀 장수를 여기서 도로 쓴다.
-
-    여기서는 덩어리의 2차 모멘트에서 씨앗을 잡고 **서술자 순위**(§6)로 고른
-    어휘를 겨루게 한다. 굽은 껍질에는 초승달·부메랑이 한 장으로 선다.
+    덩어리마다 작은 타원을 놓으면 장수가 샌다: 바탕 한 장(§7)으로 몸통을 덮고
+    나면 남는 것은 대개 **굽은 껍질**인데, 타원으로는 한 껍질에 두세 장이 든다
+    — 바탕이 아낀 장수를 여기서 도로 쓴다. 그래서 덩어리의 2차 모멘트에서
+    씨앗을 잡고 채움 어휘를 겨루게 한다.
     """
     n = 0
     while n < left:
@@ -279,9 +259,8 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
             continue
         ys, xs = np.nonzero(cm)
         pw = np.stack([xs, ys], axis=1).astype(np.float64)
-        vocab = _base_vocab(cat, cm)
         best = None
-        for name in vocab:
+        for name in _FILL_SHAPES:
             for alt in _seed_moment(sc, pw, name, color, cat):
                 s = sc.score_val(alt)
                 if best is None or s > best[0]:

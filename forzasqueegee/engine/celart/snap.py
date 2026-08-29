@@ -29,24 +29,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .. import celaxes
 from .geodesic import propagate
 from .model import CelArt, Region
-
-
-def _nearest_euclid(labels: np.ndarray, keep: np.ndarray,
-                    zone: np.ndarray) -> np.ndarray:
-    """종전 스냅 — 유클리드 최근접 라벨 (ablation 대조군)."""
-    h, w = labels.shape
-    _, nl = cv2.distanceTransformWithLabels(
-        (~keep).astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
-    ys, xs = np.nonzero(keep)
-    lut = np.zeros(int(nl.max()) + 1, np.int64)
-    lut[nl[ys, xs]] = ys.astype(np.int64) * w + xs
-    out = labels.copy()
-    zy, zx = np.nonzero(zone)
-    out[zy, zx] = labels.ravel()[lut[nl[zy, zx]]]
-    return out
 
 
 def snap_labels_to_ink(labels: np.ndarray, sel: np.ndarray, ink: np.ndarray,
@@ -59,8 +43,6 @@ def snap_labels_to_ink(labels: np.ndarray, sel: np.ndarray, ink: np.ndarray,
     keep = sel & ~zone
     if not zone.any() or not keep.any():
         return labels
-    if not celaxes.on("SNAP_GEO"):
-        return _nearest_euclid(labels, keep, zone)
     n = int(labels.max()) + 1 if labels.max() >= 0 else 0
     seed = np.where(keep, labels, -1).astype(np.int32)
     area = np.bincount(labels[keep].ravel(), minlength=max(n, 1)).astype(np.int64)
@@ -98,57 +80,6 @@ def rebuild_regions(labels: np.ndarray, regions: list[Region]) -> list[Region]:
                   bbox=(int(x0[i]), int(y0[i]), int(x1[i]) + 1, int(y1[i]) + 1))
            for i in range(len(ids))]
     out.sort(key=lambda r: -r.area)
-    return out
-
-
-def regularize(labels: np.ndarray, sel: np.ndarray, r: int,
-               protect: np.ndarray | None = None) -> np.ndarray:
-    """영역 경계를 반지름 `r`의 **다수결**로 편다 — 도형이 못 따라가는 잔주름 제거.
-
-    watershed 경계는 선화 능선을 따라가므로 도형 어휘가 한 장으로 삼킬 수 없는
-    잔주름이 남는다. px마다 반지름 r 원판 안에서 표가 제일 많은 영역으로
-    갈아타면 그 주름이 펴진다 (Potts 평활의 다수결 근사).
-
-    r은 상수가 아니라 **게임 격자에서 나온다** — 호출부가 양자화 최소 도형의
-    반폭(`0.01 × UNITS_PER_SCALE / upp`)의 배수로 준다.
-
-    두 가지를 지킨다. ① 통째로 사라지는 영역은 원래 px를 되돌려 받는다 —
-    평활은 주름을 펴는 일이지 영역을 지우는 일이 아니다. ② `protect`
-    (무늬 보호 조각)는 아예 안 건드린다 — 큰 면이 이기는 다수결이 하필 그
-    조각들을 먹는다.
-
-    동점은 **넓은 영역이 가져간다** (넓이 내림차순으로 돌아 먼저 쓴 쪽이
-    이긴다) — 결정적이다.
-    """
-    if r < 1:
-        return labels
-    h, w = labels.shape
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
-    k = k.astype(np.float32) / float(k.sum())
-    best = np.zeros((h, w), np.float32)
-    bid = np.full((h, w), -1, np.int32)
-    ids = np.unique(labels[sel])
-    areas = np.bincount(labels[sel].ravel())
-    for rid in sorted(ids.tolist(), key=lambda i: -int(areas[i])):
-        ys, xs = np.nonzero(labels == rid)
-        if not len(ys):
-            continue
-        pad = r + 1
-        b0, b1 = max(0, int(ys.min()) - pad), min(h, int(ys.max()) + 1 + pad)
-        a0, a1 = max(0, int(xs.min()) - pad), min(w, int(xs.max()) + 1 + pad)
-        m = (labels[b0:b1, a0:a1] == rid).astype(np.float32)
-        s = cv2.filter2D(m, -1, k, borderType=cv2.BORDER_CONSTANT)
-        win = s > best[b0:b1, a0:a1]
-        if win.any():
-            best[b0:b1, a0:a1][win] = s[win]
-            bid[b0:b1, a0:a1][win] = rid
-    out = np.where(sel & (bid >= 0), bid, labels).astype(np.int32)
-    if protect is not None and protect.any():
-        out[protect] = labels[protect]
-    alive = set(np.unique(out[sel]).tolist())     # ① 사라진 영역 되돌리기
-    for rid in ids.tolist():
-        if rid not in alive:
-            out[labels == rid] = rid
     return out
 
 

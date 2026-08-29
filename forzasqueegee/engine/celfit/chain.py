@@ -45,15 +45,6 @@ _TOL = float(os.environ.get("FS_CHAIN_TOL", 3.0))
 # (끝은 다른 획이 이미 그었을 수도 있다)
 _W_REACH = float(os.environ.get("FS_CHAIN_REACH", 1.0))
 _PASSES = int(os.environ.get("FS_CHAIN_PASSES", 1))
-# **놓는 동안** 이음을 맞출까 (`anchor_pen`) — 끄면 다 놓은 뒤 `polish`만 돈다.
-_ON_DESCEND = os.environ.get("FS_JOINT_DESCEND", "1") != "0"
-
-
-def on() -> bool:
-    """사슬 이음 정리를 쓸까 (`FS_CHAIN_JOINT=0`이면 종전 동작)."""
-    from . import ablation
-
-    return ablation.joint()
 
 
 def placed_line(cat: Catalog, lay: Layer, upp: float, w: int, h: int):
@@ -273,8 +264,6 @@ def steer(cat: Catalog, sc, path_g: np.ndarray, wpx: float, w: int, h: int,
     않는다** — 게이트가 이미 통과시킨 판단을 하강이 뒤집지 못하게 하는 것이
     이 규칙의 뜻이다.
     """
-    if not _ON_DESCEND:
-        return None
     anc = anchor(path_g)
     if anc is None:
         return None
@@ -298,7 +287,7 @@ def polish(layers: list[Layer], sc, cat: Catalog, upp: float,
     이미 국소 최적이라 이 함수가 움직이는 것은 **이음이 그 손해보다 값이
     있는 자리뿐이다** (`_TOL`).
     """
-    if len(layers) < 2 or not on():
+    if len(layers) < 2:
         return 0
     ch = _order(cat, layers, path_g, upp, w, h)
     if len(ch) < 2:

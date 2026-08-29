@@ -100,7 +100,7 @@ class RoutePolicy:
 
 
 # 그리는 역할 — 무늬·부스러기 말고는 전부 그린다. 무늬를 몇 가닥으로 줄일지는
-# 노선이 아니라 `texture_simplify` 스위치가 정한다 (기본 켬 — 아래 근거)
+# 노선이 아니라 `texture_simplify`가 정한다 (두 노선 다 켬 — 아래 근거)
 _DRAW = (SILHOUETTE, STRUCTURE, INTERNAL_CONTOUR, COLOR_BOUNDARY, FEATURE,
          TEXTURE)
 # 가격을 무는 역할 — 실루엣 윤곽과 고립 특징은 길이로 값을 매기면 구조적으로
@@ -109,7 +109,7 @@ _DRAW = (SILHOUETTE, STRUCTURE, INTERNAL_CONTOUR, COLOR_BOUNDARY, FEATURE,
 _PRICED = (STRUCTURE, INTERNAL_CONTOUR, COLOR_BOUNDARY, TEXTURE, NOISE)
 
 # **한 획에 쓸 도형 수의 길이 비례 몫** — 짧은 변 대비 "도형 하나가 맡는
-# 경로 길이". 0이면 상한이 상수 `max_shapes` 그대로다 (종전 동작).
+# 경로 길이". 0이면 상한이 상수 `max_shapes` 그대로다.
 # 근거는 `RoutePolicy.shapes_for` 문서.
 _SPAN_REL = float(os.environ.get("FS_STROKE_SPAN", 0.0225))
 # 그래도 한 획이 도안을 먹지 못하게 하는 뚜껑 — 이보다 많이 드는 것은 획이
@@ -119,25 +119,23 @@ _SHAPE_HARD = int(os.environ.get("FS_STROKE_MAX_HARD", 24))
 # 무늬 단순화 — **기본 켬**. 지우는 것이 아니라 다발마다 **대표 가닥만
 # 남긴다** (`graph.texture_representatives`).
 #
-# 오래 꺼 두었던 근거는 "무늬/구조의 구분은 의미론이고 창 통계로는 복제할 수
-# 없다"였다 (사람 라벨 10장 대조). 켠 근거는 그 판정이 틀렸다는 것이 아니라
-# **단순화의 손이 바뀌었다**는 것이다: 종전에는 무늬로 지목되면 다발의 바깥
-# 테 몇 가닥만 남기고 나머지를 버렸고, 지금은 다발의 **간격을 대표하는**
-# 3~5가닥을 남긴다. 오판의 대가가 "그 자리가 통째로 없어진다"에서 "그 자리가
-# 조금 성겨진다"로 내려왔으므로 켜 둘 수 있다.
+# "무늬/구조의 구분은 의미론이고 창 통계로는 복제할 수 없다"는 것이 이 판정의
+# 약점이다 (사람 라벨 10장 대조). 켜 두는 근거는 **단순화의 손**에 있다:
+# 다발의 바깥 테 몇 가닥만 남기고 버리는 것이 아니라 다발의 **간격을
+# 대표하는** 3~5가닥을 남기므로, 오판의 대가가 "그 자리가 통째로 없어진다"가
+# 아니라 "그 자리가 조금 성겨진다"에 그친다.
 #
 # **표준 11장에서는 실제로 아무것도 안 준다** (`texture_dropped` 0). 이 세트가
 # 단일 인물화라 반복 해칭·레이스가 없고, 무늬로 지목된 획들이 서로 다발을
 # 이루지 않기 때문이다 (실측 03: 무늬 78획 중 나란한 무늬 이웃이 하나라도
 # 있는 획이 반경 24px에서 23개, 다발 크기 중앙 1). 켠 것은 그런 그림이
-# 들어왔을 때를 위한 것이고, 이 세트의 도형 수는 이 스위치로 안 준다.
-_TEXTURE_SIMPLIFY = os.environ.get("FS_TEX_SIMPLIFY", "1") != "0"
+# 들어왔을 때를 위한 것이고, 이 세트의 도형 수는 여기서 안 준다.
 
 
 LINE = RoutePolicy(
     name="line",
     draw_roles=_DRAW,
-    texture_simplify=_TEXTURE_SIMPLIFY,
+    texture_simplify=True,
     price_roles=_PRICED,
     # 선만 있는 도안이라 오차가 그대로 보인다 — 덮임은 넉넉히, 스필은 빡빡하게
     cover_min=float(os.environ.get("FS_LINE_COVER", 0.90)),
@@ -154,7 +152,7 @@ LINE = RoutePolicy(
 CEL = RoutePolicy(
     name="cel",
     draw_roles=_DRAW,
-    texture_simplify=_TEXTURE_SIMPLIFY,
+    texture_simplify=True,
     price_roles=_PRICED,
     # 획 아래를 면이 받치므로 밴드 밖 스필도 면 위라면 안 보인다.
     # **덮임과 끊김은 그 자유에 안 든다** — 면이 받치는 것은 스필이지 틈이

@@ -60,8 +60,8 @@ _MAX_CANDS = int(os.environ.get("FS_MAX_CANDS", 6))
 # 그래서 틈 하나의 값을 **이음 보수가 실제로 그것을 어떻게 메우는지**로 잰다:
 # `grammar._seg_bars`가 틈을 폭 절반 허용오차의 RDP로 끊어 마디마다 한 장을
 # 놓으므로, 그 마디 수가 곧 장수다 (`_seam_shapes`). 새 상수를 세우지 않는
-# 것이 요점이다 — 자가 보수 규칙 그 자체라 둘이 어긋날 수 없다. 짧은 틈에서는
-# 마디가 하나라 `_SEAM_PER_BREAK`가 여전히 바닥이고, 종전 회귀가 그대로 선다.
+# 것이 요점이다 — 자가 보수 규칙 그 자체라 둘이 어긋날 수 없다. 짧은 틈은
+# 마디가 하나라 `_SEAM_PER_BREAK`가 그대로 바닥이 된다.
 _SEAM_PER_BREAK = float(os.environ.get("FS_SEAM_PER_BREAK", 1.5))
 
 
@@ -370,14 +370,12 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
     넘기면 사전식 최적이므로 거기서 멈춘다 — 그 자리가 전체의 94%라
     겨루기 비용이 현행에 얇게 붙는다 (실측 10장 +51% 시간).
     """
-    from . import ablation
     from .stroke import _fit_path, _fit_segments, _try_curve
 
     min_w = 2.0 * _min_span(upp)
-    # 획 도형 문법은 **두 노선 공통**이다 — 선은 모든 면 위에 마지막으로
-    # 얹히므로 셀에서도 잎사귀·쐐기가 그대로 보인다 (실측 01: 셀 노선의
-    # 앞머리 선이 검은 쐐기 덩어리였다). 축을 끄면 종전대로 line 노선만
-    grammar = pol.name == "line" or ablation.grammar()
+    # 획 도형 문법(테이퍼·가늘기·폭·끝 뭉툭함)은 **두 노선 공통**이다 — 선은
+    # 모든 면 위에 마지막으로 얹히므로 셀에서도 잎사귀·쐐기가 그대로 보인다
+    # (실측 01: 셀 노선의 앞머리 선이 검은 쐐기 덩어리였다)
     rx0, ry0 = sc.roi[0], sc.roi[1]
     p = path.round().astype(int)
     path_g = np.stack([np.clip(p[:, 0] + ry0, 0, h - 1),
@@ -398,12 +396,6 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
     if band is not None:
         sc.set_band(band, core)
     try:
-        if not ablation.candidates():
-            # 대조군 — 곡선 자격 게이트를 그대로 둔 탐욕 배치 한 안
-            return [run("greedy", lambda sp: _fit_path(
-                sp, sc, dt, path, wmed, color, True, max_shapes, forms, sid,
-                strict=pol.name == "line", wcap=wcap, wprof=wprof,
-                grammar=grammar, it=it))]
         # ⓪ 아무것도 안 그리기 — 교차하는 다른 획이 이미 다 그었을 수 있다.
         #    도형 0장이라 사전식으로는 무엇도 못 이긴다
         if ink_so_far is not None:
@@ -416,7 +408,7 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
         #    가린다 (§ curve gate를 후보 경쟁으로)
         def _one(sp: LayerPlan):
             got = _try_curve(sc, forms, path, wmed, color, True, sid,
-                             race=True, line=grammar, gate=False, wprof=wprof)
+                             race=True, line=True, gate=False, wprof=wprof)
             if got is not None:
                 _, mfin = sc.score(got[1])
                 sc.commit(mfin)
@@ -435,12 +427,12 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
                            lambda sp: _place_chain(sp, sc, dt, path, idx, wmed,
                                                    color, sid, forms, wcap,
                                                    pol.name == "line", wprof,
-                                                   grammar, it)))
+                                                   it=it)))
         # ③ 현행 재귀 분할 — 곡선이 안 되면 쪼개서 다시 곡선
         out.append(run("split", lambda sp: _fit_path(
             sp, sc, dt, path, wmed, color, True, max_shapes, forms, sid,
             strict=pol.name == "line", wcap=wcap, wprof=wprof,
-            grammar=grammar, it=it)))
+            grammar=True, it=it)))
         # ④ 단순화 두 단 — 같은 획을 더 적은 도형으로. `_fit_segments`는 마디가
         #    허용 장수를 넘으면 **허용오차를 키워** 마디를 줄이므로, 장수를
         #    조여 주는 것이 곧 "더 굵게 긋고 덜 쪼갠다"다. 두 단을 다 지어
@@ -449,11 +441,11 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
             out.append(run("coarse", lambda sp: _fit_segments(
                 sp, sc, dt, path, wmed, color, True,
                 max(2, max_shapes // 2), sid, strict=pol.name == "line",
-                wcap=wcap, forms=forms, wprof=wprof, grammar=grammar, it=it)))
+                wcap=wcap, forms=forms, wprof=wprof, grammar=True, it=it)))
         out.append(run("simple", lambda sp: _fit_segments(
             sp, sc, dt, path, wmed, color, True, 2, sid,
             strict=pol.name == "line", wcap=wcap, forms=forms, wprof=wprof,
-            grammar=grammar, it=it)))
+            grammar=True, it=it)))
     finally:
         if band is not None:
             sc.set_band(None)

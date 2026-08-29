@@ -274,8 +274,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
 
     반환 (중간본, basic 지도, detail 지도). 선화를 **작업 해상도로 줄이기
     전에** 뽑는 것이 요점이다 — 축소가 가는 선을 씻어 점선으로 만든다
-    (점선도가 몇 배로 뛴다). `FS_LINE_PRE=0`이면 celart가 작업 해상도에서
-    뽑는다 (변인 분리용).
+    (점선도가 몇 배로 뛴다).
 
     detail 판은 **있으면 쓴다** — Basic이 놓친 세부선을 낮은 우선순위 증거로
     얹는 자리다 (`celfit.evidence`). 모델이 없으면 None이고 Basic만으로 돈다.
@@ -284,6 +283,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
     (계측 전용 — `_bundle_cache_path` 문서).
     """
     from . import lineart, upscale
+    from .celart import _fill_bg_nearest
 
     cache = _bundle_cache_path(rgba, size)
     if cache is not None and cache.is_file():
@@ -292,17 +292,14 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         return (z["big"], z["line"] if "line" in z else None,
                 z["detail"] if "detail" in z else None)
     big = upscale.prepare(rgba, size, log=log)
-    line = detail = None
-    if os.environ.get("FS_LINE_PRE", "1") != "0":
-        from .celart import _fill_bg_nearest
-
-        sel = big[..., 3] >= 128
-        rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
-        line = lineart.extract(rgb, log=log, cap=True)
-        if line is not None and lineart.available("detail"):
-            detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
-            if detail is not None:
-                log("  선화 detail 판도 증거로 얹는다")
+    detail = None
+    sel = big[..., 3] >= 128
+    rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
+    line = lineart.extract(rgb, log=log, cap=True)
+    if line is not None and lineart.available("detail"):
+        detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
+        if detail is not None:
+            log("  선화 detail 판도 증거로 얹는다")
     if cache is not None:
         got = {"big": big}
         if line is not None:

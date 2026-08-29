@@ -1,8 +1,8 @@
 """획의 **의도** — 논리 획과 후보 생성 사이의 한 겹.
 
 `LogicalStroke`는 "선 지도가 이 자리에 있다"는 관찰이고, `Candidate`는 "그것을
-이 도형들로 그렸다"는 답이다. 그 사이에 빠져 있던 것이 **어디서 끊을 것인가**
-였다. 종전에는 그 물음의 답이 세 자리에 흩어져 있었고 셋 다 같은 것을 봤다 —
+이 도형들로 그렸다"는 답이다. 그 사이의 물음이 **어디서 끊을 것인가**다.
+이 층이 없으면 답이 세 자리에 흩어지고 셋 다 같은 것만 본다 —
 **현에서의 최대 이탈**:
 
     stroke._fit_path      곡선 한 장이 안 되면 이탈 최대점에서 쪼갠다
@@ -24,8 +24,6 @@
     평활: 각에서 원본을 남긴다      → 각이 경로에 남는다
     분절: 각에서 끊는다             → 각이 도형 **사이**에 선다 (한 장에 안 뭉갠다)
     분절: 각이 아닌 곳은 안 끊는다  → 매끈한 굽음이 한 장으로 간다
-
-축은 `FS_STROKE_INTENT`다 (기본 켬). 끄면 셋 다 종전의 이탈 최대점으로 돌아간다.
 """
 
 from __future__ import annotations
@@ -48,11 +46,6 @@ _SNAP_MUL = float(os.environ.get("FS_INTENT_SNAP", 1.5))
 # 각이 아닌 자리에서 끊는 값 (DP 비용, 도형 한 장 `_DP_SHAPE` 대비). 0.33이면
 # 각 없는 마디 셋이 도형 한 장 값이다 — 끊을 이유가 분명하면 여전히 끊는다.
 _CUT_OFF = float(os.environ.get("FS_INTENT_CUT", 1.0))
-
-
-def on() -> bool:
-    """의도 층을 쓸까 (`FS_STROKE_INTENT=0`이면 종전의 이탈 최대점)."""
-    return os.environ.get("FS_STROKE_INTENT", "1") != "0"
 
 
 @dataclass(frozen=True)
@@ -96,7 +89,7 @@ def snap_nodes(idx: list[int], it: StrokeIntent | None,
     각은 몇 px 옆에 있어도 마디가 안 된다. 창(`_SNAP_MUL` × 폭) 안에 각이
     있으면 그리로 옮긴다 — **개수가 안 바뀌므로 도형 수도 안 바뀐다.**
     """
-    if it is None or not on() or len(idx) < 3:
+    if it is None or len(idx) < 3:
         return idx
     cs = it.corner
     if not cs.any():
@@ -129,7 +122,7 @@ def split_index(dev: np.ndarray, it: StrokeIntent | None, lo: int,
     자리에서 끊으면 두 조각이 여전히 굽어 다음 단계에서 또 쪼개진다.
     """
     fallback = int(np.argmax(dev))
-    if it is None or not on():
+    if it is None:
         return fallback
     cs = it.corner
     if len(cs) != len(dev) or not cs.any():
@@ -149,7 +142,7 @@ def cut_penalty(it: StrokeIntent | None, k: int) -> float:
     저울에 서므로 "끊을 값이 있으면 끊는다"는 그대로고, **같은 값이면 각에서**
     끊는다.
     """
-    if it is None or not on():
+    if it is None:
         return 0.0
     cs = it.corner
     if not (0 <= k < len(cs)):
@@ -158,11 +151,11 @@ def cut_penalty(it: StrokeIntent | None, k: int) -> float:
 
 
 def nodes_of(it: StrokeIntent | None, n: int) -> np.ndarray:
-    """각 인덱스 (세기 내림차순, 양끝 제외) — **축과 무관하게** 센다.
+    """각 인덱스 (세기 내림차순, 양끝 제외).
 
     `_BASE`만큼은 양끝에서 떼 둔다 — 그 안의 "각"은 끝점 접선이 만드는 인공물
-    이고, 마디로 세워도 도형이 설 자리가 없다. 계측(`linemetrics`)은 축을 꺼도
-    같은 각을 봐야 판끼리 견줄 수 있으므로 이쪽을 쓴다.
+    이고, 마디로 세워도 도형이 설 자리가 없다. 계측(`linemetrics`)도 이쪽을
+    쓴다.
     """
     if it is None or n <= 2 * _BASE + 1:
         return np.zeros(0, np.int64)
@@ -170,6 +163,6 @@ def nodes_of(it: StrokeIntent | None, n: int) -> np.ndarray:
 
 
 def corner_nodes(it: StrokeIntent | None, n: int) -> np.ndarray:
-    """DP 마디 후보로 얹을 각 인덱스 — 축이 꺼져 있으면 비었다."""
-    return nodes_of(it, n) if on() else np.zeros(0, np.int64)
+    """DP 마디 후보로 얹을 각 인덱스."""
+    return nodes_of(it, n)
 

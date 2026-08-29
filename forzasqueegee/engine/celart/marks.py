@@ -11,9 +11,9 @@
 코·점 같은 작은 특징이 사라진다. `_MARK_DE`는 진짜 안 보이는 조각(JND 미만)
 까지 지키지 않기 위한 하한이다.
 
-같은 판정을 세 곳이 쓴다 — 그래프 병합(`rag._mark`) · 경계 펴기
-(`snap.regularize`의 protect) · 면 채움(`celfit.fit_plan`이 `_Scorer`에
-넘기는 protect). 상수를 늘리지 않으려고 한 자리에 둔다.
+같은 판정을 두 곳이 쓴다 — 그래프 병합(`rag._mark`) · 면 채움
+(`celfit.fit_plan`이 `_Scorer`에 넘기는 protect). 상수를 늘리지 않으려고
+한 자리에 둔다.
 """
 
 from __future__ import annotations

@@ -83,13 +83,11 @@ _FILL_MIN_R0 = float(os.environ.get("FS_FILL_MIN_R0", _FILL_MIN_R0))
 _FILL_MARGIN = float(os.environ.get("FS_FILL_MARGIN", _FILL_MARGIN))
 _FILL_WIN: dict[str, int] = {}            # 도형별 채택 수 (어휘 튜닝용 계측)
 _FILL_TMPL: dict[str, tuple[float, float, float, float]] = {}   # 도형 모멘트 캐시
-# 2차 모멘트 정합 씨앗 (`_seed_moment`) — 상수를 안 늘리고 씨앗만 바꾼다.
-# 채움 장수 5~32% 감소·커버리지 상승. 확장 어휘(8종)가 서는 것도 이 씨앗이
-# 있어야 한다. 끄기: `FS_FILL_MOMENT=0`
-_FILL_MOMENT = os.environ.get("FS_FILL_MOMENT", "1") != "0"
 
 
-# 획 어휘 — 굽은 경로를 막대 사슬 대신 **한 장으로** 긋는다 (사람의 획 문법).
+# 획 어휘의 손 목록 — 카탈로그를 못 받는 자리(`stroke_vocab(cat=None)`)의 답이다.
+# 카탈로그가 있으면 서술자가 그때그때 다시 골라 준다 (`descriptor.stroke_shapes`).
+# 굽은 경로를 막대 사슬 대신 **한 장으로** 긋는다 (사람의 획 문법).
 # 조건은 "중심선이 열린 한 가닥"뿐이다: 아핀 맞춤(회전 + 비등방 스케일)을 쓰므로
 # 원호일 필요가 없고, 카탈로그의 곡선형 단색 도형을 전부 어휘로 삼을 수 있다.
 # cell_map 도달(창 조작 가능) 520종을 전수 조사해 걸러낸 42종 —
@@ -109,9 +107,6 @@ _STROKE_SHAPES = (
 _sv = os.environ.get("FS_STROKE_VOCAB", "").strip().upper()
 if _sv:
     _STROKE_SHAPES = tuple(s for s in _sv.split(",") if s)
-# 서술자로 고른 어휘를 쓸 것인가 (`descriptor.stroke_shapes`). 위 손 목록은
-# 그 계측의 옛 결과라 카탈로그가 바뀌면 낡는다 — 서술자는 그때마다 다시 잰다
-_DESC_VOCAB = os.environ.get("FS_DESC_VOCAB", "1") != "0" and not _sv
 _STROKE_CACHE: dict = {}
 
 
@@ -123,7 +118,7 @@ def stroke_vocab(cat: Catalog | None = None) -> tuple[str, ...]:
     같은 도형도 비등방 스케일에 따라 획이 되기도 잎사귀가 되기도 하므로
     그 판정은 **놓은 뒤**의 폭 프로파일이 한다 (`stroke._placed_form`).
     """
-    if cat is None or not _DESC_VOCAB:
+    if cat is None:
         return _STROKE_SHAPES
     got = _STROKE_CACHE.get("v")
     if got is None:
@@ -151,8 +146,6 @@ def bar_for(cat: Catalog, upp: float, wpx: float) -> tuple[str, tuple, float]:
     """
     from .descriptor import descriptors, straight_thin
 
-    if not _DESC_VOCAB:                   # 대조군 — 둥근사각만 (§10 ablation)
-        return _BAR_SHAPE, (UNITS_PER_SCALE, UNITS_PER_SCALE), 0.0
     des = descriptors(cat)
     d0 = des.get(_BAR_SHAPE)
     if d0 is None:
@@ -174,8 +167,6 @@ def bar_for(cat: Catalog, upp: float, wpx: float) -> tuple[str, tuple, float]:
 
 
 _WFLOOR_CACHE: dict = {}
-# **어휘가 실제로 낼 수 있는 가장 가는 폭**을 쓸 것인가 (끄면 막대 폭이 바닥).
-_WFLOOR = os.environ.get("FS_LINE_WFLOOR", "1") != "0"
 # 그 바닥의 하한 px — 채점이 1px 격자라 그보다 가는 목표는 뜻이 없다.
 _WFLOOR_MIN = 1.0
 
@@ -187,20 +178,17 @@ def min_stroke_width_px(cat: Catalog, upp: float) -> float:
     써 왔다. 그것은 **둥근사각(A_22)의** 최소 폭이다 — 상자가 정사각이라
     최소 스케일에서 최소 도형 폭 그대로 선다. 그런데 어휘 38종 중 태반은
     짧은 축이 훨씬 짧아 같은 스케일에서 훨씬 가늘게 선다 (h=1961 실측:
-    막대 2.79px ↔ U_45 0.19px · U_31 0.40px). `bar_for`가 막대를 고를 때는
-    이미 그 사실을 쓰는데, **폭의 목표와 이상 띠는 여전히 막대 기준**이었다.
+    막대 2.79px ↔ U_45 0.19px · U_31 0.40px). `bar_for`가 막대를 고를 때
+    이미 그 사실을 쓰므로, **폭의 목표와 이상 띠도 같은 바닥**을 써야 한다.
 
-    그 차이가 곧 "선이 원화보다 굵다"의 남은 절반이다: 목표 프로파일이
+    막대를 바닥으로 두면 그 차이가 곧 "선이 원화보다 굵다"가 된다: 목표 프로파일이
     `clip(원화 띠, 2.79, …)`이라 원화가 1.9px인 자리에서 **목표가 통째로
     2.79 상수로 눌린다** — 폭 프로파일 항(`stroke._prof_pen`)이 "얼마나
     2.79에 못 미치나"를 재게 되어, 가늘게 그은 획을 벌하고 굵기 변화(리듬)를
     아예 못 본다. 여기서 바닥을 어휘 쪽으로 내리면 목표가 원화 띠 그 자체가
     된다.
 
-    `FS_LINE_WFLOOR=0`이면 종전대로 막대 폭이 바닥이다.
     """
-    if not _WFLOOR:
-        return 2.0 * 0.01 * UNITS_PER_SCALE / max(upp, 1e-9)
     key = round(upp, 6)
     got = _WFLOOR_CACHE.get(key)
     if got is None:

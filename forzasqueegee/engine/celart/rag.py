@@ -39,16 +39,15 @@ import os
 
 import numpy as np
 
-from .. import celaxes
 from .marks import _MARK_DE, _MARK_RATIO
 
 # ── 비용의 저울 (전 이미지 공통 — 타깃별 손튜닝 금지) ────────────────────
 # 색 재현 손해의 기준 색차 — Ward 항 `A1A2/(A1+A2)·(ΔE/DE_REF)²`을 λ와 견줄
-# 크기로 맞추는 자다. 6.0은 **종전 문턱 사다리와 눈금이 맞물리게** 고른 값이다:
-# 이 항만 놓고 λ(1200×1961에서 565)와 견주면 5,000px짜리 둘은 ΔE 2 근처에서,
-# 100px 조각은 ΔE 8 근처에서 부호가 바뀐다 — 각각 종전의 `_MERGE_DE` 2.0과
-# `_GRAD_MERGE` 사다리 (120, 8.0)이 손으로 놓아 두던 자리다. 사다리를 면적이
-# 대신 푸는 셈이고, 실제 채택은 경계·특징 항까지 더한 총비용이 정한다.
+# 크기로 맞추는 자다. 6.0은 **면적이 문턱을 대신 풀도록** 고른 값이다: 이 항만
+# 놓고 λ(1200×1961에서 565)와 견주면 5,000px짜리 둘은 ΔE 2 근처에서, 100px
+# 조각은 ΔE 8 근처에서 부호가 바뀐다 — 큰 면일수록 작은 색차에도 안 합쳐지고
+# 작은 조각일수록 크게 합쳐진다. 실제 채택은 경계·특징 항까지 더한 총비용이
+# 정한다.
 _DE_REF = float(os.environ.get("FS_RAG_DE_REF", 6.0))
 # 경계를 지우는 값 — 접경 px당. 색 계단(`gnorm`, 이미지 중앙값 정규화)과
 # **선이 받치는 몫**을 따로 문다. 선 밑 경계는 사람이 실제로 그은 자리이므로
@@ -65,7 +64,7 @@ _IMP_P = float(os.environ.get("FS_RAG_IMP", 1.0))
 # 무늬 보호 조각의 색 재현 손해 배수 — 지우면 특징이 통째로 사라지는 조각
 _MARK_MUL = float(os.environ.get("FS_RAG_MARK", 4.0))
 # §19 **비탈 할인** — 그라디언트를 자른 경계의 색 재현 손해를 이만큼 깎는다.
-# 0이면 종전 동작. 근거는 `_ramp` 문서.
+# 0이면 안 깎는다. 근거는 `_ramp` 문서.
 _RAMP = float(os.environ.get("FS_RAG_RAMP", 0.75))
 
 
@@ -237,13 +236,13 @@ class RegionGraph:
         # 판정의 뜻이 "훨씬 큰 평평한 면 위라 마스킹이 없어 작은 색차도 또렷이
         # 보인다"이므로(`marks` 문서), 하필 그 자리에 "안 보인다"의 하한을
         # 걸면 눈 흰자·코 그림자가 통째로 병합된다
-        if celaxes.on("MERGEJND") and not mark:
+        if not mark:
             de = float(_de_seen(de))
         imp = (aa * self.imp[a] + ab * self.imp[b]) / max(aa + ab, 1.0)
         recon = (aa * ab / max(aa + ab, 1.0)) * (de / _DE_REF) ** 2 * imp ** _IMP_P
         if mark:
             recon *= _MARK_MUL
-        elif _RAMP and celaxes.on("RAMP"):
+        elif _RAMP:
             # §19 — 비탈을 자른 경계는 색 재현 손해를 깎는다 (`_ramp` 문서).
             # 무늬 보호 조각은 뺀다: 그 판정의 뜻이 "평평한 면 위라 작은 색차도
             # 또렷이 보인다"라, 하필 그 자리에 할인을 걸면 특징이 사라진다
@@ -310,7 +309,7 @@ class RegionGraph:
         `sign_only`면 비용이 음수인 간선만 산다 (MDL 단). 아니면 상한
         (`stop`)에 닿을 때까지 양수도 산다 (상한 강제 단). `protect`면 무늬
         보호 조각이 낀 간선은 **일반 후보가 마른 뒤**로 미룬다 — 상한은
-        마스킹돼 안 보이는 쪽에서 채운다는 종전 2단계와 같은 규칙이다.
+        마스킹돼 안 보이는 쪽에서 상한을 채운다.
         """
         heap: list = []
         held: list = []

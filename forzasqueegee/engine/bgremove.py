@@ -32,9 +32,6 @@ _PART_HULL, _PART_MIN = 0.5, 0.01
 
 def available() -> bool:
     """쓸 수 있는 자리인가 — 모델 파일은 `matte()`가 받으므로 여기서 안 본다."""
-    import os
-    if os.environ.get("FS_NO_BGCUT"):      # 비교 실험용 — 배경 제거 강제 생략
-        return False
     try:
         import onnxruntime  # noqa: F401
         return True
@@ -79,12 +76,8 @@ def _keep_subject(alpha: np.ndarray, log=print) -> np.ndarray:
     코어에 딸려 간다. 옅은 마스크로 성분을 나누는 길은 못 쓴다: isnet의 옅은
     안개가 소품과 인물을 이어 붙여 7장 모두 성분이 하나가 된다(실측).
     """
-    import os
-
     import cv2
 
-    if os.environ.get("FS_NO_ALPHAISO"):       # 비교 실험용
-        return alpha
     hi = (alpha >= 128).astype(np.uint8)       # 문턱 128 = 크롭·셀 캔버스 판정과 같다
     n, lab, stats, _ = cv2.connectedComponentsWithStats(hi, 8)
     if n <= 2:                                 # 성분이 하나면 거를 것이 없다

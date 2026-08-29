@@ -24,7 +24,6 @@ import numpy as np
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
-from . import ablation
 from . import candidates as C
 from . import chain
 from . import intent as I
@@ -38,10 +37,8 @@ from .grammar import (_FAT_MAX_MUL, _FAT_MIN_AREA, _LINE_W_REL, _WCAP_CV,
                       _fill_fat, _patch_seams)
 from .merge import merge_costrokes
 from .policy import _SPAN_REL
-from .scoring import (_PEN_FAR, _PEN_LINE, _PEN_LINE_ADAPT, _RETRACE,
-                      _Scorer)
-from .skeleton import (_dt_along, _join_paths, _paths, _prune_spurs,
-                       _thin, smooth_path)
+from .scoring import _PEN_FAR, _PEN_LINE, _RETRACE, _Scorer
+from .skeleton import (_dt_along, _paths, _prune_spurs, _thin, smooth_path)
 from .stroke import _STROKE_SLIM, _path_worth
 from .vocabulary import min_stroke_width_px
 
@@ -53,7 +50,7 @@ _SMOOTH = int(os.environ.get("FS_LINE_SMOOTH", 5))
 # 완전히 성립하는 획은 값을 **두 배** 해야 산다"는 뜻이다 (`_ink_mul`).
 _PERSIST_W = float(os.environ.get("FS_LINE_PERSIST", 1.0))
 _EXPL_W = float(os.environ.get("FS_LINE_EXPL", 1.0))
-# §23 — 획의 값을 **그 획이 부를 도형 수**로 나눈다 (0이면 종전: 한 획 = λ 하나).
+# §23 — 획의 값을 **그 획이 부를 도형 수**로 나눈다 (0이면 한 획 = λ 하나).
 _SHAPE_PRICE = float(os.environ.get("FS_LINE_SHAPE_PRICE", 1.0))
 # 이상 띠의 여유 px (`_Scorer.set_band`의 core) — 원화 띠 폭에 더하는 몫.
 # 0이면 띠는 정확히 `max(획 폭, 최소 도형 폭)`이고, 그보다 굵어지는 몫은
@@ -69,22 +66,20 @@ def _core_band(shape: tuple[int, int], pp: np.ndarray,
                min_w: float) -> np.ndarray:
     """획의 **이상 띠** — "이 자리에서 이 획이 얼마나 굵은가".
 
-    종전에는 획 하나에 두께가 한 수(폭 중앙값)뿐이었다. 그런데 사람 획은
-    한 획 안에서도 굵기가 변하고(테이퍼), 원화 띠도 다른 선과 만나는 자리에서
-    굵어진다 — 한 수로 누르면 가는 쪽에서는 띠가 남아돌고(부푸는 것이 공짜)
-    굵은 쪽에서는 제 몸통이 띠 밖으로 나간다(제대로 그은 것이 벌점).
+    사람 획은 한 획 안에서도 굵기가 변하고(테이퍼), 원화 띠도 다른 선과 만나는
+    자리에서 굵어진다. 두께를 한 수(폭 중앙값)로 누르면 가는 쪽에서는 띠가
+    남아돌고(부푸는 것이 공짜) 굵은 쪽에서는 제 몸통이 띠 밖으로 나간다
+    (제대로 그은 것이 벌점).
 
     그래서 띠를 **폭 프로파일로** 짓는다: 마디마다 그 자리 원화 띠 폭으로
     두께를 준다. 자와 클립은 후보 순위의 목표 프로파일(`stroke._prof_pen`의
     `wt`)과 같다 — 배치가 맞추려는 폭과 채점이 재는 폭이 같은 자여야 한다.
     """
-    from . import ablation
     from .stroke import _PROF_CAP
 
     cm = np.zeros(shape, np.uint8)
     poly = np.stack([pp[:, 1], pp[:, 0]], axis=1)
-    if (wprof is None or len(wprof) != len(pp) or len(pp) < 3
-            or not ablation.core_profile()):
+    if wprof is None or len(wprof) != len(pp) or len(pp) < 3:
         cv2.polylines(cm, [poly], False, 1,
                       max(1, int(round(wmed + _CORE_SLACK))))
         return cm.astype(bool)
@@ -226,9 +221,7 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
         # 선은 타이트해야 한다 — 조밀한 선망 위에서 뚱뚱한 호가 다른 선 픽셀을
         # 쓸어 담아 이득을 내는 것을 낭비 벌점이 막는다. 최소 도형이 띠보다
         # 굵으면 넘치는 것이 불가피하므로 그 몫만큼 벌점을 깎는다
-        pen_w = _PEN_LINE
-        if _PEN_LINE_ADAPT:
-            pen_w *= min(1.0, res_w / max(min_w, 1e-6))
+        pen_w = _PEN_LINE * min(1.0, res_w / max(min_w, 1e-6))
         sc = _Scorer(cat, upp, w, h, (x0, y0, x1, y1), m, np.zeros_like(m),
                      bg_all[y0:y1, x0:x1], pen_waste=pen_w,
                      val=maps.value[y0:y1, x0:x1],
@@ -252,9 +245,7 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
         skel = _prune_spurs(_thin(m), max(3.0, 1.2 * res_w))
         src = cel.src_rgb[y0:y1, x0:x1]
         comp: list[LogicalStroke] = []
-        # 이어긋기 — 그래프 축을 끄면 접선 각도만 보던 옛 이음으로 돌아간다
-        raw_paths = (_paths(skel) if ablation.graph()
-                     else _join_paths(_paths(skel)))
+        raw_paths = _paths(skel)
         # 접합점 차수 — **이어긋기 전** 원 가닥으로 센다. 이은 뒤에 세면 우리가
         # 합친 만큼 차수가 줄어 "원래 몇 갈래였나"를 못 읽는다
         jdeg = junction_degrees(raw_paths)
@@ -271,20 +262,14 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
                 comp=int(ci), roi=(x0, y0, x1, y1), head_j=hj, tail_j=tj,
                 sc=sc, dt=dt, jdeg=jdeg))
         # 이어긋기는 **성분 안에서** — 접합점 id가 성분 지역 번호다
-        raw.extend(continue_strokes(comp) if ablation.graph() else comp)
+        raw.extend(continue_strokes(comp))
 
     # 평활 — 계단(±1px 고주파)을 편다. 길이는 **평활 전** 표본 수로 재 둔다.
-    # 각 보존 축(`ablation.corner`)이 켜져 있으면 의도된 꺾임에서만 평활을
-    # 물린다 (`skeleton.smooth_path`); 꺼지면 창을 통째로 거는 옛 동작이다
+    # 의도된 꺾임에서는 평활을 물린다 (`skeleton.smooth_path`)
     for s in raw:
         if len(s.path) < _SMOOTH + 2:
             continue
-        if ablation.corner():
-            s.path = smooth_path(s.path, ker)
-        else:
-            mid = np.stack([np.convolve(s.path[:, 0], ker, "valid"),
-                            np.convolve(s.path[:, 1], ker, "valid")], axis=1)
-            s.path = np.concatenate([s.path[:1], mid, s.path[-1:]], axis=0)
+        s.path = smooth_path(s.path, ker)
     # 의도 — **평활 뒤의 경로**에서 각을 읽는다 (`intent` 문서). 평활이
     # 지킨 각이 그대로 남아 있고, 배치가 맞추는 것도 이 경로라 "지킨 각"과
     # "끊는 각"이 같은 각이 된다. 표본마다 한 수라 쪼갤 때 함께 잘린다
@@ -298,8 +283,7 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
     fill_neighborhood([s.ev for s in raw], [s.path for s in raw],
                       [s.width for s in raw],
                       [(s.roi[0], s.roi[1]) for s in raw])
-    classify(raw, _LINE_FRAG_REL * base, max(4.0, _ISO_LEN_REL * base), min_w,
-             simple=not ablation.graph())
+    classify(raw, _LINE_FRAG_REL * base, max(4.0, _ISO_LEN_REL * base), min_w)
 
     # 뚱뚱 덩어리 채움 — 획 분류보다 먼저 놓는다
     filled = np.zeros((h, w), bool)
@@ -357,7 +341,6 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
         "detail_evidence": bool(maps.has_detail),
         "detail_only_strokes": sum(1 for s in rec.strokes
                                    if s.ev.detail_only >= 0.5),
-        "ablation": ablation.names(),
     })
     if rec.fat_fills:
         log(f"  덩어리 채움 {rec.fat_fills}장 (선으로 못 긋는 폭 — 모멘트 타원)")
@@ -402,9 +385,9 @@ def _ink_mul(s, pol, base: float) -> float:
     """
     m = 1.0
     if _SHAPE_PRICE and _SPAN_REL > 0.0:
-        # ③ **장수 자체가 비용이다** (§11의 선 판). 종전 문턱은 획 하나당 λ
-        # 하나였다 — 그런데 한 획이 실제로 무는 것은 도형 1.7장이고(실측
-        # 중앙), 긴 획은 열 장도 넘는다. 길이에 비례해 값을 받으면 "이 획이
+        # ③ **장수 자체가 비용이다** (§11의 선 판). 한 획이 실제로 무는 것은
+        # 도형 1.7장이고(실측 중앙), 긴 획은 열 장도 넘는다 — 획 하나당 λ
+        # 하나로 물면 그만큼이 공짜다. 길이에 비례해 값을 받으면 "이 획이
         # 부를 도형 수만큼 벌어야 산다"가 되어, 채움 쪽이 이미 쓰는 저울과
         # 같은 저울이 된다. 자는 정책이 도형 상한을 정할 때 쓰는 그 자다
         # (`policy._SPAN_REL` — 가장 곱게 그은 획의 도형당 길이).
@@ -479,15 +462,13 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
         # 제 획의 **이상 띠** — 원화가 그은 폭(+ 양자화 여유 한 겹). 밴드가
         # "어디까지 나가도 되나"라면 이쪽은 "얼마나 굵은가"다. 이 띠 밖의
         # 물림·재추적은 공짜가 아니다 (`scoring._Scorer.set_band`)
-        core = None
-        if ablation.width():
-            # 이상 띠의 바닥은 **어휘가 낼 수 있는 가장 가는 폭**이다 —
-            # 막대 폭을 바닥으로 쓰면 원화보다 굵은 띠가 공짜가 된다
-            # (`vocabulary.min_stroke_width_px`)
-            wfloor = min_stroke_width_px(cat, upp)
-            core = _core_band(sc.residual.shape, pp,
-                              s.widths if len(s.widths) == len(s.path) else None,
-                              max(s.width, wfloor), wfloor)
+        # 이상 띠의 바닥은 **어휘가 낼 수 있는 가장 가는 폭**이다 — 막대 폭을
+        # 바닥으로 쓰면 원화보다 굵은 띠가 공짜가 된다
+        # (`vocabulary.min_stroke_width_px`)
+        wfloor = min_stroke_width_px(cat, upp)
+        core = _core_band(sc.residual.shape, pp,
+                          s.widths if len(s.widths) == len(s.path) else None,
+                          max(s.width, wfloor), wfloor)
         # 한 획의 도형 상한은 **길이가 정한다** (`policy.shapes_for`) — 상수
         # 상한이 긴 획을 깨던 자리다 (끊김이 길이 400px 위에서 73%)
         cands = C.build(sc, s.dt, s.path, s.width, s.color, s.sid, forms, cat,

@@ -2,15 +2,15 @@
 
 닫힌 해로 씨앗을 잡는다: 2차 모멘트가 같은 타원·사각을 경쟁시켜(`_seed_moment`)
 이긴 쪽을 쓰고, 확장 어휘 여섯은 배수 `_FILL_MARGIN`을 넘겨야 바탕을 이긴다.
-남은 얇은 껍질은 막대 사슬(`_fit_bars`)이, 남은 큰 조각은 마무리(`_mop_up`)가
-줍는다 — 그보다 작은 조각은 구멍 메움이 군집당 한 장으로 더 싸게 처리한다.
+남은 얇은 껍질은 막대 사슬(`_fit_bars`)이, 남은 큰 조각은 마무리
+(`layered.mop_up`)가 줍는다 — 그보다 작은 조각은 구멍 메움이 군집당 한 장으로
+더 싸게 처리한다.
 """
 
 from __future__ import annotations
 
 import os
 
-import cv2
 import numpy as np
 
 from ..catalog import Catalog
@@ -19,7 +19,7 @@ from .geometry import _layer, _min_span
 from .scoring import _Scorer, _descend
 from .skeleton import _dt_along, _join_paths, _paths, _prune_spurs, _thin
 from .stroke import _FORM_RASTER, _fit_path, _path_worth
-from .vocabulary import (_FILL_BASE, _FILL_MARGIN, _FILL_MIN_R0, _FILL_MOMENT,
+from .vocabulary import (_FILL_BASE, _FILL_MARGIN, _FILL_MIN_R0,
                          _FILL_SHAPE, _FILL_SHAPES, _FILL_TMPL, _FILL_TOP)
 
 
@@ -170,12 +170,12 @@ def _place_fat(sc: _Scorer, dt: np.ndarray, px: int, py: int, r0: float,
         cand.shape = name
         best_s, best_c = sc.score_val(cand), cand
         # 모멘트 정합 씨앗 — 같은 증거(창 점 구름)에서 도형마다 따로 푼 자세.
-        # 같은 목적함수로 재어 좋은 쪽에서 하강을 시작한다
-        if _FILL_MOMENT:
-            for alt in _seed_moment(sc, pw, name, color, sc.cat):
-                s = sc.score_val(alt)
-                if s > best_s:
-                    best_s, best_c = s, alt
+        # 같은 목적함수로 재어 좋은 쪽에서 하강을 시작한다 (채움 장수
+        # 5~32% 감소·커버리지 상승. 확장 어휘가 서는 것도 이 씨앗 덕이다)
+        for alt in _seed_moment(sc, pw, name, color, sc.cat):
+            s = sc.score_val(alt)
+            if s > best_s:
+                best_s, best_c = s, alt
         scored.append((-best_s, i, best_c))
     scored.sort(key=lambda t: t[:2])          # 동점은 어휘 순서 — 결정적
     # 하강 순서는 다시 **어휘 순서**로 되돌린다 — 하강 뒤 동점이면 앞 어휘가
@@ -193,56 +193,6 @@ def _place_fat(sc: _Scorer, dt: np.ndarray, px: int, py: int, r0: float,
             and best[0] < _FILL_MARGIN * base[0]:
         best = base
     return _grow_step(sc, *_descend(sc, best[1], color, passes=3))
-
-
-def _mop_up(plan: LayerPlan, sc: _Scorer, color, left: int,
-            min_blob: int = 12, price: float = 0.0,
-            free_first: bool = False) -> int:
-    """잔여 덩어리 줍기 — 연결 성분마다 작은 타원 하나씩 (탐색 생략, 하강만).
-
-    획·채움이 놓친 조각이 흰 반점으로 남는 것을 막는다. min_blob 미만 조각은
-    화면에서 안 보이는 크기라 버린다.
-    """
-    n = 0
-    x0, y0, _, _ = sc.roi
-    while n < left:
-        res = sc.residual.astype(np.uint8)
-        cnt, cc, cstats, cent = cv2.connectedComponentsWithStats(res, connectivity=8)
-        # 가장 큰 덩어리부터
-        order = np.argsort(-cstats[1:, cv2.CC_STAT_AREA]) + 1
-        placed = False
-        for ci in order[:1]:
-            if cstats[ci, cv2.CC_STAT_AREA] < min_blob:
-                return n
-            cm = cc == ci
-            # 가격 — 덩어리가 통째로 λ에 못 미치면 어떤 도형으로도 값을 못 한다
-            # (영역의 첫 장은 면제 — `fit_plan`의 같은 근거)
-            if price and not (free_first and n == 0) and sc.worth_of(cm) < price:
-                sc.commit(cm)              # 포기 — 잔여에서 지워 다음 덩어리로
-                placed = True
-                break
-            dt = cv2.distanceTransform(cm.astype(np.uint8), cv2.DIST_L2, 3)
-            py, px = np.unravel_index(int(dt.argmax()), dt.shape)
-            r0 = max(1.0, float(dt.max()))
-            lay = _seed_fat(sc, dt, px, py, r0, color) if cstats[ci, cv2.CC_STAT_AREA] > 40 \
-                else _layer(_FILL_SHAPE, x0 + px, y0 + py, r0, r0, 0.0, 0.0,
-                            color, sc.upp, sc.w, sc.h)
-            gain, q = _descend(sc, lay, color, passes=3)
-            if gain < 3.0:
-                # 이 덩어리는 포기 — 잔여에서 지워 무한루프 방지
-                sc.commit(cm)
-                placed = True   # 루프 계속 (다음 덩어리)
-                break
-            gain, q = _grow_step(sc, gain, q)
-            _, mfin = sc.score(q)
-            sc.commit(mfin)
-            plan.layers.append(q)
-            n += 1
-            placed = True
-            break
-        if not placed:
-            break
-    return n
 
 
 def _fit_bars(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, color,
