@@ -291,11 +291,12 @@ def _notice(binary_zip: str, source_zip: str) -> str:
 
 ## 무엇을 고쳤나 (AGPL-3.0 §5(a))
 
-업스트림 고정 커밋 `{PIN}` (태그 1.2.1) 위에 두 갈래를 얹었습니다:
+업스트림 고정 커밋 `{PIN}` (태그 1.2.1) 위에 세 갈래를 얹었습니다:
 
 1. **build** — Qt 플러그인 자리를 vcpkg 배치 가정 없이 찾도록 고침
 2. **itasha** — [Itasha] 메뉴(리버리 한 벌 짓기) · 창 없는 면 기하 덤프
    (`--itasha-dump`) · [Edit → Split Selection at a Line]
+3. **i18n** — 한국어 UI(내장 영→한 대응표)와 언어 설정, 한국어가 기본
 
 수정자는 ForzaSqueegee contributors이고, 날짜는 함께 실린 대응 소스의 각 커밋에
 있습니다.
@@ -303,14 +304,14 @@ def _notice(binary_zip: str, source_zip: str) -> str:
 ## 대응 소스 (AGPL-3.0 §6)
 
 **같은 릴리스의 `{source_zip}`이 이 바이너리의 대응 소스 전부입니다** — 업스트림
-고정 커밋에 위 두 갈래를 얹은 완전한 트리이고, 그것만으로 이 바이너리를 다시
+고정 커밋에 위 세 갈래를 얹은 완전한 트리이고, 그것만으로 이 바이너리를 다시
 지을 수 있습니다. 짓는 법은 그 안의 `BUILD.md`에 있습니다.
 
 ## 함께 실린 제3자 구성 요소
 
 | | 라이선스 | 비고 |
 |---|---|---|
-| Qt 6.8.2 (`Qt6*.dll`, `plugins/`) | LGPL-3.0 — https://doc.qt.io/qt-6/lgpl.html | **동적 링크**입니다. 같은 판의 Qt로 DLL을 바꿔 끼워 다시 링크할 수 있습니다. 소스: https://download.qt.io/archive/qt/6.8/6.8.2/single/ |
+| Qt 6.8.2 (`Qt6*.dll`, `plugins/`, `translations/qtbase_ko.qm`) | LGPL-3.0 — https://doc.qt.io/qt-6/lgpl.html | **동적 링크**입니다. 같은 판의 Qt로 DLL을 바꿔 끼워 다시 링크할 수 있습니다. 한국어 번역 파일(qttranslations 모듈)도 같은 LGPL-3.0 선택지로 실었습니다. 소스: https://download.qt.io/archive/qt/6.8/6.8.2/single/ |
 | MinGW-w64 GCC 런타임 (`libgcc_s_seh-1.dll` · `libstdc++-6.dll` · `libwinpthread-1.dll`) | GPL-3.0 + GCC Runtime Library Exception (`licenses/gcc-*`) | 예외 조항이 어떤 프로그램과도 함께 배포하도록 허용합니다 |
 | zlib 1.3.1 (`libzlib.dll`) | zlib 라이선스 (`licenses/zlib-LICENSE`) | 소스: https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz |
 

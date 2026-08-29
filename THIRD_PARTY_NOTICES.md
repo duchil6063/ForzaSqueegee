@@ -103,7 +103,7 @@ GitHub 릴리스로 배포한다 (제품의 [FLS 편집기]가 그것을 받아 
 `python tools/get_fls.py --official`로 **업스트림 공식 릴리스를 그대로** 받아
 쓸 수도 있다 (그 판에는 [Itasha] 메뉴가 없다 — 그건 우리 패치다).
 
-빌드본에는 Qt 6.8.2(LGPL-3.0, 동적 링크) · MinGW-w64 GCC 런타임(GPL-3.0 +
+빌드본에는 Qt 6.8.2(LGPL-3.0, 동적 링크 — 한국어 번역 파일 `qtbase_ko.qm` 포함) · MinGW-w64 GCC 런타임(GPL-3.0 +
 Runtime Library Exception) · zlib 1.3.1이 함께 실린다. 각 라이선스 전문과
 소스 자리는 그 꾸러미의 `NOTICE.md`와 `licenses/`에 있다.
 
