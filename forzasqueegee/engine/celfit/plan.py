@@ -29,6 +29,46 @@ from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
 # "보이는 구멍"(route_cel.HOLE_MIN_PX = 4px 군집)의 넓이 급이다 —
 # 그보다 작은 조각은 봉인이 군집당 한 장으로 더 싸게 처리한다.
 _MOP_MIN_FIRST = int(os.environ.get("FS_MOP_MIN_FIRST", 12))
+# 획형 판정의 색·경계 자 (`_inklike`). 둘레의 이만큼이 잉크에 붙어 있으면
+# 획 사이의 잔여로 보고, 색이 그 자리 획 색과 이 ΔE 안이면 그 선의 잔여로 본다.
+# ΔE 문턱은 무늬 보호 조각의 JND(`celart.marks._MARK_DE`)의 세 배 — "같은
+# 색"이 아니라 "그 선 색"을 묻는 자리라 넉넉해야 한다.
+_INK_EDGE = float(os.environ.get("FS_THIN_INKEDGE", 0.6))
+_INK_DE = float(os.environ.get("FS_THIN_INKDE", 12.0))
+
+
+def _inklike(mask: np.ndarray, color, src_rgb, ink, roi) -> bool:
+    """이 가는 영역이 **그 자리 획의 잔여**인가 — 색과 경계로 묻는다.
+
+    선화가 안 지운 선 조각은 색이 그 자리 획의 색이고 (선화가 본 그 선이니까)
+    둘레가 놓인 잉크에 붙어 있다. 눈 흰자·하이라이트·리본은 색이 획과 또렷이
+    다르고 둘레가 **색 경계**다. 둘 중 하나라도 획 쪽이면 획으로 본다 —
+    둘 다 아닐 때만 면으로 돌린다 (보수적인 쪽이 잘못 그려도 색만 한 겹
+    틀리고, 반대로 틀리면 그 색이 통째로 사라진다).
+
+    지도가 없으면(고전 폴백·색 표본 없음) True — 종전 판정 그대로다.
+    """
+    if ink is None or src_rgb is None:
+        return True
+    x0, y0, x1, y1 = roi
+    ink_roi = ink[y0:y1, x0:x1]
+    k3 = np.ones((3, 3), np.uint8)
+    m8 = mask.astype(np.uint8)
+    edge = mask & ~cv2.erode(m8, k3).astype(bool)
+    near_ink = cv2.dilate(ink_roi.astype(np.uint8), k3).astype(bool)
+    # ③ 경계 지지 — 둘레가 잉크에 붙어 있나 (붙어 있으면 획 사이의 잔여다)
+    if edge.any() and float(near_ink[edge].mean()) >= _INK_EDGE:
+        return True
+    # ④ 제 색 — 이웃한 잉크 밑의 원화 색과 견준다. 가까우면 그 선의 잔여다
+    nb = cv2.dilate(m8, k3, iterations=2).astype(bool) & ink_roi & ~mask
+    if int(nb.sum()) < 16:
+        return True                        # 견줄 잉크가 없다 — 종전 판정대로
+    src = src_rgb[y0:y1, x0:x1]
+    a = np.array([[color]], np.uint8)
+    b = np.median(src[nb], axis=0).round().astype(np.uint8).reshape(1, 1, 3)
+    la = cv2.cvtColor(a, cv2.COLOR_RGB2LAB).astype(np.float32).ravel()
+    lb = cv2.cvtColor(b, cv2.COLOR_RGB2LAB).astype(np.float32).ravel()
+    return float(np.linalg.norm(la - lb)) < _INK_DE
 
 
 def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
@@ -149,11 +189,12 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         roi = (x0, y0, x1, y1)
         omap = order_img[y0:y1, x0:x1]
         mask = cel.labels[y0:y1, x0:x1] == reg.rid
-        # 획형 판정 — 가늘고 **길어야** 획이다 (`fill.region_shape`). 가늘기만
-        # 보면 눈 흰자·하이라이트 같은 가는 **면**이 획 쪽으로 넘어가, 경로
-        # 길이 문턱에 걸려 통째로 안 그려진다
+        # 획형 판정 (`fill.region_shape`) — 가늘고 · 길고 · 안 닫혔고 ·
+        # **획 색이어야** 획이다. 가늘기만 보면 눈 흰자·하이라이트 같은 가는
+        # **면**이 획 쪽으로 넘어가, 경로 길이 문턱에 걸려 통째로 안 그려진다
         dt0 = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
-        strokelike, _wmed, _elong = region_shape(mask, dt0)
+        strokelike, _wmed, _elong = region_shape(
+            mask, dt0, _inklike(mask, reg.color, cel.src_rgb, ink_cov, roi))
         if strokelike:
             stats["stroke_regions"] += 1
             stats["stroke_px"] += int(reg.area)

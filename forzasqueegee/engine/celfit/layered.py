@@ -208,15 +208,29 @@ def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8) -> int:
     if lo >= len(layers):
         return 0
     n = 0
+    st = 0.5                               # 게임 이동 스텝 (유닛)
+    # 스케일 확장은 **중심 대칭**이다 — 한 축을 키우면 양쪽으로 함께 자란다.
+    # 그래서 반대편이 배경이나 먼저 그린 면을 물면 필요한 쪽도 함께 진다
+    # (실측: 실루엣에 닿은 도형이 안쪽 이음매를 영영 못 덮는 자리가 이것이다).
+    # 확장에 **이동 한 칸을 짝지어** 한쪽으로만 자라는 수를 함께 물어본다 —
+    # 새 자유도가 아니라 이미 있는 두 축(스케일·이동)의 조합이고, 걸음도
+    # 놓을 때와 같은 격자다
+    SHIFTS = ((0.0, 0.0), (st, 0.0), (-st, 0.0), (0.0, st), (0.0, -st))
     for _ in range(max(1, passes)):        # 수렴까지 (상한은 폭주 방지)
         moved = False
         for i in range(lo, len(layers)):
             q = layers[i]
             base = sc.score_val(q)
+            cands = []
             for dx, dy in ((0.01, 0.01), (0.01, 0.0), (0.0, 0.01)):
-                c = Layer(**{**q.__dict__})
-                c.sx = round(c.sx + (dx if c.sx >= 0 else -dx), 4)
-                c.sy = round(c.sy + (dy if c.sy >= 0 else -dy), 4)
+                for mx, my in SHIFTS:
+                    c = Layer(**{**q.__dict__})
+                    c.sx = round(c.sx + (dx if c.sx >= 0 else -dx), 4)
+                    c.sy = round(c.sy + (dy if c.sy >= 0 else -dy), 4)
+                    c.x = round(c.x + mx, 4)
+                    c.y = round(c.y + my, 4)
+                    cands.append(c)
+            for c in cands:
                 s, m, box = sc._score_impl(c)
                 # **점수가 내려가지만 않으면 늘린다** (같아도 늘린다). 겹치기
                 # 위한 확장은 이득이 0이다 — 1x 라스터가 이미 "덮었다"고 보기

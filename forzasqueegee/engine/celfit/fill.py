@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 
+import cv2
 import numpy as np
 
 from ..catalog import Catalog
@@ -47,13 +48,21 @@ _RIND_LEN = float(os.environ.get("FS_RIND_LEN", 8))
 # 보내면 짧은 조각은 경로 길이 문턱에 걸려 통째로 안 그려지고(그 자리가
 # 그대로 미커버가 된다), 그려져도 획 라벨을 받아 프루닝에서 선 대접을 받는다.
 #
-# 자는 둘이고 **둘 다 이미 재고 있는 것**이다:
+# 자는 넷이고 **전부 이미 재고 있는 것**이다. 앞 셋은 기하·위상이라 여기서
+# 재고, 넷째(색)는 지도를 봐야 해서 호출부가 재어 넘긴다:
 #
 # ① **가늘다** — 픽셀 85%가 경계에서 `_THIN_R`px 안. "최대 내접 반경"만 보면
 #    선의 교차점(굵다) 때문에 타원 채움으로 넘어가 얼룩이 된다.
 # ② **길다** — 면적 / 폭². 폭 w·길이 L인 띠는 면적이 wL이므로 이 값이 곧
 #    L/w(가로세로비)다. 둥근 조각은 1 근처, 획은 대개 다섯을 넘는다. 뼈대를
 #    다시 안 뽑고 거리변환 하나로 나오는 닫힌 셈이라 값이 싸다.
+# ③ **닫혔다** — 구멍이 하나라도 있으면 그 영역은 **고리**다 (눈테·리본
+#    매듭·안경). 획은 열린 곡선이라 구멍이 없다. 고리를 획으로 보내면 뼈대가
+#    순환이라 경로가 임의로 끊기고 그 자리가 통째로 빈다.
+# ④ **제 색이 있다** (`inklike`, 호출부) — 잔여 선 조각은 색이 **그 자리
+#    획의 색**이다 (선화가 안 지운 그 선이니까). 눈 흰자·하이라이트는 획
+#    색과 또렷이 다르다. 색이 다르고 경계가 획이 아니라 **색 경계**면 그것은
+#    면이다 — 획으로 보내면 그 색이 통째로 사라진다.
 #
 # 문턱 3은 **면 채움이 한 장으로 끝낼 수 있는 가로세로비**다: 채움 어휘의
 # 씨앗이 2차 모멘트 정합이라(`_seed_moment`) 3:1까지는 도형 한 장이 그대로
@@ -62,15 +71,30 @@ _THIN_R = float(os.environ.get("FS_THIN_R", 3.2))
 _THIN_ELONG = float(os.environ.get("FS_THIN_ELONG", 3.0))
 
 
-def region_shape(mask: np.ndarray, dt: np.ndarray) -> tuple[bool, float, float]:
-    """(획형인가, 폭 중앙값 px, 가로세로비) — `dt`는 mask의 거리변환."""
+def region_shape(mask: np.ndarray, dt: np.ndarray,
+                 inklike: bool = True) -> tuple[bool, float, float]:
+    """(획형인가, 폭 중앙값 px, 가로세로비) — `dt`는 mask의 거리변환.
+
+    `inklike`는 호출부가 재는 넷째 자다 (위 ④): 이 영역의 색이 그 자리
+    획의 색이거나 경계가 획에 붙어 있으면 True. False면 — 색도 다르고
+    경계도 색 경계면 — 가늘고 길어도 **면**으로 본다.
+    """
     d = dt[mask]
     if not d.size:
         return False, 0.0, 0.0
     thin = float(np.percentile(d, 85)) <= _THIN_R
     wmed = 2.0 * float(np.median(d))
     elong = float(np.count_nonzero(mask)) / max(wmed * wmed, 1.0)
-    return bool(thin and elong >= _THIN_ELONG), wmed, elong
+    if not (thin and elong >= _THIN_ELONG and inklike):
+        return False, wmed, elong
+    return (not _has_hole(mask)), wmed, elong
+
+
+def _has_hole(mask: np.ndarray) -> bool:
+    """이 영역이 무언가를 **둘러싸고 있나** (구멍 ≥ 1) — 고리는 획이 아니다."""
+    u = np.pad(mask.astype(np.uint8), 1)
+    n_bg, _ = cv2.connectedComponents((1 - u).astype(np.uint8), connectivity=4)
+    return n_bg > 2
 
 
 def _win_pts(sc: _Scorer, px: int, py: int, r0: float) -> tuple[np.ndarray, float]:

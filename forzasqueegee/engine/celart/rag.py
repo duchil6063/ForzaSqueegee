@@ -63,6 +63,12 @@ _KAPPA = float(os.environ.get("FS_RAG_KAPPA", 0.5))
 _IMP_P = float(os.environ.get("FS_RAG_IMP", 1.0))
 # 무늬 보호 조각의 색 재현 손해 배수 — 지우면 특징이 통째로 사라지는 조각
 _MARK_MUL = float(os.environ.get("FS_RAG_MARK", 4.0))
+# §27 위상 손해 — 둘러싸임이 이 몫을 넘으면 그 초과분에 비례해 경계를 지킨다.
+# 0.8은 "제 둘레의 다섯 중 넷을 이 상대와 나눈다" = 사실상 그 면 안이다.
+# 무게는 경계 또렷함(`_BND_G`)과 같은 급으로 두되 선 밑 경계(`_BND_LINE`)
+# 보다는 낮다 — 위상은 지킬 값이지만 선이 이미 그린 경계보다 세지는 않다
+_TOPO_MIN = float(os.environ.get("FS_RAG_TOPO_MIN", 0.8))
+_TOPO_W = float(os.environ.get("FS_RAG_TOPO", 2.0))
 # §19 **비탈 할인** — 그라디언트를 자른 경계의 색 재현 손해를 이만큼 깎는다.
 # 0이면 안 깎는다. 근거는 `_ramp` 문서.
 _RAMP = float(os.environ.get("FS_RAG_RAMP", 0.75))
@@ -260,6 +266,24 @@ class RegionGraph:
         if self.feat is not None:
             fd = 1.0 - float(np.dot(self.feat[a], self.feat[b]))
             keep += _FEAT_W * bnd * max(0.0, fd)
+        # §27 **위상 손해 — 둘러싸인 면을 삼키면 구멍 하나가 사라진다.**
+        # 지금까지 병합이 지키는 것은 색(재현 손해)과 경계의 또렷함뿐이라,
+        # 한 면이 다른 면에 **완전히 둘러싸여 있다**는 사실은 값이 없었다.
+        # 그런데 그것은 색 오차가 아니라 **형태**의 문제다: 눈·홍채·단추·
+        # 무늬 구멍은 둘러싸여 있고, 삼켜지면 그 자리에 색차가 아니라 형태가
+        # 통째로 없어진다 (평균 ΔE로는 거의 안 보이는데 그림은 딴것이 된다).
+        #
+        # 자는 새 라스터가 아니라 이미 세고 있는 둘레다: 제 둘레의 거의
+        # 전부를 상대와 나누고 있으면 그 면은 상대 **안**에 있다. 무늬 보호
+        # 조각(`_mark`)이 같은 일을 하지만 그쪽은 "작고 콤팩트한" 조각만
+        # 본다 — 고리·리본·큰 구멍은 그 판정에서 빠진다. 여기가 그 짝이다.
+        #
+        # 색차로 가리는 것(`vis`)은 그대로다: 두 면의 색이 같으면 삼켜도
+        # 화면이 안 바뀌므로 지킬 위상이 없다.
+        encl = max(bnd / max(self.peri[a], 1.0), bnd / max(self.peri[b], 1.0))
+        if encl > _TOPO_MIN:
+            keep += (_TOPO_W * bnd * vis
+                     * (encl - _TOPO_MIN) / (1.0 - _TOPO_MIN))
         saved = (complexity(aa, self.peri[a]) + complexity(ab, self.peri[b])
                  - complexity(aa + ab, self.peri[a] + self.peri[b] - 2.0 * bnd))
         return float(recon + keep - saved * lam)

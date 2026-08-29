@@ -101,6 +101,12 @@ _W_CURV = 0.6       # 곡률 불연속 (|Δκ| / (κ 합 + ε))
 _W_WIDTH = 0.8      # 폭 불연속 (|Δw| / max w)
 _W_CONF = 0.6       # 선 신뢰도 불연속
 _W_SHAPE = 0.5      # 합친 뒤 늘어나는 마디 수 (음수면 이득)
+# 좌우 색 일관성 — 양옆 색차의 불연속과 **가르는 면 짝**의 불일치.
+# 신뢰도 불연속(`_W_CONF`)과 같은 급으로 둔다: 둘 다 "이 두 간선이 같은
+# 것을 그리고 있나"를 묻고, 문턱(`_COST_MAX` 1.10)에 대해 혼자서는 못
+# 막고 다른 불일치와 겹칠 때 비로소 이음을 끊는다. 잠정 색 영역이 없으면
+# (line 노선) `side_pair`가 없어 색차 항만 남는다
+_W_SIDE = 0.6
 _COST_MAX = float(os.environ.get("FS_JOIN_COST", 1.10))   # 이보다 비싸면 안 잇는다
 # **주요 contour 우선** (§3 — 긴 선이 짧은 곁가지 때문에 끊기지 않게).
 #
@@ -161,6 +167,15 @@ def _join_cost(a: LogicalStroke, a_head: bool, b: LogicalStroke,
     wa, wb = max(a.width, 0.5), max(b.width, 0.5)
     cost += _W_WIDTH * abs(wa - wb) / max(wa, wb)
     cost += _W_CONF * abs(a.ev.basic - b.ev.basic)
+    # **좌우 색 일관성** — 한 획은 같은 두 면을 계속 가른다. 양옆 색차가
+    # 갑자기 달라지거나(연속성) 가르는 **면 짝**이 바뀌면(위상) 그 둘은
+    # 사람이 한 번에 긋는 한 획이 아니다 — 교차점에서 다른 선으로 꺾여 나간
+    # 것이다. 자는 역할 판정이 쓰는 색 문턱(`_DE`) 그대로다.
+    da, db = a.ev.side_de, b.ev.side_de
+    cost += _W_SIDE * min(1.0, abs(da - db) / _DE)
+    pa, pb = a.ev.side_pair, b.ev.side_pair
+    if pa != (-1, -1) and pb != (-1, -1) and pa != pb:
+        cost += _W_SIDE
     # 합친 뒤 마디 수 변화 — 이으면 RDP가 마디를 공유해 줄기도 한다
     eps = 0.7 * max(wa, wb)
     merged = np.concatenate([a.path[::-1] if a_head else a.path,
@@ -309,6 +324,32 @@ def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
         #    아래로는 보호가 무의미하다
         conf = max(ev.basic, _DETAIL_W * ev.detail)
         if speck or (short and conf < _CONF and ev.imp_rel < _TEX_IMP):
+            s.role = NOISE
+            continue
+        # ③-b **detail 판만 본 선은 뒷받침이 있어야 산다** (§25 soft evidence).
+        #    detail은 basic의 사각지대를 메워 주지만 해칭·잎사귀 노이즈를 함께
+        #    얹는다 (실측 09: 선 px +80%, 그중 48%가 detail 전용). 그 선을 곧장
+        #    논리 획으로 올리면 그 노이즈가 그대로 도형이 된다. 그렇다고 버리면
+        #    detail이 처음 찾아 준 윤곽까지 함께 사라지므로(실측: 실루엣 윤곽
+        #    .80 → .92가 detail 덕이다), **뒷받침을 묻는다**:
+        #
+        #      색 경계(`side_de`) · 실루엣(`sil`) · 원화 해상도 판(`support`)
+        #
+        #    셋 중 하나라도 서면 그대로 그린다. 하나도 없으면 부스러기다 —
+        #    그 자리는 색면이 그리거나 애초에 없는 선이다. 셋 다 이미 쓰는
+        #    자라 새 문턱이 없고, detail 모델이 없으면 `detail_only`가 0이라
+        #    **무동작**이다.
+        #
+        #    **셋을 함께 묻는다 — 그것이 해칭의 정의다**: detail 판만 봤고,
+        #    짧고, 눈을 가늘게 뜨면 사라진다(`persist`, §21). 길고 뒷받침
+        #    없는 detail 전용 선은 대개 basic이 통째로 놓친 진짜 윤곽이라
+        #    (detail을 합류시키는 근거가 바로 그것이었다 — 실측: 실루엣 윤곽
+        #    .80 → .92), 길이·지속성을 안 묻고 걸면 해칭이 짙은 그림(06)에서
+        #    선 커버리지가 .900 → .864로 게이트(.88) 아래로 떨어진다.
+        #    지속성 문턱은 지지 문턱과 같은 눈금이다 (둘 다 "절반은 남나").
+        if (ev.detail_only >= 0.5 and short and ev.persist < _SUP_OK
+                and not (ev.side_de >= _DE or ev.sil >= _SIL
+                         or ev.support >= _SUP_OK)):
             s.role = NOISE
             continue
         # ④ 무늬 — 나란한 이웃에 덮여 있고(반복성), 그 이웃이 촘촘하며(평행

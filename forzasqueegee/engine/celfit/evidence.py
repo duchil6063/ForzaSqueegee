@@ -72,6 +72,10 @@ class StrokeEvidence:
     sil: float = 0.0            # 실루엣 인접 표본 비율
     edge_agree: float = 0.0     # 주변 색 경계와의 일치도
     bnd: float = 0.0            # 양옆 셀 영역 라벨이 다른 비율
+    # 이 획이 **무엇과 무엇을 가르나** — 양옆에서 가장 잦은 라벨 짝 (작은 쪽
+    # 먼저, 결정적). 잠정 색 영역이 있을 때만 뜬다 (없으면 (-1,-1)).
+    # 이어긋기가 이것을 본다: 가르는 짝이 다른 두 간선은 한 획이 아니다
+    side_pair: tuple = (-1, -1)
     length: float = 0.0         # 경로 길이 px
     continuity: float = 0.0     # 선 지도 위에 실제로 얹힌 표본 비율
     bridged: float = 0.0        # 다리(이은 구간)로 채운 표본 비율
@@ -308,6 +312,17 @@ def sample(path: np.ndarray, wmed: float, widths: np.ndarray,
         ev.sil = float(np.mean((la < 0) | (lb < 0) | maps.sil[gy[idx], gx[idx]]))
         d = lab_img[ay, ax] - lab_img[by, bx]
         ev.side_de = float(np.median(np.sqrt((d * d).sum(axis=1))))
+        # 가르는 면 짝 — 양옆에서 가장 잦은 라벨 (배경 -1은 그대로 쓴다:
+        # 실루엣을 가르는 것도 하나의 짝이다)
+        if ev.bnd > 0.0:
+            def _mode(v):
+                v = v[v >= -1]
+                if not v.size:
+                    return -1
+                u, c = np.unique(v, return_counts=True)
+                return int(u[int(np.argmax(c))])
+            pa, pb = _mode(la), _mode(lb)
+            ev.side_pair = (min(pa, pb), max(pa, pb))
         # 폐쇄/갇힘 — 양옆이 둘 다 잉크면 이 획은 선망 **안**에 갇혀 있다.
         # 무늬(그물·레이스)의 안쪽 가닥이 여기서 높게 나오고, 실루엣·고립
         # 특징은 한쪽이 반드시 빈 자리라 낮다

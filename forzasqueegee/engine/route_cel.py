@@ -58,9 +58,10 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     from .catalog import Catalog, default_catalog_path
     from .celart import (_ALPHA_OPAQUE, _MAX_REGIONS, decompose,
                          rebuild_regions, snap_labels_to_ink)
-    from .celfit import (_ink_cover, count_hole_clusters, coverage, fill_holes,
-                         fit_plan, fix_min_gain, grow_covers, price_of,
-                         repair_min_gain, repair_mismatch, silhouette_cover)
+    from .celfit import (_ink_cover, align_to_regions, count_hole_clusters,
+                         coverage, fill_holes, fit_plan, fix_min_gain,
+                         grow_covers, price_of, repair_min_gain,
+                         repair_mismatch, silhouette_cover)
     from .model import UNITS_PER_SCALE
     from .render import render_plan
 
@@ -138,6 +139,13 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         # flat_render = 채움 색 + 선 도안 색이 미세 조정·수리·구멍 메움의
         # 한 기준이 된다
         upp = 900.0 / h
+        # §26-b **스냅 전에 획을 색 경계로 한 칸 민다** — 여기가 선과 면이
+        # 서로를 보는 두 번째 방향이다 (첫째는 위 §26: 면 지도가 어느 선을
+        # 그릴지 골랐다). 제 선 지도 위 잉크를 잃지 않는 수만 받으므로 선
+        # 충실도가 자격이고, 그러고 나서 아래 스냅이 색 경계를 그 획 밑에
+        # 앉힌다 — 순서가 이렇게 서야 밀림이 굳지 않는다
+        stats_align = align_to_regions(line_plan.layers, cat, upp, w, h,
+                                       line_mask, cel.labels, log)
         ink = _ink_cover(line_plan.layers, cat, upp, w, h)
         r = max(1, int(round(0.01 * UNITS_PER_SCALE / upp)))
         labels = snap_labels_to_ink(cel.labels, sel, ink, r)
@@ -185,6 +193,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         plan.layers.extend(line_plan.layers)  # 선 도안은 모든 면 위 (마지막 선따기)
         stats.update({k: v for k, v in line_stats.items() if k not in stats})
         stats["line_layers"] = len(line_plan.layers)
+        stats["align_moves"] = stats_align
     # 유예 덮개 (celfit이 미룬 λ×12~25 구간) — report에 못 실리는 레이어
     # 참조라 여기서 빼 두고, 예산이 확정된 뒤(아래) 잔여만큼 산다
     carve_defer = stats.pop("_carve_defer", [])

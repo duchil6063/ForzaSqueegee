@@ -66,7 +66,7 @@
     linemetrics 선 도안 구조 지표 — 폭 충실도·파편화·꺾임 (게이트 아님)
     merge       겹침 병합 — 같은 방향으로 겹친 막대를 하나로 (배치 뒤)
     carve       덮어서 그리기 — 최소 도형보다 가는 선 (cel 폴백 전용)
-    lines       엔진 구동 `_fit_lines`
+    lines       엔진 구동 `_fit_lines` · 선↔면 보정 `align_to_regions`
     holes       구멍·커버리지 — 재고(게이트) 메운다(성장·메움). **가격의 자**
     coverage    §18 커버리지 불변 — 미커버 표본 0 봉인. **불변의 자** (λ 무관)
     repair      잔차 수리
@@ -100,7 +100,7 @@ from .holes import (count_hole_clusters, fill_holes, grow_covers,
                     silhouette_cover)
 from .layered import est_shapes, fill_region, mop_up
 from .linemetrics import stroke_metrics
-from .lines import _fit_lines
+from .lines import _fit_lines, align_to_regions
 from .metrics import plan_metrics
 from .plan import fit_line_plan, fit_plan
 from .repair import repair_mismatch
@@ -116,7 +116,7 @@ from .vocabulary import shape_vocabulary
 
 __all__ = [
     # 노선 진입점
-    "fit_plan", "fit_line_plan", "bridge_line_gaps",
+    "fit_plan", "fit_line_plan", "bridge_line_gaps", "align_to_regions",
     # 공통 선 재구성 엔진 — 두 노선이 함께 쓴다
     "policy", "build_maps", "EvidenceMaps", "StrokeEvidence",
     "LogicalStroke", "ROLES", "classify", "continue_strokes",
