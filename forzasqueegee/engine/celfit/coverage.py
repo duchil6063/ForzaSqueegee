@@ -227,7 +227,7 @@ _DOT_SCALES = (0.01, 0.02, 0.03, 0.05, 0.08)
 
 
 def _seal_dots(plan: LayerPlan, cel: CelArt, cat: Catalog, hard: np.ndarray,
-               ss: int, log=print) -> int:
+               ss: int, log=print, at: int | None = None) -> int:
     """남은 표본을 **반드시** 덮는 최소 도형 — 봉인의 마지막 손.
 
     성장·메움은 모양과 값을 본다. 여기는 안 본다: 남은 자리는 열 몇 표본짜리
@@ -295,7 +295,11 @@ def _seal_dots(plan: LayerPlan, cel: CelArt, cat: Catalog, hard: np.ndarray,
                         sy=_DOT_SCALES[-1], rot=0.0, skew=0.0, color=color,
                         alpha=100.0, label="seal")
             best = (0, lay)
-        plan.layers.append(best[1])
+        if at is None:
+            plan.layers.append(best[1])
+        else:
+            plan.layers.insert(at, best[1])
+            at += 1
         n += 1
     return n
 
@@ -387,8 +391,12 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         # 안팎으로 흩어져 있어 값은 군집 수가 정한다 (실측 W3-11: 자리
         # 1,502px · 도형 438장). 묶는 반경을 2 → 4px로 넓히면 군집이 그만큼
         # 줄고, 지나치게 뻗은 그룹은 실루엣 초과 판정이 반씩 가른다
+        # 스택 **바닥**에 끼운다 — 봉인이 맡는 자리는 아무도 안 덮는 표본이라
+        # z가 바닥이어도 그 표본에서는 보이고, 타원의 스필은 이웃 면·선화가
+        # 위에서 덮는다. 맨 뒤에 얹으면 그 스필이 선을 끊고 경계 반대편에 색
+        # 얼룩을 흩뿌린다 (실측 W7-01: 선·면 6,340px이 봉인 스필에 덮여 있었다)
         n = fill_holes(plan, cel, cat, log=quiet, min_px=1, max_layers=room,
-                       holes=need, label="seal", group_r=_SEAL_GROUP_R)
+                       holes=need, label="seal", group_r=_SEAL_GROUP_R, at=0)
         st["seal_layers"] += n
         hard = hard_holes(plan, cel, cat, ss)
         if not hard.any() or n == 0:
@@ -399,7 +407,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         if not hard.any():
             break
         _make_room(plan, cel, cat, budget, ss, st, weight=weight)
-        st["seal_dots"] += _seal_dots(plan, cel, cat, hard, ss, log)
+        st["seal_dots"] += _seal_dots(plan, cel, cat, hard, ss, log, at=0)
         hard = hard_holes(plan, cel, cat, ss)
     # 인게임 상한은 게이트가 아니라 **기계의 한계**다 — 넘긴 채로 내보낼 수
     # 없다. 넘겼으면 자리를 만들고, 그 컷이 연 자리는 점이 도로 닫는다
@@ -409,7 +417,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         _make_room(plan, cel, cat, budget, ss, st, weight=weight)
         hard = hard_holes(plan, cel, cat, ss)
         if hard.any():
-            st["seal_dots"] += _seal_dots(plan, cel, cat, hard, ss, log)
+            st["seal_dots"] += _seal_dots(plan, cel, cat, hard, ss, log, at=0)
     hard = hard_holes(plan, cel, cat, ss)
     st["seal_after"] = int(hard.sum())
     log(f"  봉인: 표본 {st['seal_before']:,} → {st['seal_after']:,}"

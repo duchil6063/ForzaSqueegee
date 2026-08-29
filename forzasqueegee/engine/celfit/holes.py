@@ -252,7 +252,8 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
                log=print, min_px: int = 1, max_layers: int = 600,
                value: np.ndarray | None = None, price: float = 0.0,
                holes: np.ndarray | None = None,
-               label: str = "hole", group_r: int = 2) -> int:
+               label: str = "hole", group_r: int = 2,
+               at: int | None = None) -> int:
     """플랜 전체 커버리지 대비 실루엣 구멍(흰 핀홀)을 셀 색 타원으로 메꾼다.
 
     핀홀은 영역 경계의 양자화 슬리버·포기 잔여·프루닝 컷에서 오므로 **프루닝
@@ -265,8 +266,7 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
     초과가 나면 주축 투영 중앙에서 반으로 갈라 조각마다 제 타원을 세운다
     (아래 out_bg 분기). 이 쪼개기가 없으면 대체 도형(내접원)이 양자화 최소
     도형으로 뭉개져 1px 테를 한 장에 3px씩밖에 못 줍고, 컷→메움이 평형에
-    갇힌다. 메움 레이어는 **맨 뒤에 얹는다** — 맨 앞에 넣으면 소유 px가
-    구멍 px뿐이라 컷이 도로 걷어 구멍이 라운드마다 다시 열린다 (실측).
+    갇힌다.
 
     `group_r`은 조각을 묶는 반경(px)이다 — 클수록 한 장이 더 멀리까지 줄지은
     조각을 함께 덮는다. 지나치게 뻗으면 아래 실루엣 초과 판정이 그룹을 반씩
@@ -275,6 +275,12 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
     `holes`(1x bool)를 주면 그 자리를 그대로 메운다 — 1px 격자의 미커버가
     아니라 §18 슈퍼샘플 불변이 겨눈 자리를 받는 통로다. `label`은 그렇게 놓인
     장의 라벨이고(seal은 "seal"), 프루닝 보호·구조 지표가 그것으로 가른다.
+
+    `at`을 주면 그 index에 **끼운다** (기본은 맨 뒤). 구멍 px는 정의상 아무
+    레이어도 안 덮는 자리라 z가 어디든 그 px에서는 보인다 — 스택 바닥(0)에
+    끼우면 타원의 스필이 이웃 면과 선화 **밑**으로 들어가 경계 잔티가 안
+    보인다 (스필을 색 경계 안쪽·선 아래로 유도하는 자리). 컷이 도로 걷는
+    문제는 라벨 보호("hole"/"seal")가 막는다.
     """
     upp = plan.units_per_px
     w, h = cel.size
@@ -392,7 +398,11 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
             covered = piece & _mask_px(cat, lay, upp, w, h, (x0, y0, x1, y1))
             if not covered.any():          # 양자화로 0px 도형 — 더 찍어도 헛돈다
                 continue
-            plan.layers.append(lay)
+            if at is None:
+                plan.layers.append(lay)
+            else:
+                plan.layers.insert(at, lay)
+                at += 1
             n += 1
             used += 1
             rem &= ~covered

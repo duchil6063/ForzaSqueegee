@@ -307,9 +307,11 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         # 라운드 헤드룸은 예산 비례 (3,000이면 4,500 = 기존 +1500과 동일) —
         # 고정 +1500은 낮은 상한에서 재컷이 감당 못 할 보호 레이어를 허용한다
         headroom = shapes * 3 // 2
+        # 스택 바닥에 끼운다 — 구멍 px는 아무도 안 덮는 자리라 z 불문 보이고,
+        # 타원의 스필은 이웃 면·선화가 위에서 덮는다 (`fill_holes`의 `at` 문서)
         n_hole = fill_holes(plan, cel, cat, log=log, min_px=HOLE_MIN_PX,
                             max_layers=max(0, headroom - len(plan.layers)),
-                            value=val, price=lam)
+                            value=val, price=lam, at=0)
         stats["hole_layers"] += n_hole
         _hlog(f"메움{it + 1} 후")
         # 잔차 수리 — "덮였지만 색이 틀린" 응집 자국(얼룩 음영·빗나간 획·끊긴
@@ -398,7 +400,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             grow_covers(plan, cel, cat, log=log, passes=6)
             n_h = fill_holes(plan, cel, cat, log=log, min_px=HOLE_MIN_PX,
                              max_layers=max(0, shapes - len(plan.layers)),
-                             value=val, price=lam)
+                             value=val, price=lam, at=0)
             stats["hole_layers"] += n_h
             if n_h:
                 grow_covers(plan, cel, cat, log=log, passes=6)
