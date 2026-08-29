@@ -25,6 +25,9 @@ _MEAN = (0.485, 0.456, 0.406)
 
 # 인물 본체의 1/N보다 작은 고립 알파 덩어리는 소품으로 본다 (아래 `_keep_subject`)
 _ISO_KEEP = 8
+# 그중 **본체의 볼록 껍질 안에 앉은 눈에 띄는 덩어리**는 가림에 잘린 인물의
+# 일부로 보고 되살린다 — 껍질 안 비율과 본체 대비 크기 (아래 `_keep_subject`)
+_PART_HULL, _PART_MIN = 0.5, 0.01
 
 
 def available() -> bool:
@@ -52,12 +55,25 @@ def _keep_subject(alpha: np.ndarray, log=print) -> np.ndarray:
     갈린다. 반면 크기는 확실히 갈린다 — 남는 소품은 본체의 몇 % 이하이고 본체는
     90%대다. **그 사이가 통째로 비어 있다.**
 
-    그래서 상수 하나(`_ISO_KEEP`)만 쓴다: **본체의 1/8 미만인 성분은 버린다.**
+    크기 잣대는 상수 하나(`_ISO_KEEP`)다: **본체의 1/8 미만인 성분은 버린다.**
     표본 7장에서 이 상수는 **1 < N < 27.1 구간 전체가 산출물 바이트 동일**이다
     (버릴 것 중 제일 큰 aru 유리잔이 본체의 1/27.1이고, 살릴 것 중 제일 작은
     것이 본체 자신이다). 즉 표본은 이 값을 못 고른다 — 절벽이 아니라 **띠**이고
-    8은 그 안에서 양쪽 여유가 다 크다. 본체의 12.5%까지 되는 것은 살아남으므로
-    인물이 둘인 그림이나 가림에 잘린 팔다리는 안 잃는다.
+    8은 그 안에서 양쪽 여유가 다 크다.
+
+    **크기만으로는 가림에 잘린 인물을 못 지킨다.** 다리에 가려 몸에서 끊긴
+    머리 뭉치는 본체의 1/23.7이라 이 잣대에 걸려 통째로 사라진다 (실측 09:
+    9,141px · 본체의 4.21%). 그렇다고 잣대를 그 위로 올리면 소품이 다시
+    살아난다 — 살릴 것(1/23.7)과 버릴 것(1/27.1)이 붙어 있어 크기로는 못
+    가른다. 낮은 문턱 연결성·본체까지 거리·알파 확신·색도 다 뒤집혀 있다
+    (실측: 09 머리 뭉치가 배경 글자보다 더 멀고·더 옅다).
+
+    가르는 것은 **본체가 그 자리를 감싸고 있는가**다: 가림에 잘린 부분은 인물
+    자신의 윤곽 안에 들어앉고, 옆에 놓인 남은 물건은 밖에 선다. 그래서 크기로
+    버릴 성분 중 **본체 볼록 껍질 안 비율이 `_PART_HULL` 이상이고 본체의
+    `_PART_MIN` 이상**인 것만 되살린다. 표본 11장에서 두 잣대 다 양쪽 여유가
+    크다 — 껍질 안 비율은 살릴 것 98.5% 대 버릴 것 0%, 크기는 4.2% 대 0.03%
+    (껍질 안이지만 눈에 안 띄는 부스러기가 그 0.03%다).
 
     **부드러운 테두리는 상수 없이 가른다** — 옅은 알파(<128) 픽셀은 가까운 쪽
     코어에 딸려 간다. 옅은 마스크로 성분을 나누는 길은 못 쓴다: isnet의 옅은
@@ -77,6 +93,20 @@ def _keep_subject(alpha: np.ndarray, log=print) -> np.ndarray:
     drop_ids = 1 + np.flatnonzero(areas * _ISO_KEEP < areas.max())
     if drop_ids.size == 0:
         return alpha
+    main = 1 + int(np.argmax(areas))           # 본체 = 제일 넓은 성분
+    hull = np.zeros_like(hi)
+    cv2.fillConvexPoly(
+        hull, cv2.convexHull(cv2.findNonZero((lab == main).astype(np.uint8))), 1)
+    part = [i for i in drop_ids.tolist()
+            if areas[i - 1] >= _PART_MIN * areas.max()
+            and hull[lab == i].mean() >= _PART_HULL]
+    if part:
+        drop_ids = np.array([i for i in drop_ids.tolist() if i not in part])
+        log(f"  가림에 잘린 인물 {len(part)}개 되살림 "
+            f"({int(areas[np.array(part) - 1].sum()):,}px · 본체의 "
+            f"{areas[np.array(part) - 1].sum() / areas.max() * 100:.2f}%)")
+        if drop_ids.size == 0:
+            return alpha
     drop = np.isin(lab, drop_ids)
     keep = hi.astype(bool) & ~drop
     # 코어 둘 중 가까운 쪽에 딸려 보낸다 (버린 코어 위는 거리 0이라 그대로 지워진다)
