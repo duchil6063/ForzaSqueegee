@@ -12,8 +12,8 @@
 까지 지키지 않기 위한 하한이다.
 
 같은 판정을 세 곳이 쓴다 — 그래프 병합(`rag._mark`) · 경계 펴기
-(`snap.regularize`의 protect) · 면 키우기(`celfit.carve_faces`). 상수를
-늘리지 않으려고 한 자리에 둔다.
+(`snap.regularize`의 protect) · 면 채움(`celfit.fit_plan`이 `_Scorer`에
+넘기는 protect). 상수를 늘리지 않으려고 한 자리에 둔다.
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ _MARK_DE = 4.0
 def mark_mask(cel) -> np.ndarray:
     """최종 영역 위에서 다시 계산한 **무늬 보호 조각의 픽셀 마스크**.
 
-    `celfit.carve_faces`가 읽는다 — 면을 키울 때 이 조각 위로는 안 키운다.
+    `celfit.fit_plan`이 `_Scorer`의 protect로 넘긴다 — 면을 채울 때 이 조각
+    위로는 스필을 안 봐준다.
     큰 면을 키우는 쪽이 순이득으로는 이기지만 그 자리가 하필 눈 흰자면 눈이
     어두운 덩어리가 된다 (얼굴 지각차가 눈에 띄게 나빠진다).
     """

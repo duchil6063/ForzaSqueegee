@@ -22,18 +22,22 @@ import cv2
 import numpy as np
 
 
-# 양옆 표본의 법선 여유 (px) — `select._side_pts`와 같은 자.
+# 양옆 표본의 법선 여유 (px).
 _SIDE_PAD = 2.5
-# 나란한 이웃을 세는 반경 = 폭 × 이 배수 (하한 3px). `select._THIN_R`와 같은 자다.
+# 나란한 이웃을 세는 반경 = 폭 × 이 배수 (하한 3px).
 _PAR_R = 5.0
-# 반복성 판정의 접선 각차 상한 (배각 내적) — `select._THIN_COS`와 같은 자.
+# 반복성 판정의 접선 각차 상한 (배각 내적) — cos 50° → 접선 각차 25° 이내.
 _PAR_COS = 0.6428
+# §21 지속성을 재는 배율 — 선 지도를 이만큼씩 줄여 다시 잰다 (`_persistence`).
+_PERSIST_SCALES = (2, 4)
 
 
 @dataclass(frozen=True)
 class EvidenceMaps:
     """그림 한 장의 선 증거 지도 묶음 (전부 작업 해상도, 전장 좌표)."""
 
+    conf: np.ndarray             # float32 [0,1] — basic·detail의 합 (지속성의 자)
+    conf_pyr: tuple               # conf를 `_PERSIST_SCALES`배씩 줄인 판들
     basic: np.ndarray            # float32 [0,1] — AniLines basic 신뢰도
     detail: np.ndarray | None    # float32 [0,1] — detail 모델 (없으면 None)
     mask: np.ndarray             # bool — 뼈대를 뽑는 선 지도 (다리 포함)
@@ -85,6 +89,8 @@ class StrokeEvidence:
     # 보면 전부 상한에 붙는다 (실측 10장 중앙 9.9·상한 16). "주변보다 눈에
     # 띄는가"는 이웃 획들과 견주어야 답이 나온다
     imp_rel: float = 1.0
+    # §21 **눈을 가늘게 뜨면 남나** — 배율을 낮춰도 남는 대비의 몫 (1 = 그대로).
+    persist: float = 1.0
 
     def as_dict(self) -> dict:
         return {k: (round(v, 4) if isinstance(v, float) else v)
@@ -128,7 +134,14 @@ def build_maps(basic_gray: np.ndarray | None, detail_gray: np.ndarray | None,
             cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))).astype(bool)
     else:
         sil = np.zeros((h, w), bool)
-    return EvidenceMaps(basic=basic, detail=detail, mask=mask,
+    # §21 — 지속성의 자. 두 모델 중 **센 쪽**을 쓴다: 어느 판이 봤든 선은 선이고,
+    # 물음은 "줄여도 남나"이지 "어느 모델이 봤나"가 아니다
+    conf = basic if detail is None else np.maximum(basic, detail)
+    pyr = tuple(cv2.resize(conf, (max(1, w // s), max(1, h // s)),
+                           interpolation=cv2.INTER_AREA)
+                for s in _PERSIST_SCALES)
+    return EvidenceMaps(conf=conf, conf_pyr=pyr,
+                        basic=basic, detail=detail, mask=mask,
                         basic_mask=basic_mask, detail_only=det_only,
                         dark=dark, edge=edge, sil=sil,
                         value=value.astype(np.float32), bridge=bridge)
@@ -136,7 +149,7 @@ def build_maps(basic_gray: np.ndarray | None, detail_gray: np.ndarray | None,
 
 def _side_pts(path: np.ndarray, wmed: float, shape: tuple[int, int],
               rx0: int, ry0: int):
-    """경로 표본마다 양옆(폭/2+여유 법선) 전장 좌표 — `select._side_pts`와 같은 식."""
+    """경로 표본마다 양옆(폭/2+여유 법선) 전장 좌표."""
     h, w = shape
     idx = np.arange(0, len(path), 3)
     if not len(idx):
@@ -156,6 +169,40 @@ def _side_pts(path: np.ndarray, wmed: float, shape: tuple[int, int],
             np.clip(np.round(xs + ox), 0, w - 1).astype(np.int64),
             np.clip(np.round(ys - oy), 0, h - 1).astype(np.int64),
             np.clip(np.round(xs - ox), 0, w - 1).astype(np.int64))
+
+
+def _contrast(m: np.ndarray, py, px, ay, ax, by, bx, s: int) -> float:
+    """이 배율에서 **경로 위 − 양옆**의 선 신뢰도 차 (획으로 읽히는 정도)."""
+    h, w = m.shape
+
+    def q(y, x):
+        return m[np.clip(y // s, 0, h - 1), np.clip(x // s, 0, w - 1)]
+
+    return float(np.median(q(py, px))
+                 - 0.5 * (np.median(q(ay, ax)) + np.median(q(by, bx))))
+
+
+def _persistence(maps: EvidenceMaps, py, px, ay, ax, by, bx) -> float:
+    """§21 **눈을 가늘게 뜨면 남나** — 배율을 낮췄을 때 남는 대비의 몫.
+
+    사람이 원화에서 생략하는 선은 "작아서"가 아니라 **모아 보면 한 덩어리로
+    읽혀서**다. 머리칼 열 가닥은 반으로 줄이면 회색 띠 하나가 되고, 얼굴
+    윤곽은 사분의 일로 줄여도 여전히 선이다. 그 차이를 그대로 잰다: 배율마다
+    경로 위와 양옆의 선 신뢰도 차를 재어 1배의 그것과 견준다. 이웃 가닥이
+    뭉개져 **옆이 함께 짙어지면** 이 값이 0으로 떨어지고, 혼자 선 획은 1
+    근처에 남는다.
+
+    새 모델도 새 스캔도 없다 — 선화 신뢰도 지도를 두 번 줄인 것뿐이고, 자도
+    이미 쓰던 양옆 표본 그대로다 (`_side_pts`). 값의 쓰임은 잉크 가격이다
+    (`engine._ink_mul`) — 지우는 것이 아니라 **비싸게** 만든다. 사라질 선도
+    제 값을 하면 그어야 하고, 무엇이 값인지는 이미 λ가 답하고 있다.
+    """
+    base = _contrast(maps.conf, py, px, ay, ax, by, bx, 1)
+    if base <= 1e-6:
+        return 0.0
+    got = [min(1.0, max(0.0, _contrast(m, py, px, ay, ax, by, bx, s) / base))
+           for m, s in zip(maps.conf_pyr, _PERSIST_SCALES)]
+    return float(np.mean(got)) if got else 1.0
 
 
 def _curvature(path: np.ndarray) -> float:
@@ -242,6 +289,7 @@ def sample(path: np.ndarray, wmed: float, widths: np.ndarray,
         # 특징은 한쪽이 반드시 빈 자리라 낮다
         ink = maps.mask
         ev.enclosure = float(np.mean(ink[ay, ax] & ink[by, bx]))
+        ev.persist = _persistence(maps, gy[idx], gx[idx], ay, ax, by, bx)
     return ev
 
 

@@ -21,8 +21,7 @@ from ..celart import CelArt
 from ..model import Layer, LayerPlan
 from .geometry import _ink_cover, _layer, _mask_px, _min_span, _poly_px
 from .scoring import _MIN_GAIN, _Scorer, _descend
-from .select import _THIN_BND, _THIN_SIL, _bnd_frac
-from .skeleton import _dt_along, _rdp
+from .skeleton import _rdp
 from .vocabulary import _FILL_SHAPE, bar_for
 
 

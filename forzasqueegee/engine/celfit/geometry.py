@@ -39,6 +39,51 @@ def _poly_px(cat: Catalog, lay: Layer, upp: float, w: int, h: int,
     return polys
 
 
+# cv2 고정소수 비트 — 모서리를 표본 격자의 1/64까지 둔다 (`poly_mask`).
+_SUB_BITS = 6
+
+
+def poly_mask(polys: list[np.ndarray], shape: tuple[int, int],
+              ox: float = 0.0, oy: float = 0.0, ss: int = 1) -> np.ndarray:
+    """px 폴리곤 → bool 마스크 (짝홀 규칙, **꼭짓점 반올림 없음**).
+
+    `shape`는 (h, w) 표본 격자 크기, `ox`·`oy`는 px 오프셋, `ss`는 표본 배율.
+
+    꼭짓점을 격자에 반올림하지 않는 것이 요점이다. 반올림은 꼭짓점마다
+    ±(1/2ss)px를 흔드는데, 게임은 벡터를 그리므로 **실제로는 겹쳐 있는 두
+    도형이 격자 위에서만 갈라져** 도안에 없는 틈이 생긴다 (실측 S0-09:
+    §18 불변이 센 미커버 표본의 태반이 그 틈이었다). `cv2.fillPoly`의
+    고정소수(`shift`)로 넘기면 표본은 격자에서 세되 **모서리는 그보다 잘다**.
+
+    `_mask_px`는 이 함수를 안 쓴다 — 그쪽은 배치·채점이 쓰는 자라 렌더러와
+    같은 반올림이어야 하고, 여기는 **불변이 쓰는 자**다.
+    """
+    m = np.zeros(shape, np.uint8)
+    q = [np.round((np.asarray(p, np.float64) - (ox, oy)) * ss
+                  * (1 << _SUB_BITS)).astype(np.int32) for p in polys]
+    if len(q) == 1:
+        cv2.fillPoly(m, q, 1, shift=_SUB_BITS)
+        return m.astype(bool)
+    one = np.zeros(shape, np.uint8)
+    for p in q:
+        one[:] = 0
+        cv2.fillPoly(one, [p], 1, shift=_SUB_BITS)
+        m ^= one
+    return m.astype(bool)
+
+
+def poly_bbox(polys: list[np.ndarray], w: int, h: int, ss: int = 1,
+              pad: int = 1) -> tuple[int, int, int, int] | None:
+    """폴리곤 목록의 ss 격자 bbox (x0, y0, x1, y1) — 화면 밖은 자른다."""
+    xs = np.concatenate([p[:, 0] for p in polys])
+    ys = np.concatenate([p[:, 1] for p in polys])
+    x0 = max(0, int(np.floor(xs.min() * ss)) - pad)
+    y0 = max(0, int(np.floor(ys.min() * ss)) - pad)
+    x1 = min(w * ss, int(np.ceil(xs.max() * ss)) + pad)
+    y1 = min(h * ss, int(np.ceil(ys.max() * ss)) + pad)
+    return None if x0 >= x1 or y0 >= y1 else (x0, y0, x1, y1)
+
+
 def _mask_px(cat: Catalog, lay: Layer, upp: float, w: int, h: int,
              roi: tuple[int, int, int, int]) -> np.ndarray:
     """ROI(x0,y0,x1,y1) 안 도형 마스크 (짝홀 규칙)."""

@@ -12,8 +12,7 @@ r"""차체 에디터(비닐 & 데칼 적용) 화면을 **화면으로** 읽는 �
   중심↔인덱스 대조표는 실측 표(`catalog/body_tabs.json`)가 쥔다.
 
 스트립은 스크롤되지 않는다(탭 11개가 늘 한 화면) — 그래서 중심 좌표가 인덱스의
-안정된 이름표가 된다. 흰 구간은 셀 띠 **전체**의 흰 행 비율로 잡는다: 아이콘이
-셀 가운데를 가로질러 가운데 몇 행만 보면 한 셀이 둘로 갈라진다.
+안정된 이름표가 된다.
 """
 
 from __future__ import annotations
@@ -24,13 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-# 탭 셀 띠의 세로 구간 (클라 높이 비율) — 셀 위/아래 테두리 안쪽
-TAB_ROW_REL = (0.046, 0.086)
 # 선택 밑줄 띠 (셀 아래 라임 3px)
 UNDERLINE_REL = (0.075, 0.095)
-WHITE_FRAC = 0.35        # 이 비율 이상 흰 행이면 셀 안쪽 열
-MIN_RUN_REL = 0.02       # 이보다 좁은 흰 구간은 잡티
-LINK_GAP_REL = 0.09      # 이보다 먼 흰 구간은 스트립 바깥 (배경 밝은 벽 등)
 UNDERLINE_FRAC = 0.08    # 밑줄 띠에서 라임 행 비율 문턱
 
 
@@ -102,38 +96,6 @@ def _lime(a: np.ndarray) -> np.ndarray:
     g = a[:, :, 1].astype(np.int16)
     b = a[:, :, 2].astype(np.int16)
     return (r > 140) & (r < 235) & (g > 200) & (b < 110)
-
-
-def _white_runs(img: np.ndarray) -> list[tuple[int, int]]:
-    h, w = img.shape[:2]
-    y0, y1 = int(TAB_ROW_REL[0] * h), int(TAB_ROW_REL[1] * h)
-    white = (img[y0:y1].min(axis=2) > 200).mean(axis=0) > WHITE_FRAC
-    runs: list[tuple[int, int]] = []
-    s = None
-    for x in range(w):
-        if white[x] and s is None:
-            s = x
-        elif not white[x] and s is not None:
-            runs.append((s, x - 1))
-            s = None
-    if s is not None:
-        runs.append((s, w - 1))
-    return [r for r in runs if r[1] - r[0] > MIN_RUN_REL * w]
-
-
-def strip_runs(img: np.ndarray) -> list[tuple[int, int]]:
-    """스트립에 속한 흰 셀 구간만 (가장 긴 사슬) — 배경의 밝은 벽을 떼어 낸다."""
-    runs = _white_runs(img)
-    if not runs:
-        return []
-    w = img.shape[1]
-    chains: list[list[tuple[int, int]]] = [[runs[0]]]
-    for prev, cur in zip(runs, runs[1:]):
-        if cur[0] - prev[1] <= LINK_GAP_REL * w:
-            chains[-1].append(cur)
-        else:
-            chains.append([cur])
-    return max(chains, key=len)
 
 
 def selected_center(img: np.ndarray) -> float | None:

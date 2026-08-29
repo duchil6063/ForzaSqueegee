@@ -31,13 +31,15 @@ from . import intent as I
 from .evidence import (EvidenceMaps, fill_neighborhood, junction_degrees,
                        sample)
 from .geometry import _min_span
-from .graph import (_ISO_LEN_REL, _LINE_FRAG_REL, FEATURE, NOISE, TEXTURE,
-                    LogicalStroke, classify, continue_strokes,
-                    texture_representatives)
+from .graph import (_CONF, _DE, _DETAIL_W, _ISO_LEN_REL, _LINE_FRAG_REL,
+                    FEATURE, NOISE, TEXTURE, LogicalStroke, classify,
+                    continue_strokes, texture_representatives)
 from .grammar import (_FAT_MAX_MUL, _FAT_MIN_AREA, _LINE_W_REL, _WCAP_CV,
                       _fill_fat, _patch_seams)
 from .merge import merge_costrokes
-from .scoring import _PEN_FAR, _PEN_LINE, _PEN_LINE_ADAPT, _RETRACE, _Scorer
+from .policy import _SPAN_REL
+from .scoring import (_PEN_FAR, _PEN_LINE, _PEN_LINE_ADAPT, _RETRACE,
+                      _Scorer)
 from .skeleton import (_dt_along, _join_paths, _paths, _prune_spurs,
                        _thin, smooth_path)
 from .stroke import _STROKE_SLIM, _path_worth
@@ -47,6 +49,12 @@ from .vocabulary import min_stroke_width_px
 # (`lineart.hysteresis` 문서). 실제로 듣는 자리는 여기뿐이고 5탭이 무릎이다 —
 # 9·13탭은 진짜 굽음까지 깎아 끊김·튀어나옴이 도로 는다.
 _SMOOTH = int(os.environ.get("FS_LINE_SMOOTH", 5))
+# §21 지속성 · §22 경계 설명력이 잉크 가격에 실리는 무게. 1.0이면 "그 조건이
+# 완전히 성립하는 획은 값을 **두 배** 해야 산다"는 뜻이다 (`_ink_mul`).
+_PERSIST_W = float(os.environ.get("FS_LINE_PERSIST", 1.0))
+_EXPL_W = float(os.environ.get("FS_LINE_EXPL", 1.0))
+# §23 — 획의 값을 **그 획이 부를 도형 수**로 나눈다 (0이면 종전: 한 획 = λ 하나).
+_SHAPE_PRICE = float(os.environ.get("FS_LINE_SHAPE_PRICE", 1.0))
 # 이상 띠의 여유 px (`_Scorer.set_band`의 core) — 원화 띠 폭에 더하는 몫.
 # 0이면 띠는 정확히 `max(획 폭, 최소 도형 폭)`이고, 그보다 굵어지는 몫은
 # 전부 낭비로 문다. 여유를 주면(1·2px) 굵기 초과가 그만큼 도로 공짜가 된다 —
@@ -361,6 +369,56 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
     return rec
 
 
+def _ink_mul(s, pol, base: float) -> float:
+    """이 획의 잉크 가격 **배수** — 사람이 생략할 선일수록 비싸다 (§21·§22).
+
+    지우는 것이 아니라 비싸게 만드는 것이 요점이다. 무엇을 그릴지는 이미 λ가
+    답하고 있고(`price`), 여기서 하는 일은 그 저울에 **사람이 실제로 쓰는
+    두 가지 이유**를 얹는 것뿐이다. 값이 크면 이 조건들이 다 성립해도 그린다.
+
+    ① **지속성** (`ev.persist`, §21) — 눈을 가늘게 뜨면 사라지는 선인가.
+       머리칼 열 가닥·옷 주름 반복처럼 모아 보면 한 덩어리로 읽히는 선을
+       사람은 대표 몇 가닥으로 줄인다. 사라지는 정도만큼 값을 더 받는다 —
+       그 안에서 살아남는 가닥이 곧 "대표"다 (몇 개를 남길지 세지 않아도
+       된다: 값이 센 가닥부터 남는다).
+
+    ② **경계 설명력** (§22, cel 노선만) — 이 선을 안 그어도 **색이 그 자리를
+       설명하나**. 양옆 색차가 역할 판정의 색 문턱(`_DE`)을 넘고 선화 신뢰도가
+       그 문턱(`_CONF`)에 못 미치면, 그 자리의 경계는 색면이 이미 그린다.
+       사람도 색이 또렷이 갈리는 자리에는 선을 겹쳐 긋지 않는다. 반대로 양옆
+       색이 같은데 선 증거가 세면 이 배수가 1이라 그대로 지켜진다 — 그 선은
+       색으로는 절대 안 생기는 구조다. line 노선에는 안 건다 (`fill_below`):
+       거기는 받쳐 줄 색면이 없어 선이 빠지면 그 자리가 통째로 빈다.
+
+    문턱을 새로 만들지 않았다 — `_DE`·`_CONF`는 역할 판정이 "색으로 설명되는
+    경계"와 "선화가 확실히 본 선"을 가르는 데 이미 쓰는 그 자다.
+
+    **효과는 작다** (표준 11장: 논리 획 531 → 512 · 선 도형 1,185 → 1,168).
+    잉크 λ가 거의 안 물기 때문이다: 값 지도는 그림 전체의 중앙을 1로 잡는데
+    획은 정의상 값이 가장 높은 자리라(`evidence.imp_rel` 문서), 획의 값은
+    대개 λ의 여러 배다 — 배수를 둘로 키워도 문턱을 넘는 획이 판당 열 몇 개
+    는다. 이 세트에서 선 도형 수를 정하는 것은 가격이 아니라 **논리 획의
+    수**이고, 그것은 파편 판정(`graph.classify`)이 정한다.
+    """
+    m = 1.0
+    if _SHAPE_PRICE and _SPAN_REL > 0.0:
+        # ③ **장수 자체가 비용이다** (§11의 선 판). 종전 문턱은 획 하나당 λ
+        # 하나였다 — 그런데 한 획이 실제로 무는 것은 도형 1.7장이고(실측
+        # 중앙), 긴 획은 열 장도 넘는다. 길이에 비례해 값을 받으면 "이 획이
+        # 부를 도형 수만큼 벌어야 산다"가 되어, 채움 쪽이 이미 쓰는 저울과
+        # 같은 저울이 된다. 자는 정책이 도형 상한을 정할 때 쓰는 그 자다
+        # (`policy._SPAN_REL` — 가장 곱게 그은 획의 도형당 길이).
+        m *= max(1.0, float(s.ev.length) / max(_SPAN_REL * base, 1.0)) ** _SHAPE_PRICE
+    if _PERSIST_W:
+        m *= 1.0 + _PERSIST_W * (1.0 - min(1.0, max(0.0, s.ev.persist)))
+    if _EXPL_W and pol.fill_below:
+        conf = max(s.ev.basic, _DETAIL_W * s.ev.detail)
+        expl = (min(1.0, max(0.0, s.ev.side_de / _DE - 1.0))
+                * min(1.0, max(0.0, 1.0 - conf / _CONF)))
+        m *= 1.0 + _EXPL_W * expl
+    return m
+
+
 def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
                   cat: Catalog, upp: float, budget: int, forms: tuple,
                   pol, log, price: float = 0.0, progress=None) -> int:
@@ -404,7 +462,7 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
         # 정책이 가격을 무는 역할만 문다 (실루엣·고립 특징은 면제 — 길이로
         # 값을 매기면 구조적으로 지는데, 빠지면 그 자리 경계가 통째로 없어진다)
         if price and pol.prices(s.role) \
-                and _path_worth(sc, s.path, s.width) < price:
+                and _path_worth(sc, s.path, s.width) < price * _ink_mul(s, pol, base):
             s.dropped = "price"
             n_cheap += 1
             continue

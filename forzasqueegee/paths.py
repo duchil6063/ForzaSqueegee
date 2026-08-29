@@ -37,13 +37,6 @@ def work_root() -> Path:
     return data_root() / "work"
 
 
-def work_dir(*parts: str) -> Path:
-    """`work/` 아래 한 칸 — 없으면 만들어 준다."""
-    p = work_root().joinpath(*parts)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 def work_file(*parts: str) -> Path:
     """`work/` 아래 파일 하나 — 담긴 폴더까지 만들어 준다."""
     p = work_root().joinpath(*parts)
@@ -87,11 +80,6 @@ def run_label(path: str | Path) -> str:
     if stem.startswith(pre):
         stem = stem[len(pre):]
     return parent if stem == "plan" else f"{parent}-{stem}"
-
-
-def has_run_file(run_dir: str | Path, name: str) -> bool:
-    """그 도안 폴더에 그 산출물이 (어느 이름으로든) 있나."""
-    return find_run_file(run_dir, name).exists()
 
 
 def glob_run_files(root: str | Path, name: str, *, deep: bool = False):

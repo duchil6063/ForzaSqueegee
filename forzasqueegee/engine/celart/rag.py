@@ -64,6 +64,9 @@ _KAPPA = float(os.environ.get("FS_RAG_KAPPA", 0.5))
 _IMP_P = float(os.environ.get("FS_RAG_IMP", 1.0))
 # 무늬 보호 조각의 색 재현 손해 배수 — 지우면 특징이 통째로 사라지는 조각
 _MARK_MUL = float(os.environ.get("FS_RAG_MARK", 4.0))
+# §19 **비탈 할인** — 그라디언트를 자른 경계의 색 재현 손해를 이만큼 깎는다.
+# 0이면 종전 동작. 근거는 `_ramp` 문서.
+_RAMP = float(os.environ.get("FS_RAG_RAMP", 0.75))
 
 
 def _de_seen(de: float | np.ndarray):
@@ -80,6 +83,31 @@ def _de_seen(de: float | np.ndarray):
     조각 판정이 그 값으로 "보이나"를 가른다. 같은 물음이므로 같은 자를 쓴다.
     """
     return np.maximum(0.0, np.asarray(de, np.float64) - _MARK_DE)
+
+
+def _ramp(step: float, de: float) -> float:
+    """§19 — 이 경계는 **계단인가 비탈인가**. 0 = 또렷한 계단, 1 = 순수 비탈.
+
+    두 면의 색차 `de` 중 **접경 한 겹에서 실제로 일어나는 몫**(`step`)을 본다.
+    사람이 그은 색 경계는 한 픽셀 안에서 다 일어나므로 `step ≈ de`이고,
+    부드러운 음영을 팔레트가 자른 자리는 같은 차이가 여러 픽셀에 퍼져 있어
+    `step ≪ de`다. 비율이라 그림 밝기·팔레트 수에 안 흔들린다 — 새 지도도
+    새 스캔도 없이 이미 있는 두 값(`gsum/bnd`·중심색 거리)만으로 선다.
+
+    왜 깎나: 비용식의 색 재현 손해는 ΔE²에 비례하는데, **비탈을 자른 두 칸을
+    합칠 때의 손해는 그 ΔE가 말하는 것보다 작다.** 원화에 애초에 그 자리에
+    경계가 없었기 때문이다 — 합치면 사라지는 것은 "경계"가 아니라 팔레트가
+    임의로 그은 등고선 하나다. 셀 그림체가 음영을 두세 단으로 추상하는 것도
+    같은 이유이고, 사람이 리버리를 만들 때 그라디언트를 여러 장으로 안 쪼개는
+    것도 같은 이유다.
+
+    또렷한 경계는 이 할인을 못 받는다 (`step ≈ de` → 비탈 0). 중요도·무늬
+    보호는 위 항에 그대로 남아 있어, 평평한 면 위의 작고 또렷한 조각은
+    비탈로 오인돼도 그쪽 항이 지킨다.
+    """
+    if de <= _MARK_DE:                     # JND 아래는 비탈을 물을 것도 없다
+        return 0.0
+    return float(max(0.0, 1.0 - min(1.0, step / de)))
 
 
 def complexity(area, peri):
@@ -177,25 +205,6 @@ class RegionGraph:
         self.merges = 0
         self.stats: dict = {}
 
-    # ── 노드 특징 — 비용식이 직접 안 읽는 칸도 이름을 준다 (§2의 목록.
-    #    분석 도구·디버그가 같은 뜻으로 읽어야 하므로 여기 한 자리에 둔다)
-    def compact(self, a: int) -> float:
-        """콤팩트함 — 둘레 / (2√(π·면적)). 1이면 원판, 클수록 너덜하다."""
-        return float(self.peri[a] / max(2.0 * np.sqrt(np.pi * max(self.area[a], 1.0)),
-                                        1e-9))
-
-    def line_frac(self, a: int) -> float:
-        """이 영역의 둘레 중 **선이 받치는** 몫."""
-        tot = lsum = 0.0
-        for e in self.adj[a].values():
-            tot += e[0]
-            lsum += e[2]
-        return float(lsum / max(tot, 1e-9))
-
-    def sil_frac(self, a: int) -> float:
-        """이 영역의 둘레 중 **실루엣 테**인 몫."""
-        return float(self.sil[a] / max(self.peri[a], 1e-9))
-
     # ── union-find
     def find(self, a: int) -> int:
         p = self.parent
@@ -221,7 +230,8 @@ class RegionGraph:
             return float("inf")
         bnd, gsum, lsum = e
         aa, ab = self.area[a], self.area[b]
-        de = float(np.linalg.norm(self.col[a] - self.col[b]))
+        de = de_raw = float(np.linalg.norm(self.col[a] - self.col[b]))
+        step = gsum / max(bnd, 1.0)        # 접경 한 겹의 평균 색 단차
         mark = self._mark(a) or self._mark(b)
         # §15 — 안 보이는 차이는 값이 없다. **무늬 보호 조각은 뺀다**: 그
         # 판정의 뜻이 "훨씬 큰 평평한 면 위라 마스킹이 없어 작은 색차도 또렷이
@@ -233,7 +243,12 @@ class RegionGraph:
         recon = (aa * ab / max(aa + ab, 1.0)) * (de / _DE_REF) ** 2 * imp ** _IMP_P
         if mark:
             recon *= _MARK_MUL
-        gnorm = min(3.0, (gsum / max(bnd, 1.0)) / self.g_ref)
+        elif _RAMP and celaxes.on("RAMP"):
+            # §19 — 비탈을 자른 경계는 색 재현 손해를 깎는다 (`_ramp` 문서).
+            # 무늬 보호 조각은 뺀다: 그 판정의 뜻이 "평평한 면 위라 작은 색차도
+            # 또렷이 보인다"라, 하필 그 자리에 할인을 걸면 특징이 사라진다
+            recon *= 1.0 - _RAMP * _ramp(step, de_raw)
+        gnorm = min(3.0, step / self.g_ref)
         # **경계를 지키는 값은 그 경계가 보일 때만 든다.** 선 밑 경계라고 무조건
         # 비싸게 매기면 머리칼처럼 같은 색 면을 선이 여러 조각으로 가른 자리가
         # 영영 안 합쳐진다 — 그런데 선은 어차피 **모든 면 위에** 따로 그어진다

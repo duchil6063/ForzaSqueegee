@@ -10,8 +10,7 @@ r"""차체 면의 **도색 가능 영역**을 면 좌표로 잰다 — 차종마
 3. **도색 마스크** — 그 면에서 실제로 칠해지는 영역 (면 유닛 격자)
 
 재는 법은 **차분**이다: 면을 건드리기 전 화면과 프로브 도형을 얹은 화면을 빼면
-칠해진 자리만 남는다. 차 색·조명·배경을 안 가정하므로 어떤 차에서도 선다
-(프로브 색은 차 색의 보색으로 고른다 — `probe_hsb`).
+칠해진 자리만 남는다. 차 색·조명·배경을 안 가정하므로 어떤 차에서도 선다.
 
 ## 좌표계
 
@@ -47,19 +46,12 @@ UI_RECTS = (
     (0.00, 0.80, 0.28, 1.00),      # 좌하단 레이어 카운터
     (0.93, 0.00, 1.00, 0.04),      # 우상단 FPS 카운터
 )
-DIFF_THR = 25           # 이보다 큰 채널 차이면 "바뀌었다"
-HUE_TOL = 0.06          # 프로브 색조 허용 (0~1)
-# 채도·밝기 하한 (2026-08-17 실측으로 맞춤): 0.40/0.35이면 **하이라이트로 하얗게
-# 뜬 벨트라인과 그늘진 사이드실을 놓친다** (옆면 채움이 0.40으로 낮게 나왔다).
-# 0.25/0.25에서 도색 판을 통째로 물고, 창·바퀴·바닥 반사는 그대로 빠진다.
-SAT_MIN = 0.25
-VAL_MIN = 0.25
 MIN_BLOB = 60           # 이보다 작은 덩어리는 잡티 (px)
 KEEP_FRAC = 0.10        # 가장 큰 덩어리의 이 몫보다 작은 덩어리는 버린다
 MASK_W = 256            # 도색 마스크 저장 폭 (면 유닛 격자)
 
 
-# ---------- 차분 + 색 ----------
+# ---------- 차분 ----------
 def viewport(shape: tuple[int, ...]) -> np.ndarray:
     """UI를 뺀 화면 영역 마스크."""
     h, w = shape[:2]
@@ -67,18 +59,6 @@ def viewport(shape: tuple[int, ...]) -> np.ndarray:
     for x0, y0, x1, y1 in UI_RECTS:
         m[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)] = False
     return m
-
-
-def color_mask(img: np.ndarray, hsb: tuple[float, float, float],
-               hue_tol: float = HUE_TOL) -> np.ndarray:
-    """프로브 **색조**를 가진 픽셀. 노출이 흔들려도 색조는 안 흔들린다."""
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV_FULL)
-    hue = hsv[:, :, 0].astype(np.float32) / 255.0
-    sat = hsv[:, :, 1].astype(np.float32) / 255.0
-    val = hsv[:, :, 2].astype(np.float32) / 255.0
-    dh = np.abs(hue - (hsb[0] % 1.0))
-    dh = np.minimum(dh, 1.0 - dh)
-    return (dh < hue_tol) & (sat > SAT_MIN) & (val > VAL_MIN)
 
 
 def _blobs(m: np.ndarray) -> np.ndarray:
@@ -95,25 +75,6 @@ def _blobs(m: np.ndarray) -> np.ndarray:
     keep = np.zeros(n, bool)
     keep[1:] = areas >= thr
     return keep[lab]
-
-
-def paint_mask(bg: np.ndarray, img: np.ndarray,
-               hsb: tuple[float, float, float] | None = None,
-               thr: int = DIFF_THR) -> np.ndarray:
-    """프로브가 칠한 자리 — **바뀌었고(차분) 프로브 색인(색조)** 픽셀.
-
-    자를 둘 겹치는 이유는 둘 다 혼자서는 새기 때문이다:
-    - 차분만 쓰면 **노출 적응**에 진다. 큰 프로브가 차를 노랗게 덮으면 게임이
-      화면 노출을 다시 잡아, 프로브를 줄인 뒤에도 차체 전체가 기준 캡처와
-      수십 레벨 어긋난다 (2026-08-17 실측: 옆면 전체 1043×679px가 잡혔다).
-    - 색조만 쓰면 **원래 그 색인 배경**에 진다 (전시장 조명띠·표지판).
-    차분은 "원래 있던 노랑"을 떨어뜨리고 색조는 "노출이 흔든 파랑"을 떨어뜨린다.
-    """
-    d = np.abs(img.astype(np.int16) - bg.astype(np.int16)).max(axis=2)
-    m = (d > thr) & viewport(img.shape)
-    if hsb is not None:
-        m &= color_mask(img, hsb)
-    return _blobs(m)
 
 
 def footprint_mask(bg: np.ndarray, img: np.ndarray, thr: int = 34) -> np.ndarray:
@@ -138,41 +99,6 @@ def bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
     if len(xs) == 0:
         return None
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-
-
-def centroid(mask: np.ndarray) -> tuple[float, float] | None:
-    ys, xs = np.where(mask)
-    if len(xs) == 0:
-        return None
-    return float(xs.mean()), float(ys.mean())
-
-
-def car_mean(bg: np.ndarray) -> tuple[int, int, int]:
-    """화면 가운데(차가 있는 자리)의 평균색 — **차 도색 색**의 어림이다.
-
-    구성 설계가 이 색을 피해 띠·글자 색을 고른다 (`engine.compose.accent_colors`):
-    차와 같은 색조의 띠는 차체에 묻혀 이타샤로 안 보인다.
-    """
-    h, w = bg.shape[:2]
-    crop = bg[int(0.40 * h):int(0.72 * h), int(0.32 * w):int(0.70 * w)]
-    m = crop.reshape(-1, 3).mean(axis=0)
-    return (int(m[0]), int(m[1]), int(m[2]))
-
-
-def probe_hsb(bg: np.ndarray) -> tuple[float, float, float]:
-    """차 색에서 **가장 먼 프로브 색** (h, s, b). 색조로 찾을 수 있게 늘 진하다.
-
-    화면 가운데(차가 있는 자리) 평균색의 보색을 쓴다. 흰 차에 흰 프로브를 얹어
-    차분이 0이 되는 사고를 막는 자리다 — 차 색을 사람이 안 알려 줘도 된다.
-    채도·밝기는 **늘 1.0**이다: 검은 프로브는 색조가 없어 `color_mask`가 못 찾는다.
-    """
-    h, w = bg.shape[:2]
-    crop = bg[int(0.40 * h):int(0.72 * h), int(0.32 * w):int(0.70 * w)]
-    mean = crop.reshape(-1, 3).mean(axis=0) / 255.0
-    hsv = cv2.cvtColor(np.float32(mean).reshape(1, 1, 3), cv2.COLOR_RGB2HSV)[0, 0]
-    if hsv[1] < 0.15:
-        return (0.83, 1.0, 1.0)          # 무채색 차(흰·검·회) → 자홍 (전시장에 없는 색)
-    return (round((float(hsv[0]) / 360.0 + 0.5) % 1.0, 2), 1.0, 1.0)
 
 
 # ---------- 면 매핑 (2차) ----------

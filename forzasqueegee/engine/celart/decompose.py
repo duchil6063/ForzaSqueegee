@@ -86,16 +86,14 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     else:
         lm = lineart.extract(src, log=log)
         line_mask = lineart.hysteresis(lm) & sel if lm is not None else None
-    faces = None
     if line_mask is not None:
         log(f"  선화: 선 픽셀 {int(line_mask.sum()):,}개")
         if celaxes.on("INKFILL"):
-            src, faces = inkfill.complete(src, sel, line_mask, log)
+            src = inkfill.complete(src, sel, line_mask, log)[0]
         else:
             # 대조군 — 종전의 유클리드 최근접 채움 (자가 직선이라 가는 구조를
             # 뛰어넘는다: 그 도약이 곧 "색이 선을 넘었다"이다)
             src = _fill_bg_nearest(src, sel & ~line_mask)
-            faces = inkfill.faces_of(sel, line_mask)[0]
 
     # 1) 평활 — mean-shift가 부드러운 음영을 톤 면으로 뭉친다
     sm = prep.smooth(src)
@@ -161,4 +159,4 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     return CelArt(size=(w, h), labels=labels, regions=regions,
                   line_mask=line_mask,
                   src_rgb=_fill_bg_nearest(rgba[..., :3], sel),
-                  faces=faces, trace=trace)
+                  trace=trace)

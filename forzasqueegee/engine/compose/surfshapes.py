@@ -266,14 +266,3 @@ def surface_deco_shapes(colors: tuple[tuple[int, int, int], ...],
                             sy=round(mo.half * HALO_GROW, 3), rgb=list(halo)))
         out.append(spec)
     return out
-
-
-def _spec_box(spec: dict) -> tuple[float, float, float, float]:
-    """도형 명세 하나가 면에서 덮는 상자 (회전을 먹인 외접 사각)."""
-    th = math.radians(float(spec.get("rot") or 0.0))
-    hx = abs(float(spec["sx"])) * UNITS_PER_SCALE
-    hy = abs(float(spec["sy"])) * UNITS_PER_SCALE
-    c, s = abs(math.cos(th)), abs(math.sin(th))
-    w, h = hx * c + hy * s, hx * s + hy * c
-    x, y = float(spec["x"]), float(spec["y"])
-    return (x - w, y - h, x + w, y + h)

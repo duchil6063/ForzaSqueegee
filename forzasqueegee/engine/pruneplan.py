@@ -201,7 +201,9 @@ def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
                 protect_labels: tuple[str, ...] = ("ink", "hole"),
                 bg: int = 255, weight: np.ndarray | None = None,
                 sil: np.ndarray | None = None,
-                rounds: int = 3) -> tuple[LayerPlan, dict]:
+                rounds: int = 3,
+                protect_idx: frozenset | set = frozenset()
+                ) -> tuple[LayerPlan, dict]:
     """§16 **사후 가격** — 다 그려 놓고 값을 다시 묻는다.
 
     가격 설계는 살 때 "이 한 장이 λ만큼 버는가"를 묻는다. 그런데 그 답은
@@ -223,16 +225,22 @@ def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
     문서) — 큰 바탕 도형이 실루엣을 넘어가면 그 자리는 인게임에서 차 도색 위에
     남는 자국이다. 안쪽에서 버는 것보다 밖에서 흘리는 것이 크면 되판다.
 
+    `protect_idx`는 §18 커버리지 불변이 주는 **자격 보호**다 (첫 바퀴 기준
+    index) — 혼자 덮고 있는 장은 값과 무관하게 못 판다. 되팔기는 커버리지를
+    줄이는 손이므로 라벨 보호만으로는 부족하다 (`celfit.coverage` 문서).
+
     한 장을 되팔면 그 밑이 드러나 이웃 장의 기여가 바뀌므로 **수렴까지**
     돈다 (`rounds`는 폭주 방지 뚜껑).
     """
+    guard = {id(plan.layers[i]) for i in protect_idx
+             if 0 <= i < len(plan.layers)}
     stats = {"before": len(plan.layers), "removed": 0, "rounds": 0}
     for _ in range(max(1, rounds)):
         layers = plan.layers
         impact, _vis, grad = _layer_impact(plan, catalog, bg, weight, sil)
         groups: dict[int, list[int]] = {}
         for i, l in enumerate(layers):
-            if l.mask or grad[i] or l.label in protect_labels:
+            if l.mask or grad[i] or l.label in protect_labels or id(l) in guard:
                 continue
             groups.setdefault(l.stroke if l.stroke >= 0 else ~i, []).append(i)
         cut: set[int] = set()
@@ -254,7 +262,9 @@ def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
 def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
                  protect_labels: tuple[str, ...] = ("ink",),
                  bg: int = 255,
-                 weight: np.ndarray | None = None) -> tuple[LayerPlan, dict]:
+                 weight: np.ndarray | None = None,
+                 protect_idx: frozenset | set = frozenset()
+                 ) -> tuple[LayerPlan, dict]:
     """시각 영향이 작은 레이어부터 잘라 예산에 맞춘 새 플랜 반환 (cel 노선용).
 
     영향 = Σ(소유 px의 ΔE_Lab(내 색, 제거 시 드러나는 색)). 소유 px는 위에서
@@ -272,6 +282,11 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
 
     컷의 단위는 레이어가 아니라 **획 그룹**(`Layer.stroke`)이다 — 한 획에서
     나온 마디는 전부 살리거나 전부 버린다. 아래 원자화 주석 참조.
+
+    `protect_idx`(§18 커버리지 불변)는 **라벨 보호와 급이 다르다** — 라벨
+    보호는 예산이 모자라면 양보하지만(아래 "보호 양보"), 이쪽은 자격이라
+    양보가 없다. 혼자 덮고 있는 장을 자르면 그 자리가 그대로 구멍이다.
+    그룹에 한 장이라도 걸리면 그룹째 지킨다 (컷의 원자 단위가 그룹이다).
     """
     layers = plan.layers
     if len(layers) <= budget:
@@ -293,6 +308,9 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
         if l.label in protect_labels and vis[i] > 0:
             continue
         groups.setdefault(l.stroke if l.stroke >= 0 else ~i, []).append(i)
+    if protect_idx:                       # 자격 보호 — 그룹째 뺀다 (양보 없음)
+        groups = {k: g for k, g in groups.items()
+                  if not any(i in protect_idx for i in g)}
     gorder = sorted(groups.values(),
                     key=lambda g: (float(impact[g].mean()), g[0]))
     n_cut = len(layers) - budget
@@ -320,7 +338,8 @@ def prune_impact(plan: LayerPlan, catalog: Catalog, budget: int,
         # (기존 전 케이스) 이 분기는 안 탄다
         order = np.argsort(impact, kind="stable")
         extra = [int(i) for i in order
-                 if int(i) not in cut and not layers[i].mask and not grad[i]]
+                 if int(i) not in cut and int(i) not in protect_idx
+                 and not layers[i].mask and not grad[i]]
         cut |= set(extra[:n_cut - len(cut)])
     keep = [l for i, l in enumerate(layers) if i not in cut]
     return (LayerPlan(source_image=plan.source_image, image_size=plan.image_size,

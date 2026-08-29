@@ -22,7 +22,10 @@
     FS_CHAIN_JOINT   사슬 이음 정리 (끄면 마디가 각자 제 채점만 보고 선다)
     FS_JOINT_DESCEND 이음을 **놓는 동안** 맞춘다 (끄면 다 놓은 뒤 정리만)
     FS_STROKE_GRAMMAR 획 도형 문법을 두 노선 공통으로 (끄면 line 노선만)
-    FS_TEX_SIMPLIFY  무늬 단순화 (기본 **꺼짐** — 근거는 `policy` 문서)
+    FS_TEX_SIMPLIFY  무늬 단순화 — 대표 가닥만 (기본 **켬** — 근거는 `policy` 문서)
+    FS_LINE_SHAPE_PRICE 획 값을 **부를 도형 수**로 나눈다 (0 = 획 하나에 λ 하나)
+    FS_LINE_PERSIST  다중 배율 지속성을 잉크 가격에 (0 = 안 문다)
+    FS_LINE_EXPL     색 경계 설명력을 잉크 가격에 (0 = 안 문다, cel 노선만)
 
 **여기는 선 재구성 엔진의 축만 있다.** cel 노선의 재해석·채움 축(§1~§12)은
 `engine.celaxes`에 따로 있다 — 두
@@ -141,4 +144,7 @@ def names() -> dict:
             "joint_descend": os.environ.get("FS_JOINT_DESCEND", "1") != "0",
             "grammar": grammar(),
             "desc_vocab": _on("FS_DESC_VOCAB"),
-            "texture_simplify": _on("FS_TEX_SIMPLIFY", "0")}
+            "texture_simplify": _on("FS_TEX_SIMPLIFY", "1"),
+            "shape_price": float(os.environ.get("FS_LINE_SHAPE_PRICE", "1.0")),
+            "persist_w": float(os.environ.get("FS_LINE_PERSIST", "1.0")),
+            "expl_w": float(os.environ.get("FS_LINE_EXPL", "1.0"))}

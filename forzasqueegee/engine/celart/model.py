@@ -35,10 +35,6 @@ class CelArt:
     # 이 마스크에서 뽑아 **모든 면 위에** 얹는다 (사람의 마지막 선따기 순서)
     line_mask: np.ndarray | None = None   # bool (h,w)
     src_rgb: np.ndarray | None = None     # uint8 (h,w,3) — 선 색 표본용
-    # **면 지도** (§1 선 제거가 남긴다) — 선을 장벽으로 봤을 때의 연결 성분.
-    # 색 분해와 독립인 **위상**이고, 획 밑에서 어느 두 면이 만나는지를
-    # 아는 유일한 자료다 (`snap._snap_geodesic`·`rag` 접경 판정).
-    faces: np.ndarray | None = None       # int32 (h,w), -1 = 배경
     # 분해 자취 (`decompose`가 채운다) — 계측·디버그 겹판이 읽는다.
     trace: dict = field(default_factory=dict)
 

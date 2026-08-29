@@ -10,7 +10,7 @@ import numpy as np
 
 from ...game import hull as ghull, seam as gseam, surface as gsurf
 from ..catalog import Catalog
-from ..model import Layer, LayerPlan
+from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
 from .look import Look, layer_points, person_ink, rot_ink, rot_ink_box
 
@@ -492,49 +492,6 @@ def place_in_rect(rect: tuple[float, float, float, float], name: str, lk: Look, 
                  target=tuple(round(v, 1) for v in tgt),
                  why=f"도색상자 {rw:.0f}×{rh:.0f}유닛 · 잉크 {lk.w:.0f}×{lk.h:.0f}유닛"
                      + (f" · 기울기 {tilt:g}°" if tilt else ""))
-
-
-# ---------- 비등방 이음새(유리)용 캔버스 굽기 ----------
-def bake_affine(plan: LayerPlan, A: np.ndarray, cat: Catalog) -> LayerPlan:
-    """캔버스에 **일반 2×2 변환 A**를 구운 사본 — 레이어마다 극분해로 흡수시킨다.
-
-    왜 굽나: 유리 면 유닛은 옆면 유닛과 등방이 아닌데(세로가 1~3배 늘어 있다),
-    그룹 배치가 주는 축은 이동·**균등** 스케일·회전뿐이다. 늘림을 캔버스에 미리
-    구워 두면 균등 스케일로 올려도 차 위에서 제 비율로 보인다.
-
-    레이어 변환은 `R(rot)·diag(sx,sy)`(전단 없음 — 주입 경로에 기울기 축이 없다,
-    `game/inject.py`)라 A를 곱한 `M = A·R·diag`는 일반적으로 이 꼴이 아니다.
-    극분해 `M = R'·P`(P 대칭 양정)에서 회전은 R', 스케일은 P의 대각을 쓴다 —
-    비대각 성분(전단)만 버리는 최소 손실 근사다. 실측(미쿠 1,613장): 세로 1.6배에서
-    실루엣 IoU 0.978·색 어긋난 픽셀 4.8%, 2.0배에서 0.961·7.1%로 눈에 안 띈다.
-    """
-    out: list[Layer] = []
-    for l in plan.layers:
-        r = math.radians(l.rot)
-        c, s = math.cos(r), math.sin(r)
-        # `render`/`layer_points` 규약(행벡터 @ [[c,s],[-s,c]])을 열벡터로 옮기면
-        # 레이어 변환은 [[c,-s],[s,c]]·diag(sx,sy)다.
-        M = A @ (np.array([[c, -s], [s, c]]) @ np.diag([abs(l.sx), abs(l.sy)]))
-        flip = (l.sx < 0) != (l.sy < 0)
-        U, S, Vt = np.linalg.svd(M)
-        R_ = U @ Vt
-        if np.linalg.det(R_) < 0:               # 거울이 든 레이어 — 부호를 뺀다
-            Vt = Vt.copy()
-            Vt[-1] *= -1
-            R_ = U @ Vt
-            flip = not flip
-        P = Vt.T @ np.diag(S) @ Vt
-        sx, sy = float(P[0, 0]), float(P[1, 1])
-        xy = A @ np.array([l.x, l.y], float)
-        out.append(Layer(shape=l.shape, x=float(xy[0]), y=float(xy[1]),
-                         sx=max(0.01, sx) * (-1.0 if flip else 1.0),
-                         sy=max(0.01, sy),
-                         rot=math.degrees(math.atan2(R_[1, 0], R_[0, 0])) % 360.0,
-                         color=l.color, alpha=l.alpha, label=l.label,
-                         mask=l.mask, stroke=l.stroke))
-    got = LayerPlan(source_image=plan.source_image, image_size=plan.image_size,
-                    units_per_px=plan.units_per_px, layers=out)
-    return _refit_canvas(got, cat)
 
 
 def door_span(rig: "SideRig") -> tuple[float, float] | None:

@@ -305,14 +305,25 @@ def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
         if speck or (short and conf < _CONF and ev.imp_rel < _TEX_IMP):
             s.role = NOISE
             continue
-        # ④ 무늬 — 방향·간격이 반복되고, **선망 안쪽 다리**이며(위상: 양끝이
-        #    다 교차점이고 그 차수가 높다), 갇혀 있고, 주변보다 안 띈다.
-        #    위상 조건이 기하 조건과 독립이라 머리칼 다발(양끝 하나는 자유)과
-        #    레이스 한 칸(양끝이 다 뭉치)이 여기서 갈린다
+        # ④ 무늬 — 나란한 이웃에 덮여 있고(반복성), 그 이웃이 촘촘하며(평행
+        #    밀도), 주변 획들보다 안 띈다(상대 값). 세 조건이 "여럿이 같은
+        #    리듬으로 놓여 있다"를 말한다.
+        #
+        #    종전에는 여기에 위상 조건(갇힘·자유 끝 0·접합점 차수 4+)이 더
+        #    있었다. 그 셋은 **그물·레이스만** 잡는다 — 표준 11장에서 무늬
+        #    판정이 한 개도 안 났고(report `texture_dropped` 0), 머리칼 다발
+        #    처럼 한쪽 끝이 열린 반복은 전부 빠져나갔다. 위상은 "선망 안쪽인가"를
+        #    묻지 "여럿이 같은 리듬인가"를 안 묻는다.
+        #
+        #    **무늬라고 지우는 것이 아니다.** 이 라벨은 다발마다 대표 몇 가닥만
+        #    남기는 자리로 보낸다 (`texture_representatives`) — 사람이 머리칼
+        #    열 가닥을 서너 가닥으로 줄여 긋는 그 손이다. 그래서 판정이 조금
+        #    넉넉해도 특징이 통째로 사라지지 않는다.
+        #
+        #    실루엣·고립 특징은 위에서 이미 빠져나갔고, 상대 값 조건이 남아
+        #    있어 다발 한가운데의 콧선·입가는 여기 안 걸린다.
         if (ev.repeat >= _TEX_REPEAT and ev.parallel >= _TEX_PAR
-                and ev.enclosure >= _TEX_ENC and ev.imp_rel < _TEX_IMP
-                and ev.sil < _SIL
-                and ev.free_ends == 0 and ev.j_deg_max >= _TEX_DEG):
+                and ev.imp_rel < _TEX_IMP and ev.sil < _SIL):
             s.role = TEXTURE
             continue
         # ⑤ 경계 획 — 양옆 색이 갈리거나 셀 영역이 갈린다. 색으로 설명되면
@@ -325,16 +336,103 @@ def classify(strokes: list[LogicalStroke], frag_px: float, iso_px: float,
         s.role = NOISE if short else STRUCTURE
 
 
-def texture_representatives(strokes: list[LogicalStroke]) -> set[int]:
-    """무늬 다발에서 **대표 외곽 구조선**으로 남길 획 (파이썬 id 집합).
+# 한 다발에서 남길 대표 가닥의 몫과 하한·상한 (사용자 지시: "머리카락 10가닥
+# → 강도/길이/공간 분포를 대표하는 3~5가닥"). 몫이 먼저고 하한·상한이 뚜껑이다.
+_TEX_KEEP_FRAC = float(os.environ.get("FS_TEX_KEEP", 0.33))
+_TEX_KEEP_MIN, _TEX_KEEP_MAX = 3, 5
 
-    무늬를 통째로 지우면 그 자리가 빈다. 다발의 바깥 테를 이루는 가닥 —
-    갇힘이 낮고(한쪽이 열려 있다) 길이가 상위인 것 — 만 남겨 무늬 덩어리의
-    윤곽을 유지한다.
+
+def _bundles(tex: list[LogicalStroke]) -> list[list[int]]:
+    """무늬 획을 **다발로 묶는다** — 가깝고 나란한 것끼리 (union-find).
+
+    다발이 단위인 것이 요점이다. 그림 전체의 무늬를 한 뭉치로 보면 머리칼과
+    옷주름과 배경 빗금이 같은 저울에 올라, 한쪽이 다른 쪽을 통째로 밀어낸다.
+    """
+    n = len(tex)
+    par = list(range(n))
+
+    def find(a: int) -> int:
+        while par[a] != a:
+            par[a] = par[par[a]]
+            a = par[a]
+        return a
+
+    mid = []
+    ang = []
+    for s in tex:
+        p = s.path
+        m = p[len(p) // 2]
+        mid.append((float(m[0] + s.roi[1]), float(m[1] + s.roi[0])))
+        j0, j1 = max(0, len(p) // 2 - 2), min(len(p) - 1, len(p) // 2 + 2)
+        t = p[j1] - p[j0]
+        a2 = 2.0 * np.arctan2(t[0], t[1])
+        ang.append((np.cos(a2), np.sin(a2)))
+    for i in range(n):
+        ri = max(6.0, 6.0 * max(tex[i].width, 1.0))
+        for j in range(i + 1, n):
+            if (mid[i][0] - mid[j][0]) ** 2 + (mid[i][1] - mid[j][1]) ** 2                     > ri * ri:
+                continue
+            if ang[i][0] * ang[j][0] + ang[i][1] * ang[j][1] < 0.6428:
+                continue
+            a, b = find(i), find(j)
+            if a != b:
+                par[a] = b
+    out: dict[int, list[int]] = {}
+    for i in range(n):
+        out.setdefault(find(i), []).append(i)
+    return [g for _k, g in sorted(out.items())]
+
+
+def texture_representatives(strokes: list[LogicalStroke]) -> set[int]:
+    """무늬 다발에서 **대표 가닥**으로 남길 획 (파이썬 id 집합).
+
+    무늬를 통째로 지우면 그 자리가 빈다. 사람은 머리칼 열 가닥을 서너 가닥으로
+    줄여 긋지 다 긋지도, 다 지우지도 않는다 (사용자 지시). 그래서 다발마다
+    **리듬을 대표하는** 가닥을 남긴다:
+
+    - 단위는 **다발**이다 (`_bundles`) — 머리칼과 옷주름이 서로를 안 밀어낸다.
+    - 수는 다발 크기의 `_TEX_KEEP_FRAC`이고 3~5가 뚜껑이다.
+    - 고르는 자리는 다발을 **가로지르는 축 위에 고르게** 편 자리다. 가닥의
+      중점을 그 축에 투영해 등간격 눈금에 가장 가까운 가닥을 집으므로,
+      남은 가닥들이 원래의 **간격**을 그대로 들고 있다. 같은 눈금을 두 가닥이
+      다투면 오래 살아남는 쪽(§21 지속성)이 이기고, 그 다음이 긴 쪽이다
+      (동점은 입력 순서 — 결정적이다).
+
+    표준 11장에서는 이 손이 아무것도 안 버린다 — 다발이 안 잡히기 때문이다
+    (`policy._TEXTURE_SIMPLIFY` 문서의 실측). 단일 인물화가 아니라 반복 해칭·
+    레이스가 있는 그림에서 도는 자리다.
     """
     tex = [s for s in strokes if s.role == TEXTURE]
     if len(tex) < 4:
         return {id(s) for s in tex}          # 다발이 아니다 — 전부 남긴다
-    tex.sort(key=lambda s: (s.ev.enclosure, -s.ev.length))
-    keep = max(2, len(tex) // 8)
-    return {id(s) for s in tex[:keep]}
+    keep: set[int] = set()
+    for grp in _bundles(tex):
+        if len(grp) <= _TEX_KEEP_MIN:
+            keep |= {id(tex[i]) for i in grp}
+            continue
+        k = int(min(_TEX_KEEP_MAX,
+                    max(_TEX_KEEP_MIN,
+                        round(len(grp) * _TEX_KEEP_FRAC))))
+        pts = np.array([[tex[i].path[len(tex[i].path) // 2][0] + tex[i].roi[1],
+                         tex[i].path[len(tex[i].path) // 2][1] + tex[i].roi[0]]
+                        for i in grp], np.float64)
+        c = pts - pts.mean(0)
+        # 다발을 **가로지르는** 축 = 2차 모멘트의 작은 축 (가닥은 나란하므로
+        # 긴 축이 가닥 방향이고, 간격은 그 직교 방향에 실린다)
+        ev, evec = np.linalg.eigh(np.cov(c.T) + np.eye(2) * 1e-9)
+        proj = c @ evec[:, 0]
+        lo, hi = float(proj.min()), float(proj.max())
+        for t in range(k):
+            want = lo + (hi - lo) * (t + 0.5) / k
+            # 한 눈금을 두 가닥이 다투면 **오래 살아남는 쪽**이 이긴다 (§21
+            # 지속성 — 배율을 낮춰도 남는 가닥이 그 다발의 대표다), 그 다음이
+            # 긴 쪽, 마지막이 입력 순서다 (결정적)
+            order = sorted(range(len(grp)),
+                           key=lambda j: (abs(proj[j] - want),
+                                          -tex[grp[j]].ev.persist,
+                                          -tex[grp[j]].ev.length, j))
+            for j in order:
+                if id(tex[grp[j]]) not in keep:
+                    keep.add(id(tex[grp[j]]))
+                    break
+    return keep

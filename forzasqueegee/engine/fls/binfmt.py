@@ -64,11 +64,6 @@ def r_f32(b: bytes, off: int) -> float:
     return _F32.unpack_from(b, off)[0]
 
 
-def q32(v: float) -> float:
-    """f32로 한 번 접었다 편 값 — 왕복 대조의 기준선이다."""
-    return _F32.unpack(f32(v))[0]
-
-
 # ── zlib 껍데기 (C_group·C_livery 공통) ──────────────────────────────
 
 

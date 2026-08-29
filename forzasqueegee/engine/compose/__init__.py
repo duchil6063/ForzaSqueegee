@@ -74,7 +74,7 @@ from __future__ import annotations
 from ..model import UNITS_PER_SCALE
 from .boxes import (
     CANVAS_UNITS, DEFAULT_GROUP_UNIT, _clamp_box, _face_phase, _gap, _group_unit,
-    _meet, _overlap, _rel, _union)
+    _overlap, _rel, _union)
 from .look import (
     Look, PALE_B, PALE_S, _is_pale, layer_points, look, person_ink, rot_ink,
     rot_ink_box)
@@ -104,14 +104,14 @@ from .place import (
     BODY_BIAS, BODY_FILL, EXPOSED_FLOOR, EXPOSED_FULL, FACE_FRAC_BUST,
     FACE_FRAC_TALL, LIE_GAIN_MIN, LIE_HEAD_REAR, LIE_MAX, LIE_TIE, ManualPlace,
     PART_PAD, Place, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, SideRig, TILT_ASPECT,
-    TILT_FULL, TILT_MAX, _refit_canvas, bake_affine, dodge_parts, door_span,
+    TILT_FULL, TILT_MAX, _refit_canvas, dodge_parts, door_span,
     drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_tilt,
     place_in_rect, place_xf, surface_exposure, take_layers)
 from .folds import _all_folds, _pillar_hints, seam_fold
 from .autoplace import _side_place, auto_place, mirror_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
-    _spec_box, deco_anchor, flow_shapes, surface_deco_shapes)
+    deco_anchor, flow_shapes, surface_deco_shapes)
 from .canvasdeco import DECO_FRAME_FILL, compose_deco
 from .rigs import (
     _arch_fallback, _avoid_on, _bumper_seed, _hood_seed, _place_for, carfiles_pick,

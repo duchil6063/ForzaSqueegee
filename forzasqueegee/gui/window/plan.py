@@ -6,7 +6,6 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog
 
-from ...engine.pipeline import make
 from ...i18n import tr
 from ...paths import find_run_file, glob_run_files
 from .parts import ROOT, _plan_layers, _plan_source
@@ -16,7 +15,7 @@ class _PlanOps:
     """도안을 무는 갈래 — 어느 plan.json을 들고 있나.
 
     창이 쥐고 있어야 하는 것: `plan`(현재 경로)·`plan_lbl`·`out`·`out_pane`·
-    `src_pane`·`apply_msg`, 그리고 `_show_log`·`_msg` (shell)."""
+    `src_pane`·`apply_msg`, 그리고 `_log`·`_msg` (shell)."""
 
     def _set_plan(self, path: Path | None) -> None:
         self.plan = path

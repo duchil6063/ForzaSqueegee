@@ -33,7 +33,7 @@ from .geodesic import propagate
 
 # 장벽 닫기 커널 — 선 지도의 1px 끊김을 잇는다. **장벽에만** 쓴다: 렌더 선을
 # 닫으면 획이 굵어지고, 틈 픽셀의 원화 색은 그대로라 옅은 획의 어두움이
-# watershed 능선으로 살아난다 (종전 `_watershed_regions` 주석과 같은 근거).
+# watershed 능선으로 살아난다.
 _CLOSE = 3
 
 

@@ -85,7 +85,7 @@ DEFAULT_FONT = "sans"
 # **script의 공백은 못 쟀다** (측정판이 'H H'에서 죽었다 — 2026-08-20). 기본값
 # 0.34를 쓴다: 0을 주면 tracking이 0.122로 좁아 단어가 붙어 버린다 (뒷유리
 # 사인이 'HatsuneMiku'로 찍혔다 — 미리보기 판정). 백드롭은 단어를 **줄로 쪼개**
-# 앉히므로(`compose._word_stack`) 이 값을 안 쓴다 — 영향은 한 줄짜리 사인·배너뿐.
+# 앉히므로 이 값을 안 쓴다 — 영향은 한 줄짜리 사인·배너뿐.
 GAME_TRACKING = 0.23
 FONT_TRACKING: dict[str, float] = {"sans": 0.23, "condensed": 0.298,
                                    "script": 0.122}

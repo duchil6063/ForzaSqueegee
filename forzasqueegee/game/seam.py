@@ -97,11 +97,6 @@ class SideGeom:
         return self.belt - self.sill
 
     @property
-    def full_height(self) -> float:
-        """로커에서 루프라인까지 — 인물 키의 자다 (목표: 발 사이드실, 머리 지붕)."""
-        return self.roof - self.sill
-
-    @property
     def glass_height(self) -> float:
         return self.roof - self.belt
 

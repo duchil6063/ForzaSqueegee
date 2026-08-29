@@ -59,7 +59,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     from .celart import (_ALPHA_OPAQUE, _MAX_REGIONS, decompose,
                          rebuild_regions, snap_labels_to_ink)
     from . import celaxes
-    from .celfit import (_ink_cover, count_hole_clusters, fill_holes,
+    from .celfit import (_ink_cover, count_hole_clusters, coverage, fill_holes,
                          fit_plan, fix_min_gain, grow_covers, price_of,
                          repair_min_gain, repair_mismatch, silhouette_cover)
     from .model import UNITS_PER_SCALE
@@ -257,10 +257,25 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             if progress:
                 progress(0.86 + it * 0.03, "시각 영향 정리")
             before = len(plan.layers)
+            keep_layers = list(plan.layers)
+            # §18 자격 보호 — 혼자 덮고 있는 장은 값 불문 못 자른다. 라벨
+            # 보호(양보 있음)와 급이 다르다 (`celfit.coverage` 문서)
+            uniq = (coverage.unique_layers(plan, cel, cat)
+                    if celaxes.on("SEAL") else frozenset())
             # 보호 합이 예산을 넘으면 prune_impact가 보호도 영향 하위부터
             # 양보시킨다 — 항상 정확히 예산으로 내려온다
             plan, _ = prune_impact(plan, cat, budget=shapes,
-                                   protect_labels=("hole",), weight=imp)
+                                   protect_labels=("hole",), weight=imp,
+                                   protect_idx=uniq)
+            if celaxes.on("SEAL"):
+                # 한 장씩은 안전한 두 장이 같은 표본을 나눠 덮고 있을 수 있다 —
+                # 동시 제거의 연쇄만 여기서 되짚는다 (되살리면 예산을 몇 장
+                # 넘길 수 있고, 다음 라운드의 컷이 그것을 도로 맞춘다)
+                fixed, back = coverage.repair_cut(
+                    keep_layers, plan.layers, cel, cat, plan.units_per_px)
+                if back:
+                    plan.layers[:] = fixed
+                    log(f"  컷 되짚기: {back}장 복구 (동시 제거가 연 구멍)")
             log(f"  정리{it + 1}: {before} → {len(plan.layers)}장 (시각 영향 하위 컷)")
             stats["pruned_to"] = len(plan.layers)
             _hlog(f"정리{it + 1} 후")
@@ -345,8 +360,19 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     if celaxes.on("POSTPRICE"):
         from .pruneplan import prune_price
 
-        plan, pp = prune_price(plan, cat, repair_min_gain(lam), weight=val,
-                               sil=cel.labels >= 0)
+        sold_before = list(plan.layers)
+        plan, pp = prune_price(
+            plan, cat, repair_min_gain(lam), weight=val,
+            sil=cel.labels >= 0,
+            protect_idx=(coverage.unique_layers(plan, cel, cat)
+                         if celaxes.on("SEAL") else frozenset()))
+        if celaxes.on("SEAL"):
+            fixed, back = coverage.repair_cut(sold_before, plan.layers, cel,
+                                              cat, plan.units_per_px)
+            if back:
+                plan.layers[:] = fixed
+                pp["removed"] -= back
+                pp["after"] = len(plan.layers)
         stats["postprice"] = pp["removed"]
         if pp["removed"]:
             log(f"  사후 가격: {pp['before']} → {pp['after']}장 "
@@ -381,6 +407,15 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             plan, cel, cat, log=log,
             progress=(lambda f, t: progress(0.95 + f * 0.04, t))
             if progress else None)
+    # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
+    # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
+    # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).
+    # 성장(레이어 0장)으로 먼저 먹고, 남은 것만 최소 도형이 맡는다
+    if celaxes.on("SEAL"):
+        log("커버리지 봉인 중…")
+        stats.update(coverage.seal_coverage(plan, cel, cat, log=log,
+                                            budget=shapes, weight=imp))
+    stats.update(coverage.measure(plan, cel, cat))
     stats["hole_left"] = count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
                                              value=val, price=lam)
     stats["hole_specks"] = count_hole_clusters(plan, cel, cat)   # 1px+ 참고치
@@ -432,6 +467,14 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                  else f"예산 소진 — 영역 {stats['skipped']}개 못 그림"},
         {"id": "coverage", "ok": cover >= 0.97,
          "text": f"커버리지 {cover:.1%}"},
+        # §18 경성 게이트 — 크기·값과 무관한 자격 판정. 위 `holes`(가격의 자)
+        # 보다 엄하고, 통과하면 그쪽은 자동으로 통과한다
+        {"id": "seal", "ok": stats["hard_hole_samples"] == 0,
+         "text": ("실루엣 안 미커버 없음 (2배 표본)"
+                  if stats["hard_hole_samples"] == 0
+                  else f"미커버 표본 {stats['hard_hole_samples']:,}개 "
+                       f"({stats['hard_hole_px']:.1f}px · 군집 "
+                       f"{stats['hard_hole_clusters']}개)")},
         {"id": "holes", "ok": stats["hole_left"] == 0,
          "text": (f"보이는 구멍 없음 ({HOLE_MIN_PX}px 미만 반점 "
                   f"{stats['hole_specks']}개)"

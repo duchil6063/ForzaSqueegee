@@ -666,7 +666,6 @@ def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,
     assert smap.warp is not None
     rdir = 1.0 if smap.warp.jac(bcx, bcy)[0, 0] > 0 else -1.0
     rot = HOOD_ROT_SIGN * (-rdir * 90.0 + HOOD_TILT)
-    th = math.radians(rot)
     # 회전된 **잉크** 상자 (껍질 실측). 사각형 공식은 65~115°에서 후드 인물을
     # 1.5배 넘게 과대평가해 그만큼 축소시켰다 — 옆면과 같은 결함이다.
     ib = rot_ink_box(lk, rot)

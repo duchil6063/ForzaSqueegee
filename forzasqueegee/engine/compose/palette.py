@@ -118,12 +118,10 @@ def _separate_from_person(theme: tuple[float, float, float], lk: Look
     dom = dominant(lk)
     s = min(s, 0.70)
     b = min(max(b, 0.55), 0.92)
-    note_near = False
     if dom is not None and dom[1] > 0.18:
         dh = abs(h - dom[0])
         dh = min(dh, 1.0 - dh)
         if dh < PERSON_HUE_NEAR:
-            note_near = True
             # 인물이 밝으면 베이스를 내리고, 어두우면 올린다
             if dom[2] >= 0.55:
                 b = max(0.16, min(b, dom[2] - PERSON_VAL_GAP))

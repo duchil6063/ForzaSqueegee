@@ -33,7 +33,7 @@ class _ApplyOps:
     폴더의 `STOP` 파일이다 — 레이어 경계라 즉시는 아니다.
 
     창이 쥐고 있어야 하는 것: `plan`·`bar`·`log`·`clock`, 그리고 `_busy`·
-    `_log`·`_msg`·`_show_log` (shell)."""
+    `_log`·`_msg` (shell)."""
 
     def _apply_box(self) -> QGroupBox:
         """만든(또는 불러온) 도안으로 할 수 있는 일 — 단추 여섯.

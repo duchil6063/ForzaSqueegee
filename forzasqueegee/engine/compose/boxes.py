@@ -41,15 +41,6 @@ def _gap(a: tuple[float, float, float, float],
     return math.hypot(du, dv)
 
 
-def _meet(a: tuple[float, float, float, float],
-          b: tuple[float, float, float, float]
-          ) -> tuple[float, float, float, float] | None:
-    """두 상자의 **교집합** (안 겹치면 None)."""
-    u0, v0 = max(a[0], b[0]), max(a[1], b[1])
-    u1, v1 = min(a[2], b[2]), min(a[3], b[3])
-    return (u0, v0, u1, v1) if u1 > u0 and v1 > v0 else None
-
-
 def _clamp_box(box: tuple[float, float, float, float],
                into: tuple[float, float, float, float]
                ) -> tuple[float, float, float, float]:

@@ -32,8 +32,7 @@ from . import ablation
 from . import chain
 from . import intent as I
 from .descriptor import placed_profile, placed_widths
-from .vocabulary import (_BAR_SHAPE, bar_for, min_stroke_width_px,
-                         stroke_vocab)
+from .vocabulary import bar_for, min_stroke_width_px, stroke_vocab
 
 
 _FORM_N = 16           # 중심선 대응점 수 (아핀 맞춤)

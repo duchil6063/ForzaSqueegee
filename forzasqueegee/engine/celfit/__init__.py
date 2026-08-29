@@ -61,13 +61,14 @@
     layered     면 채움의 층 쌓기 — 큰 바탕 한 장 먼저, 장수를 값으로 센다
     residual    잔차 진단 — 종류마다 이름을 붙이고 초점을 낸다
     metrics     회귀 지표 — 도형 수도 품질이다 (구조·맞물림·보존)
-    select      획 선별 — 양옆 표본 (경계성·실루엣성)
+    select      획 선별 문턱 — 경계성·실루엣성을 역할로 가르는 자
     grammar     사람 선따기 문법 — 폭 정책·덩어리 채움·이음 보수
     linemetrics 선 도안 구조 지표 — 폭 충실도·파편화·꺾임 (게이트 아님)
     merge       겹침 병합 — 같은 방향으로 겹친 막대를 하나로 (배치 뒤)
     carve       덮어서 그리기 — 최소 도형보다 가는 선 (cel 폴백 전용)
     lines       엔진 구동 `_fit_lines`
-    holes       구멍·커버리지 — 재고(게이트) 메운다(성장·메움)
+    holes       구멍·커버리지 — 재고(게이트) 메운다(성장·메움). **가격의 자**
+    coverage    §18 커버리지 불변 — 미커버 표본 0 봉인. **불변의 자** (λ 무관)
     repair      잔차 수리
     plan        진입점 `fit_plan` / `fit_line_plan`
 
@@ -88,6 +89,7 @@ from ..price import fix_min_gain, price_of, repair_min_gain
 from . import policy
 from .bridge import bridge_line_gaps
 from .candidates import Candidate
+from . import coverage
 from .descriptor import (descriptors, fill_rank, norm_raster, straight_thin,
                          stroke_shapes, thin_shapes)
 from .engine import Reconstruction, build_strokes, place_strokes
@@ -108,7 +110,7 @@ from .residual import focus_layers, owner_map
 from .scoring import (_COVER_STOP, _INK_FREE, _MAX_PER_REGION, _MIN_GAIN,
                       _NO_FREESPILL, _PEN_WASTE, _PEN_WASTE_FILL, _STROKE_R,
                       _Scorer)
-from .select import _THIN_BND, _THIN_SIL, _bnd_frac
+from .select import _THIN_BND, _THIN_SIL
 from .skeleton import (_dt_along, _end_dir, _join_paths, _paths, _prune_spurs,
                        _thin)
 from .stroke import _stroke_forms
@@ -125,7 +127,7 @@ __all__ = [
     "fill_rank", "norm_raster",
     # 마무리 — 파이프라인이 배치 뒤에 돌린다
     "silhouette_cover", "count_hole_clusters", "grow_covers",
-    "fill_holes", "repair_mismatch",
+    "fill_holes", "repair_mismatch", "coverage",
     # 가격 λ
     "price_of", "fix_min_gain", "repair_min_gain",
     # 면 채움의 층 쌓기 · 잔차 진단 · 회귀 지표

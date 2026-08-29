@@ -25,7 +25,6 @@ FH6에는 `CLiveryGroup` RTTI가 없어 그룹 객체로 못 가고, 레코드 �
 ## 3,000장까지 닫혔다 (62차)
 
     python -m forzasqueegee inject out/내도안/plan.json --template   # 템플릿+주입
-    python tools\verify_inject_canvas.py check out/내도안/plan.json
 
 `--template`은 **모자란 장수를 창 조작으로 채운 뒤** 주입한다 (`auto/template.py`).
 빈 캔버스에서 3,000장이면 22분 + 14초이고, 템플릿이 이미 있으면 게임을 안 건드리고

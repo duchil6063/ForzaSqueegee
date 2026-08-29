@@ -1,17 +1,8 @@
-"""레이어 계획 렌더 — 미리보기 합성 + 인게임 합성 모델 유틸.
+"""레이어 계획 렌더 — 미리보기 합성 + 인게임 도형 래스터.
 
 앞부분(`render_plan`)은 카탈로그 도형 전부를 표시 공간에서 그리는 미리보기다.
-뒷부분은 painter 노선(`galatea`)·검증 도구가 쓰는 인게임 합성 모델 조각들:
-
-- `_ell_mask` — **게임이 실제로 그리는 A_02 48각형** 래스터. galatea의 채점
-  마스크가 이것이다 (`galatea.geometry.ellipse_mask`가 위임).
-- 색공간 변환 — sRGB↔선형, 미리곱. FH6는 레이어 알파를 **선형(감마 해제)
-  공간**에서 섞는다 (60차 인게임 실측: 25장 캡처 대조에서 sRGB 합성은 평균
-  색오차 11.2/255, 선형 합성은 0.82/255). 레이어에 적히는 색은 언제나
-  **sRGB**다 (게임 입력값).
-- `_from_layer` — 플랜 레이어 → 이미지 px 도형 [x, y, rx, ry, ang] 환산.
-- `_replay` — 플랜을 게임과 같은 선형 공간에서 재합성한 **인게임 예측**
-  (`tools/verify_alpha_canvas`가 캡처 대조에 쓴다).
+뒷부분은 painter 노선(`galatea`)이 쓰는 `_ell_mask` — **게임이 실제로 그리는
+A_02 48각형** 래스터다 (`galatea.geometry.ellipse_mask`가 위임한다).
 """
 
 from __future__ import annotations
@@ -33,7 +24,6 @@ def render_plan(plan: LayerPlan, catalog: Catalog, scale: int = 1, pad: int = 0,
     pad: 이미지 rect 사방에 추가할 px — 경계 밖 돌출·마스크 밴드 검증용.
     bg: 배경 회색값. **뺄셈 마스크가 드러내는 색도 이 값이다** (마스크의 정의가
         "먼저 그려진 것을 잘라 배경을 노출"이라 배경을 바꾸면 같이 바뀐다).
-        검은 배경 렌더를 같이 뜨면 알파를 되풀 수 있다 (`verify_inject_canvas`).
     """
     w, h = plan.image_size
     out = np.full(((h + 2 * pad) * scale, (w + 2 * pad) * scale, 3), bg, np.uint8)
@@ -135,35 +125,6 @@ def _draw_layer(img: np.ndarray, layer: Layer, plan: LayerPlan, catalog: Catalog
                 + np.array(color, np.float32) * a).astype(np.uint8)
 
 
-# -------------------------------------------------------------- 색 공간 변환
-# 게임이 섞는 곳(선형)과 게임에 적는 곳(sRGB)을 오간다. 전부 0~255 눈금이다.
-
-def _srgb_to_lin(c) -> np.ndarray:
-    x = np.asarray(c, np.float64) / 255.0
-    return np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4) * 255.0
-
-
-def _lin_to_srgb(c) -> np.ndarray:
-    x = np.clip(np.asarray(c, np.float64) / 255.0, 0.0, 1.0)
-    return np.where(x <= 0.0031308, x * 12.92,
-                    1.055 * x ** (1 / 2.4) - 0.055) * 255.0
-
-
-def _unpremult(p: np.ndarray) -> np.ndarray:
-    """투명 화소는 **0**으로 둔다 — `where=`만 주고 `out=`을 안 주면 그 자리가
-    초기화 안 된 쓰레기로 남는다. 대개 유한값이라 뒤에 곱하는 알파 0에 지워지지만
-    NaN이 걸리면 그 화소가 통째로 NaN이 되어 지나가던 계산이 조용히 무너진다."""
-    a = p[..., 3:4] / 255.0
-    return np.divide(p[..., :3], np.maximum(a, 1e-6),
-                     out=np.zeros_like(p[..., :3]), where=a > 1e-6)
-
-
-def _prem_to_srgb(p: np.ndarray) -> np.ndarray:
-    """미리곱 선형 → 미리곱 sRGB (표시 공간 — 미리보기·채점 보고용)."""
-    a = p[..., 3:4] / 255.0
-    return np.dstack([_lin_to_srgb(_unpremult(p)) * a, p[..., 3]]).astype(np.float32)
-
-
 # ------------------------------------------------- 인게임 A_02 래스터·환산
 
 _UNIT: np.ndarray | None = None  # A_02 정규화 윤곽 (48각형)
@@ -201,34 +162,3 @@ def _ell_mask(w: int, h: int, cx: float, cy: float, rx: float, ry: float,
     m = np.zeros((y1 - y0, x1 - x0), np.uint8)
     cv2.fillPoly(m, [np.round(np.stack([px - x0, py - y0], axis=1)).astype(np.int32)], 1)
     return m, x0, y0
-
-
-def _from_layer(lay: Layer, upp: float, w: int, h: int):
-    s = np.array([lay.x / upp + w / 2, h / 2 - lay.y / upp,
-                  lay.sx * UNITS_PER_SCALE / upp, lay.sy * UNITS_PER_SCALE / upp,
-                  (-lay.rot) % 360.0], np.float64)
-    return s, np.array(lay.rgb(), np.float32)
-
-
-def _replay(plan: LayerPlan, w: int, h: int, upp: float) -> np.ndarray:
-    """레이어 목록을 처음부터 다시 합성한 **선형** 미리곱 RGBA 캔버스.
-
-    게임과 같은 공간에서 섞으므로 이것이 인게임 예측이다. 표시용으로 쓰려면
-    `_prem_to_srgb`를 거칠 것. `fp_bg`(전면 배경 사각형 — `kfpsjson`이 들여온
-    플랜에 있다)만 전면 합성이고 나머지는 A_02 타원으로 그린다."""
-    cur = np.zeros((h, w, 4), np.float32)
-    for lay in plan.layers:
-        la = float(np.clip(lay.alpha, 0, 100)) / 100.0
-        col4 = np.array([*_srgb_to_lin(lay.rgb()), 255.0], np.float32)
-        if lay.label == "fp_bg":
-            cur[:] = (1.0 - la) * cur + la * col4
-            continue
-        s, _ = _from_layer(lay, upp, w, h)
-        mm = _ell_mask(w, h, s[0], s[1], s[2], s[3], s[4])
-        if mm is None:
-            continue
-        m, x0, y0 = mm
-        box = cur[y0:y0 + m.shape[0], x0:x0 + m.shape[1]]
-        mb = m.astype(bool)
-        box[mb] = (1.0 - la) * box[mb] + la * col4
-    return cur

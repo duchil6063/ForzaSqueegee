@@ -353,7 +353,7 @@ def repair_shapes(
         return shapes, error, {"enabled": True, "touched": 0, "improvements": 0, "before": error, "after": error}
 
     working = [copy_shape(shape) for shape in shapes]
-    render_rgb, top_alpha, top_idx, diff_top, _, total_error, scored_pixels = render_and_score(
+    _, top_alpha, top_idx, diff_top, _, total_error, scored_pixels = render_and_score(
         background,
         working,
         target_rgba,
@@ -499,7 +499,7 @@ def repair_shapes(
                     del working[idx]
                 else:
                     working[idx] = local_best
-                trial_render_rgb, trial_alpha, trial_top_idx, trial_diff, _, trial_total_error, trial_scored_pixels = render_and_score(
+                _, trial_alpha, trial_top_idx, trial_diff, _, trial_total_error, trial_scored_pixels = render_and_score(
                     background,
                     working,
                     target_rgba,
@@ -509,7 +509,6 @@ def repair_shapes(
                 trial_error = normalized_error(trial_total_error, trial_scored_pixels)
                 if trial_error <= best_error + 1e-6 or trial_error + 1e-9 < best_error:
                     best_error = trial_error
-                    render_rgb = trial_render_rgb
                     top_alpha = trial_alpha
                     top_idx = trial_top_idx
                     diff_top = trial_diff
