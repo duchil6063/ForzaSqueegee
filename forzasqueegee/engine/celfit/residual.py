@@ -109,6 +109,13 @@ def analyze(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     de = np.linalg.norm(a - b, axis=2)
 
     insil = cel.labels >= 0
+    # 구멍은 **실루엣 내부**에서만 센다 — 최외곽 테는 게임 이동 스텝 격자상
+    # 어떤 도형도 못 맞추는 폭이라 구멍 자(`holes._sil_rim`)·봉인
+    # 자(`coverage.sil_core`)가 이미 빼는 자리다. 여기만 세면 `gap`의 99.8%가
+    # 실루엣 선 밑의 그 테였다 (실측 G1-01 629/630 · 07 575/577, 안쪽 4px↑
+    # 군집 0) — 자가 거짓말을 하고, 초점 미세 조정이 못 고치는 군집을 쫓는다
+    from .holes import _sil_rim
+    core = insil & ~_sil_rim(cel.labels, plan.units_per_px)
     covered = owner >= 0
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * _NEAR + 1,) * 2)
     # 영역 경계 띠 — 라벨이 바뀌는 자리
@@ -122,7 +129,7 @@ def analyze(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     near_ink = (cv2.dilate(cel.line_mask.astype(np.uint8), k).astype(bool)
                 if cel.line_mask is not None else np.zeros((h, w), bool))
 
-    hole = insil & ~covered
+    hole = core & ~covered
     leak = ~insil & covered
     wrong = covered & insil & (de > _THR)
     cls = np.zeros((h, w), np.uint8)          # 0 = 정상
