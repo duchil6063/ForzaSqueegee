@@ -6,10 +6,17 @@ SHIBUYA), 로커 위 얇은 레이싱 글자(ARIS의 스폰서 행), 리어 쿼�
 (EVELYNE). 이 모듈은 그 세 문법을 필드 좌표(꾸밈 프레임)의 **포즈**로 낸다 —
 어느 포즈가 이기는지는 점수가 정한다 (`textscore`).
 
+자리는 넷이다: 인물 곁 사선 워드마크(`wordmark_poses`), 인물 **뒤**를 가로지르는
+큰 워드마크(`behind_pose` — RIN SHIBUYA 문법, 인물이 글자를 일부 덮는다), 로커
+위 글자, 리어 쿼터 사인. 이름이 한 줄로 길면(공백이 있으면) **두 줄 락업**도
+후보다 (`lockups`) — 옆면 밴드는 높이가 150유닛 남짓이라 한 줄 이름은 자리
+길이가 높이를 정하는데, 두 줄이면 같은 자리에서 글자가 두 배 선다.
+
 규칙:
 - 보호 구역(얼굴)은 **밑에 깔려도** 안 건드린다 — 글자가 얼굴 뒤에서 비치면 얼굴이 어수선해진다.
-- 인물이 글자를 덮는 몫은 35% 아래 (뒤에 깔린 워드마크가 인물에 반쯤 가려지는 것은 문법이지만 그 이상이면 안 읽힌다).
-- 그려지는 자리(도색 마스크) 85% 이상.
+- 인물이 글자를 덮는 몫은 45% 아래, 인물 뒤 워드마크는 50% (뒤에 깔린 워드마크가 인물에 반쯤 가려지는 것은 문법이지만 그 이상이면 안 읽힌다).
+- 그려지는 자리(도색 마스크) 90% 이상 — 휠아치·벨트라인에 잘린 글자는 안 읽힌다.
+  자리 길이도 휠아치에서 끊는다 (구멍을 건너뛰면 글자가 구멍 위를 지난다).
 - 메인과 서브의 위계: 서브는 메인 대문자 높이의 0.42배, 메인 밑(축의 수직 방향)에 붙는다.
 """
 
@@ -42,10 +49,22 @@ SUB_RATIO = 0.42
 
 
 # 인물이 글자를 덮어도 되는 몫 · 그려지는 자리의 하한
-OCCLUDE_MAX = 0.35
+OCCLUDE_MAX = 0.45
 
 
-DRAWABLE_MIN = 0.82
+# 인물 뒤 워드마크는 더 덮여도 된다 — 글자가 인물보다 커서 양끝이 읽힌다 (RIN SHIBUYA)
+OCCLUDE_MAX_BEHIND = 0.5
+
+
+def occlude_max(role: str) -> float:
+    return OCCLUDE_MAX_BEHIND if role == "behind" else OCCLUDE_MAX
+
+
+DRAWABLE_MIN = 0.90
+
+
+# 자리 길이를 끊는 구멍의 최소 길이 (프레임 유닛) — 이보다 짧은 틈(마스크 계단)은 건넌다
+HOLE_MIN = 14.0
 
 
 @dataclass
@@ -57,21 +76,23 @@ class TextPose:
     rot: float                 # 도
     height: float              # 대문자 높이 (프레임 유닛)
     aspect: float              # 잉크 상자 w/h (글자 블록)
+    hratio: float = 1.0        # 잉크 상자 높이 / 대문자 높이 (두 줄이면 ~2.3)
     on_bed: bool = False
 
     @property
     def w(self) -> float:
-        return self.height * self.aspect
+        return self.h * self.aspect
 
     @property
     def h(self) -> float:
-        return self.height
+        """잉크 상자 높이 — 배치·잘림·덮임은 전부 이 상자로 잰다."""
+        return self.height * self.hratio
 
     def mirrored(self) -> "TextPose":
         """반대편 옆면의 포즈 — 자리는 거울, 글자는 그대로 (읽히는 방향)."""
         return TextPose(role=self.role, text=self.text, x=-self.x, y=self.y,
                         rot=(-self.rot) % 360.0, height=self.height,
-                        aspect=self.aspect, on_bed=self.on_bed)
+                        aspect=self.aspect, hratio=self.hratio, on_bed=self.on_bed)
 
 
 def pose_mask(fld: CompositionField, p: TextPose) -> np.ndarray:
@@ -108,9 +129,9 @@ def pose_fit(fld: CompositionField, p: TextPose, avoid: np.ndarray | None = None
             float(prot[m].mean()))
 
 
-def _ok(fit: tuple[float, float, float]) -> bool:
+def _ok(fit: tuple[float, float, float], role: str = "wordmark") -> bool:
     draw, occ, prot = fit
-    return draw >= DRAWABLE_MIN and occ <= OCCLUDE_MAX and prot <= 0.02
+    return draw >= DRAWABLE_MIN and occ <= occlude_max(role) and prot <= 0.02
 
 
 def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
@@ -123,7 +144,7 @@ def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
     """
     fy0, fy1 = fld.frame_box[1], fld.frame_box[3]
     for _ in range(8):
-        if _ok(pose_fit(fld, p, avoid)):
+        if _ok(pose_fit(fld, p, avoid), p.role):
             return p
         best, bs = None, -1.0
         # 밀어 보기 — 축 방향(인물 반대쪽) 몇 단, 수직 방향 몇 단
@@ -134,7 +155,7 @@ def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
                 if not (fy0 + 0.4 * q.h <= q.y <= fy1 - 0.4 * q.h):
                     continue
                 draw, occ, prot = pose_fit(fld, q, avoid)
-                if _ok((draw, occ, prot)):
+                if _ok((draw, occ, prot), p.role):
                     return q
                 sc = draw - 0.5 * occ - prot
                 if sc > bs:
@@ -143,26 +164,34 @@ def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
             return None
         base = best if best is not None else p
         p = TextPose(**{**base.__dict__, "height": base.height * 0.85})
-    return p if _ok(pose_fit(fld, p, avoid)) else None
+    return p if _ok(pose_fit(fld, p, avoid), p.role) else None
 
 
 def _run_length(fld: CompositionField, x: float, y: float, axis: tuple[float, float],
                 sign: float) -> float:
-    """(x, y)에서 축 방향으로 그려지는 자리가 이어지는 길이 (프레임 유닛)."""
+    """(x, y)에서 축 방향으로 그려지는 자리가 이어지는 길이 (프레임 유닛).
+
+    휠아치 같은 구멍(`HOLE_MIN` 이상)이 나오면 **그 앞에서 끝난다** — 구멍을
+    건너뛰면 워드마크가 아치 위를 지나 잘린다 (실측: 26유닛 글자가 뒷아치에 걸렸다)."""
     g = fld.grid
     d = 0.0
     step = g.cell
+    hole = 0.0
     while d < 1200.0:
         px, py = x + sign * axis[0] * d, y + sign * axis[1] * d
+        if not (fld.frame_box[0] <= px <= fld.frame_box[2]):
+            break
         if g.at(fld.drawable, px, py) < 0.5:
-            # 휠아치 같은 구멍은 건너뛰되, 프레임 밖이면 끝이다
-            if not (fld.frame_box[0] <= px <= fld.frame_box[2]):
-                break
+            hole += step
+            if hole >= HOLE_MIN:
+                return max(0.0, d - hole)
+        else:
+            hole = 0.0
         d += step
     return d
 
 
-def wordmark_poses(fld: CompositionField, text: str, aspect: float,
+def wordmark_poses(fld: CompositionField, text: str, aspect: float, hratio: float,
                    rocker: bool) -> list[TextPose]:
     """인물 곁 **사선 워드마크** 후보 — 흐름 쪽 우선, 안 되면 반대쪽(여백 활용)."""
     ax = slab_axis(fld)
@@ -173,26 +202,65 @@ def wordmark_poses(fld: CompositionField, text: str, aspect: float,
     out: list[TextPose] = []
     flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
     for sign in (flow_sign, -flow_sign):
-        # 인물 상자 끝 + 여유에서 프레임 끝까지가 글자 줄의 자리
+        # 인물 상자 안쪽 1/3에서 휠아치까지가 글자 줄의 자리 — 인물 상자 끝에서
+        # 시작하면 문짝 하나가 자리라 이름이 20유닛으로 오그라든다 (실측: 실비아
+        # 옆면, 상자 끝 → 아치 110유닛). 인물 실루엣이 덮는 몫은 `_settle`이 잰다
+        # (상자는 실루엣보다 넓어 끝 1/3은 대개 빈 도색이다).
         edge = fld.person_box[2] if sign > 0 else fld.person_box[0]
-        start = edge + sign * 0.10 * cw
+        start = edge - sign * 0.33 * cw
         run = _run_length(fld, start, vcy, ax, sign) - 0.04 * (fld.frame_box[2] - fld.frame_box[0])
-        if run < 0.35 * cw:
+        if run < 0.5 * cw:
             continue
-        h = min(WORDMARK_H_MAX * ch, 0.42 * band, run / max(0.5, aspect))
-        h = max(h, 0.12 * band)
-        w = h * aspect
+        # 상자 높이의 상한 → 대문자 높이
+        bh = min(WORDMARK_H_MAX * ch * hratio, 0.6 * band, run / max(0.5, aspect))
+        h = max(bh / hratio, 0.12 * band)
+        w = h * hratio * aspect
         cx = start + sign * (0.5 * w + 0.02 * run)
         cy = vcy + ax[1] * (cx - vcx) / max(1e-6, ax[0]) * 0.6 - 0.05 * ch
-        cy = max(fld.frame_box[1] + 0.5 * h, min(fld.frame_box[3] - 0.5 * h, cy))
-        p = TextPose(role="wordmark", text=text, x=cx, y=cy, rot=ang, height=h, aspect=aspect)
+        cy = max(fld.frame_box[1] + 0.5 * bh, min(fld.frame_box[3] - 0.5 * bh, cy))
+        p = TextPose(role="wordmark", text=text, x=cx, y=cy, rot=ang, height=h, aspect=aspect,
+                     hratio=hratio)
         p = _settle(fld, p, ax, sign, 0.12 * band)
         if p is not None:
             out.append(p)
     return out
 
 
-def rocker_pose(fld: CompositionField, text: str, aspect: float) -> TextPose | None:
+def behind_pose(fld: CompositionField, text: str, aspect: float, hratio: float
+                ) -> TextPose | None:
+    """인물 **뒤**를 가로지르는 큰 워드마크 — 휠아치 사이 도색면을 다 쓴다.
+
+    한 줄 이름의 높이는 자리 길이가 정하므로 인물 곁 자리(`wordmark_poses`)로는
+    30유닛을 못 넘는다. 사람이 만든 이타샤의 이름은 인물 뒤에 크게 깔린다
+    (RIN SHIBUYA) — 인물이 35%까지 덮어도 읽힌다. 얼굴 보호 구역과 덮임 몫은
+    `_settle`이 지킨다 (안 되면 밀고, 그래도 안 되면 줄인다)."""
+    ax = slab_axis(fld)
+    ang = math.degrees(math.atan2(ax[1], ax[0]))
+    ch = fld.char_h
+    vcx, vcy = fld.visual_center
+    band = fld.frame_box[3] - fld.frame_box[1]
+    px, py = (fld.person_box[0] + fld.person_box[2]) / 2, vcy
+    fwd = _run_length(fld, px, py, ax, 1.0)
+    back = _run_length(fld, px, py, ax, -1.0)
+    run = 0.92 * (fwd + back)
+    if run < 0.8 * fld.char_w:
+        return None
+    bh = min(WORDMARK_H_MAX * ch * hratio, 0.6 * band, run / max(0.5, aspect))
+    h = bh / hratio
+    if h < 0.14 * band:
+        return None
+    # 자리 가운데에 두되 흐름 쪽으로 조금 — 인물이 덮는 몫이 한쪽으로 몰리지 않게
+    cx = px + ax[0] * (fwd - back) / 2
+    cy = py + ax[1] * (fwd - back) / 2 - 0.04 * ch
+    cy = max(fld.frame_box[1] + 0.5 * bh, min(fld.frame_box[3] - 0.5 * bh, cy))
+    flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
+    p = TextPose(role="behind", text=text, x=cx, y=cy, rot=ang, height=h, aspect=aspect,
+                 hratio=hratio)
+    return _settle(fld, p, ax, flow_sign, 0.14 * band)
+
+
+def rocker_pose(fld: CompositionField, text: str, aspect: float, hratio: float
+                ) -> TextPose | None:
     """로커 띠 바로 위의 얇은 글자 — 흐름 쪽에 붙는다 (스폰서 행 문법)."""
     fx0, fy0, fx1, fy1 = fld.frame_box
     band = fy1 - fy0
@@ -201,40 +269,43 @@ def rocker_pose(fld: CompositionField, text: str, aspect: float) -> TextPose | N
     flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
     edge = fld.person_box[2] if flow_sign > 0 else fld.person_box[0]
     room = (fx1 - edge) if flow_sign > 0 else (edge - fx0)
-    w = h * aspect
+    w = h * hratio * aspect
     if w > 0.9 * room:
-        h = max(0.10 * band, 0.9 * room / max(0.5, aspect))
-        w = h * aspect
+        h = max(0.10 * band, 0.9 * room / max(0.5, aspect) / hratio)
+        w = h * hratio * aspect
     x = edge + flow_sign * (0.08 * fld.char_w + 0.5 * w)
-    p = TextPose(role="rocker", text=text, x=x, y=y, rot=0.0, height=h, aspect=aspect)
+    p = TextPose(role="rocker", text=text, x=x, y=y, rot=0.0, height=h, aspect=aspect,
+                 hratio=hratio)
     return _settle(fld, p, (1.0, 0.0), flow_sign, 0.09 * band)
 
 
-def signature_pose(fld: CompositionField, text: str, aspect: float) -> TextPose | None:
+def signature_pose(fld: CompositionField, text: str, aspect: float, hratio: float
+                   ) -> TextPose | None:
     """리어 쿼터(흐름 끝)의 작은 사인."""
     fx0, fy0, fx1, fy1 = fld.frame_box
     band = fy1 - fy0
     ax = slab_axis(fld)
     ang = math.degrees(math.atan2(ax[1], ax[0]))
     flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
-    h = SIGNATURE_H * band
-    w = h * aspect
+    h = SIGNATURE_H * band / hratio
+    w = h * hratio * aspect
     x = (fx1 if flow_sign > 0 else fx0) - flow_sign * (0.5 * w + 0.05 * (fx1 - fx0))
     y = fld.visual_center[1] + 0.08 * fld.char_h
-    p = TextPose(role="signature", text=text, x=x, y=y, rot=ang, height=h, aspect=aspect)
+    p = TextPose(role="signature", text=text, x=x, y=y, rot=ang, height=h, aspect=aspect,
+                 hratio=hratio)
     return _settle(fld, p, ax, -flow_sign, 0.10 * band)
 
 
-def sub_pose(fld: CompositionField, main: TextPose, text: str, aspect: float
+def sub_pose(fld: CompositionField, main: TextPose, text: str, aspect: float, hratio: float
              ) -> TextPose | None:
     """메인 밑에 붙는 서브 — 같은 각, 높이는 메인의 `SUB_RATIO`."""
     h = SUB_RATIO * main.height
     r = math.radians(main.rot)
     # 축의 수직(아래쪽)으로 메인 반높이 + 서브 반높이 + 틈
-    off = 0.5 * main.h + 0.5 * h + 0.18 * main.height
+    off = 0.5 * main.h + 0.5 * h * hratio + 0.18 * main.height
     nx, ny = math.sin(r), -math.cos(r)
     p = TextPose(role="sub", text=text, x=main.x + nx * off, y=main.y + ny * off,
-                 rot=main.rot, height=h, aspect=aspect)
+                 rot=main.rot, height=h, aspect=aspect, hratio=hratio)
     ax = (math.cos(r), math.sin(r))
     sign = 1.0 if (main.x - fld.visual_center[0]) * ax[0] >= 0 else -1.0
     # 메인 상자(+여유)는 서브가 못 들어가는 자리다
@@ -243,26 +314,56 @@ def sub_pose(fld: CompositionField, main: TextPose, text: str, aspect: float
     return _settle(fld, p, ax, sign, 0.4 * h, avoid=pose_mask(fld, pad))
 
 
-def layout_sets(fld: CompositionField, main: str, sub: str | None, aspect_main: float,
-                aspect_sub: float, rocker: bool, roles: tuple[str, ...] = ("wordmark", "rocker", "signature")
-                ) -> list[list[TextPose]]:
-    """포즈 묶음 후보들 — 각 묶음은 메인 하나(+서브 하나)."""
+def lockups(main: str) -> list[str]:
+    """이름의 줄 나눔 후보 — 원문 그대로, 그리고 (한 줄에 공백이 있으면) 가장 고르게
+    갈리는 공백에서 두 줄로. 글자는 안 바꾼다 (공백 하나가 줄바꿈이 될 뿐)."""
+    out = [main]
+    if "\n" in main:
+        return out
+    words = main.split(" ")
+    if len(words) < 2:
+        return out
+    best, bd = None, None
+    for k in range(1, len(words)):
+        a, b = " ".join(words[:k]), " ".join(words[k:])
+        d = abs(len(a) - len(b))
+        if bd is None or d < bd:
+            best, bd = a + "\n" + b, d
+    if best is not None:
+        out.append(best)
+    return out
+
+
+ROLES = ("wordmark", "behind", "rocker", "signature")
+
+
+def layout_sets(fld: CompositionField, main: str, sub: str | None,
+                box_main: tuple[float, float], box_sub: tuple[float, float], rocker: bool,
+                roles: tuple[str, ...] = ROLES) -> list[list[TextPose]]:
+    """포즈 묶음 후보들 — 각 묶음은 메인 하나(+서브 하나). `box_*`는 (잉크 상자 w/h,
+    상자 높이/대문자 높이). `main`은 이미 줄이 갈린 문자열일 수 있다 (`lockups`) —
+    로커 글자는 한 줄일 때만."""
     sets: list[list[TextPose]] = []
     mains: list[TextPose] = []
+    am, hm = box_main
     if "wordmark" in roles:
-        mains += wordmark_poses(fld, main, aspect_main, rocker)
-    if "rocker" in roles:
-        p = rocker_pose(fld, main, aspect_main)
+        mains += wordmark_poses(fld, main, am, hm, rocker)
+    if "behind" in roles:
+        p = behind_pose(fld, main, am, hm)
+        if p is not None:
+            mains.append(p)
+    if "rocker" in roles and "\n" not in main:
+        p = rocker_pose(fld, main, am, hm)
         if p is not None:
             mains.append(p)
     if "signature" in roles:
-        p = signature_pose(fld, main, aspect_main)
+        p = signature_pose(fld, main, am, hm)
         if p is not None:
             mains.append(p)
     for m in mains:
         group = [m]
         if sub:
-            s = sub_pose(fld, m, sub, aspect_sub)
+            s = sub_pose(fld, m, sub, box_sub[0], box_sub[1])
             if s is not None:
                 group.append(s)
         sets.append(group)

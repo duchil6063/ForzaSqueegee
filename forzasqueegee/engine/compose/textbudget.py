@@ -5,13 +5,15 @@
 
 | 층 | 무엇 |
 |---|---|
-| A | 커스텀 · 본색 + 테두리 + 그림자 · 곡선을 살린 골격 · 메인 + 서브 |
-| B | 커스텀 · 본색 + 테두리 · 골격 단순화 · 서브 축소 |
-| C | 커스텀 · 본색만 · 굵직한 골격 · 메인만 |
+| A·B·C | 커스텀 도안 — 정책 사다리(`textfit.LADDER`) 일곱 칸을 A(고움)·B·C(거침)로 묶은 이름 |
 | D | 게임 글꼴 비닐 (`textvinyl`) — 한 글자 한 장 (테두리·그림자는 벌 수) |
 | E | 글자 생략 |
 
-어느 층이냐는 **면에 남은 장수**(면 상한 − 도안 − 꾸밈)와 `priority`가 정한다.
+커스텀은 **칸** 단위로 움직인다: 예산에 드는 가장 고운 칸을 고르고, 어느 칸도
+안 들면 그림자 → 테두리 순으로 벌을 뺀다 (`textglyph.plan_for_budget`). 층
+이름은 기록·크기 하강(`textbuild.tier_for_size`)이 쓴다.
+
+어느 칸이냐는 **면에 남은 장수**(면 상한 − 도안 − 꾸밈)와 `priority`가 정한다.
 `high`면 다른 꾸밈(산포·에코)이 먼저 물러난다 (`design`이 예산을 그쪽에서 뺀다).
 """
 
@@ -54,6 +56,8 @@ class TextPlan:
     shadow: bool
     n_main: int = 0
     n_sub: int = 0
+    ix_main: int = 1              # 사다리 칸 (커스텀일 때)
+    ix_sub: int = 3
     free: int = 0
     allow_game: bool = True
     notes: list[str] = field(default_factory=list)
@@ -67,24 +71,12 @@ class TextPlan:
         return self.tier_sub in ("A", "B", "C")
 
 
-def _custom_count(text: str, style: str, tier: str, outline: bool, shadow: bool) -> int:
-    """층에서 실제로 서는 장수 — 본색 벌 + (층이 허락하는) 테두리·그림자 벌."""
-    fill = tg.estimate_layers(text, style, tier)
-    under = tg.estimate_layers(text, style, tg.UNDER_TIER.get(tier, "C"))
-    n = fill
-    if outline and tier in ("A", "B"):
-        n += under
-    if shadow and tier == "A":
-        n += under
-    return n
-
-
 def plan_tiers(spec: TextSpec, style: str, free: int) -> TextPlan:
     """남은 장수 `free`에 맞는 층. 스타일은 이미 정해진 것(커스텀 6종 중 하나).
 
-    메인부터 A→B→C를 훑어 처음 드는 층을 쓰고, 서브는 남는 몫에서 같은 방식
-    (서브는 메인보다 한 층 아래부터 — 위계). 커스텀이 하나도 안 들면 게임
-    글꼴(D, 허락할 때) 아니면 생략(E).
+    메인은 예산에 드는 가장 고운 칸, 서브는 남는 몫에서 메인보다 두 칸 아래부터
+    (위계 — 서브는 테두리만, 그림자 없음). 커스텀이 하나도 안 들면 게임 글꼴(D,
+    허락할 때) 아니면 생략(E).
     """
     rule = tg.STYLE_RULES.get(style, tg.StyleRule())
     outline = resolve_tri(spec.outline, rule.outline_default)
@@ -97,11 +89,11 @@ def plan_tiers(spec: TextSpec, style: str, free: int) -> TextPlan:
     sub = spec.sub
     notes: list[str] = []
     tier_main, n_main = "E", 0
-    for tier in ("A", "B", "C"):
-        n = _custom_count(main, style, tier, outline, shadow)
-        if n <= cap:
-            tier_main, n_main = tier, n
-            break
+    ix_main, ix_sub = 1, 3
+    choice = tg.plan_for_budget(main, style, cap, outline, shadow)
+    if choice is not None:
+        tier_main, n_main, ix_main = choice.tier, choice.n, choice.ix
+        outline, shadow = choice.outline, choice.shadow
     if tier_main == "E":
         g = game_layers(main, outline, shadow)
         if spec.allow_fallback_to_game_text and g <= cap:
@@ -112,13 +104,10 @@ def plan_tiers(spec: TextSpec, style: str, free: int) -> TextPlan:
     tier_sub, n_sub = "E", 0
     if sub and tier_main != "E":
         left = cap - n_main
-        start = {"A": "B", "B": "C", "C": "C", "D": "D"}[tier_main]
-        order = ["B", "C"] if start == "B" else (["C"] if start == "C" else [])
-        for tier in order:
-            n = _custom_count(sub, style, tier, outline, False)
-            if n <= left:
-                tier_sub, n_sub = tier, n
-                break
+        if tier_main != "D":
+            c = tg.plan_for_budget(sub, style, left, outline, False, ix_min=ix_main + 2)
+            if c is not None:
+                tier_sub, n_sub, ix_sub = c.tier, c.n, c.ix
         if tier_sub == "E" and spec.allow_fallback_to_game_text:
             g = game_layers(sub, False, False)
             if g <= left:
@@ -131,5 +120,5 @@ def plan_tiers(spec: TextSpec, style: str, free: int) -> TextPlan:
                          + (msg(" · 서브 층 {sub_tier} ({sub_n:,}장)") if sub else ""),
                          tier=tier_main, n=n_main, free=cap, sub_tier=tier_sub, sub_n=n_sub))
     return TextPlan(tier_main=tier_main, tier_sub=tier_sub, outline=outline,
-                    shadow=shadow and tier_main == "A", n_main=n_main, n_sub=n_sub,
+                    shadow=shadow, n_main=n_main, n_sub=n_sub, ix_main=ix_main, ix_sub=ix_sub,
                     free=cap, allow_game=spec.allow_fallback_to_game_text, notes=notes)

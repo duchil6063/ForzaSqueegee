@@ -7,31 +7,40 @@
 | 항목 | 재는 것 |
 |---|---|
 | text_present | 스펙이 켜졌는데 글자가 섰나 |
-| text_read | 글자 본색과 그 뒤 배경(베드·베이스)의 명도차 |
-| text_occlude | 인물이 글자를 덮는 몫 (≤ 0.35면 만점) |
+| text_read | 글자 본색과 그 뒤 배경(베드·베이스)의 명도차 — 상자를 넷으로 갈라 **가장 나쁜 칸** |
+| text_busy | 글자 뒤 배경의 가장자리 밀도 (로커 띠·베드 경계가 글자를 가로지르면 안 읽힌다) |
+| text_occlude | 인물이 글자를 덮는 몫 (≤ 0.35면 만점 · 인물 뒤 워드마크는 0.5) |
 | text_flow | 글자 각이 흐름과 나란하거나 직교하나 |
 | text_clutter | 글자가 장식 구역에서 차지하는 몫 |
 | text_hier | 서브가 메인보다 확실히 작나 |
 | text_negative | 여백 구역을 조금 쓰나 (0~0.5 사이가 좋다) |
 | text_cut | 글자 상자 중 안 그려지는(휠아치·마스크 밖) 몫 — 잘린 글자는 안 읽힌다 |
+| text_size | 대문자 높이가 밴드 대비 충분한가 — 이름은 한눈에 읽혀야 한다 (레퍼런스: 밴드의 1/4~1/3) |
 """
 
 from __future__ import annotations
 
 import math
 
+import cv2
 import numpy as np
 
 from ..catalog import Catalog
 from ..model import Layer
 from .field import CompositionField
-from .textlayout import TextPose, pose_fit, pose_mask
+from .textlayout import TextPose, occlude_max, pose_fit, pose_mask
 
 
 TEXT_WEIGHTS = {
-    "text_present": 2.0, "text_read": 1.0, "text_occlude": 1.0, "text_flow": 0.5,
-    "text_clutter": 0.5, "text_hier": 0.3, "text_negative": 0.3, "text_cut": 0.8,
+    "text_present": 2.0, "text_read": 1.0, "text_busy": 0.8, "text_occlude": 1.0,
+    "text_flow": 0.5, "text_clutter": 0.5, "text_hier": 0.3, "text_negative": 0.3,
+    "text_cut": 1.5, "text_size": 1.0,
 }
+
+
+# 대문자 높이 / 밴드 높이 — 이 위면 크기 만점, 아래로 갈수록 깎인다 (0.08에서 0)
+SIZE_FULL = 0.26
+
 
 
 def absent_parts() -> dict[str, float]:
@@ -59,20 +68,37 @@ def text_parts(fld: CompositionField, cat: Catalog, poses: list[TextPose],
     parts["text_present"] = 1.0
     main = poses[0]
     m = pose_mask(fld, main)
-    # 가독성 — 본색 명도 vs 상자 안 배경 명도
+    # 가독성 — 본색 명도 vs 상자 안 배경 명도. 상자를 가로·세로로 갈라 넷 중 **가장
+    # 나쁜 칸**을 쓴다 — 평균은 절반이 검은 띠 위에 얹힌 짙은 글자도 통과시킨다
     fills = [l.color for l in text_layers if l.label == "text"]
     if fills and m.any():
         tl = _lum(fills[0])
-        bl = float(np.mean([_lum(c) for c in behind[m].reshape(-1, 3)[::7]]))
-        parts["text_read"] = max(0.0, min(1.0, abs(tl - bl) / 0.45))
+        bl_img = (0.299 * behind[..., 0] + 0.587 * behind[..., 1] + 0.114 * behind[..., 2]) / 255.0
+        ys, xs = np.nonzero(m)
+        ym, xm = float(np.median(ys)), float(np.median(xs))
+        worst = 1.0
+        for q in ((ys <= ym) & (xs <= xm), (ys <= ym) & (xs > xm),
+                  (ys > ym) & (xs <= xm), (ys > ym) & (xs > xm)):
+            if q.sum() < 4:
+                continue
+            bl = float(bl_img[ys[q], xs[q]].mean())
+            worst = min(worst, abs(tl - bl) / 0.45)
+        parts["text_read"] = max(0.0, min(1.0, worst))
+        # 배경의 가장자리 밀도 — 띠·베드 경계가 상자를 가로지르면 글자 획과 섞인다
+        gx = cv2.Sobel(bl_img.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(bl_img.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3)
+        busy = float((np.hypot(gx, gy)[m] > 0.6).mean())
+        parts["text_busy"] = 1.0 if busy <= 0.015 else max(0.0, 1.0 - (busy - 0.015) / 0.08)
     else:
         parts["text_read"] = 0.5
+        parts["text_busy"] = 1.0
     # 인물(+전경 모티프)이 덮는 몫
     cover = fld.char > 0.5
     if front_alpha is not None:
         cover = cover | (front_alpha > 0.5)
     occ = float(cover[m].mean()) if m.any() else 1.0
-    parts["text_occlude"] = 1.0 if occ <= 0.35 else max(0.0, 1.0 - (occ - 0.35) / 0.4)
+    lim = occlude_max(main.role)
+    parts["text_occlude"] = 1.0 if occ <= lim else max(0.0, 1.0 - (occ - lim) / 0.4)
     # 흐름 정렬 — 나란하거나 직교
     fa = math.atan2(fld.flow[1], fld.flow[0])
     d = math.radians(main.rot) - fa
@@ -88,10 +114,14 @@ def text_parts(fld: CompositionField, cat: Catalog, poses: list[TextPose],
         parts["text_hier"] = 1.0 if 0.3 <= r <= 0.6 else max(0.0, 1.0 - abs(r - 0.45) / 0.5)
     else:
         parts["text_hier"] = 1.0
-    # 잘림 — 상자 중 그려지지 않는 몫 (휠아치·벨트라인 밖). 18%까지는 배치가
+    # 잘림 — 상자 중 그려지지 않는 몫 (휠아치·벨트라인 밖). 10%까지는 배치가
     # 허락하지만 점수는 0부터 깎는다 — 덜 잘리는 자리가 이긴다
     draw, _o, _p = pose_fit(fld, main)
-    parts["text_cut"] = max(0.0, min(1.0, 1.0 - (1.0 - draw) / 0.2))
+    parts["text_cut"] = max(0.0, min(1.0, 1.0 - (1.0 - draw) / 0.12))
+    # 크기 — 작은 이름은 장식이지 이름이 아니다 (실측: 18유닛 한 줄이 34유닛 두 줄과 비겼다)
+    band = fld.frame_box[3] - fld.frame_box[1]
+    r = main.height / max(1e-6, band)
+    parts["text_size"] = 1.0 if r >= SIZE_FULL else max(0.0, (r - 0.08) / (SIZE_FULL - 0.08))
     # 여백 활용 — 상자의 일부(0~50%)가 여백 구역에 있으면 좋다
     neg = fld.negative > 0.5
     nf = float(neg[m].mean()) if m.any() else 0.0

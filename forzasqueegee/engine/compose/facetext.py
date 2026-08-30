@@ -69,7 +69,8 @@ def face_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Cata
         if spec.style != "auto" else (design.text_style or "minimal")
     if style == "game":
         style = "minimal"
-    aspect = tg.render_mask(spec.main, style).aspect
+    ras = tg.render_mask(spec.main, style)
+    aspect, hratio = ras.aspect, ras.hratio
     done: list[str] = []
     summary: dict = {}
     for name in _target_faces(spec.placement):
@@ -82,7 +83,7 @@ def face_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Cata
         bw, bh = box[2] - box[0], box[3] - box[1]
         if spec.placement in ("hood", "roof"):
             bw, bh = bh, bw                        # 글자가 v를 따라 달린다
-        h = max(4.0, min(FACE_H_FRAC * bh, FACE_W_FRAC * bw / max(0.5, aspect)))
+        h = max(4.0, min(FACE_H_FRAC * bh, FACE_W_FRAC * bw / max(0.5, aspect)) / hratio)
         item = next((it for it in items if it["surface"] == name), None)
         if item is None:
             item = {"surface": name, "fit": False}
@@ -97,7 +98,7 @@ def face_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Cata
             continue
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         pose = TextPose(role="face", text=spec.main, x=0.0, y=0.0, rot=0.0, height=h,
-                        aspect=aspect, on_bed=(spec.placement == "roof"))
+                        aspect=aspect, hratio=hratio, on_bed=(spec.placement == "roof"))
         pal = design.pal
         if spec.placement == "roof":
             pal = replace(pal, bed=ROOF_DARK)      # 블랙아웃 위 — 판 위 색 규칙
