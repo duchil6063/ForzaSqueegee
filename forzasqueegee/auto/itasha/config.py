@@ -420,7 +420,11 @@ def compose_config(main_plan: Path, out: Path, *,
     from ...game import body as gbody
 
     car = car or gbody.tab_table().get("car")
-    rec = compose.build(main_plan, out.parent if out.suffix else out,
+    # `out`이 폴더인지 파일인지는 **있는 그대로** 본다 — 확장자로 짐작하면
+    # 스튜디오 작업 폴더(`<이름>.fsitasha/`)가 파일로 오인돼 구성이 부모
+    # 폴더로 새고, 폴더 위에 파일을 쓰려다 'Permission denied'로 죽는다.
+    as_dir = out.is_dir() or not out.suffix
+    rec = compose.build(main_plan, out if as_dir else out.parent,
                         car=car, media=media,
                         extra_plans=list(extra_plans or []),
                         mirror=mirror, paint=paint, base_rgb=base_rgb,
@@ -429,7 +433,7 @@ def compose_config(main_plan: Path, out: Path, *,
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).
-    if not out.suffix:
+    if as_dir:
         out = cfg_path
     elif cfg_path != out:
         out.parent.mkdir(parents=True, exist_ok=True)
