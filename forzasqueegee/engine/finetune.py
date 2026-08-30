@@ -35,6 +35,7 @@ from ..i18n import msg
 from .catalog import Catalog
 from .celart import CelArt
 from .celfit import _poly_px
+from .celfit.chain import _GAP_TOL, placed_line
 from .model import Layer, LayerPlan
 
 # 비용 상수 (제곱 RGB 오차 단위, 채널당 최대 255² × 3 = 195,075)
@@ -59,6 +60,15 @@ _MAX_WALK = 8         # 같은 방향 연속 스텝 상한
 # 하나 값이 되게 한다. 목표 자체 경계 2px 안(경계 양자화 자리)과 획(ink)
 # 소유 px는 제외 — 획이 흐린 선 위를 긋는 것은 이 벌점의 대상이 아니다
 _P_JND = 1500.0
+# **이음 게이트** (기본 켜짐 · `FS_FT_JGATE=0`으로 끈다) — 획 레이어의 이동이
+# 같은 획의 이음을
+# 벌리면 기각한다. 미세 조정은 채움 목표의 제곱 오차만 보므로 획을 제
+# 이웃 마디에서 떼어 놓고도 이득이면 받는다 — 단계 귀속 실측(JS0/JS1,
+# 01·03·07): 잔차 초점 한 단이 joint_gap을 3.07→4.26px(+39%)로 벌리고,
+# line 노선 최종(3.05)이 cel 배치 직후(3.07)와 같다 — cel의 이음 틈 초과분은
+# 전부 이 손이 만든다. 가격이 아니라 자격이다(실루엣 신규 노출 기각과 같은
+# 급): 이음 상대 끝까지의 거리가 max(현재, _GAP_TOL)을 넘는 이동은 못 간다.
+# 상대는 같은 획 안 다른 레이어의 가장 가까운 끝 — 새 상수 없음.
 
 # 수 하나 = (속성, 게임 양자화 스텝)의 묶음 — 짧은 스텝 먼저 (대부분의 개선은
 # 반 스텝이다). 홑 축 여덟 뒤에 **한쪽 변 수** 넷이 선다: 이동과 스케일을 한
@@ -170,6 +180,57 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         boxes[i], masks[i], exts[i] = _win_mask(cat, l, upp, w, h)
         x0, y0, x1, y1 = boxes[i]
         owner[y0:y1, x0:x1][masks[i]] = i
+
+    # 이음 게이트 채비 (_P_JND 아래 문서) — 같은 획의 끝끼리 짝을 맺는다
+    _jgate = os.environ.get("FS_FT_JGATE", "1") != "0"
+    partners: dict[int, list] = {}
+    if _jgate:
+        ends: dict[int, tuple] = {}
+        by_sid: dict[int, list[int]] = {}
+        for i, l in enumerate(layers):
+            if l.label == "ink" and l.stroke >= 0:
+                got = placed_line(cat, l, upp, w, h)
+                if got is not None:
+                    ends[i] = (got[0], got[1])
+                    by_sid.setdefault(l.stroke, []).append(i)
+        for sid, ids in by_sid.items():
+            if len(ids) < 2:
+                continue
+            for i in ids:
+                pl = []
+                for k in (0, 1):
+                    best = None
+                    for j in ids:
+                        if j == i:
+                            continue
+                        for ej in (0, 1):
+                            d = float(np.hypot(*(ends[i][k] - ends[j][ej])))
+                            if best is None or d < best[0]:
+                                best = (d, j, ej)
+                    pl.append(None if best is None else (best[1], best[2]))
+                partners[i] = pl
+
+    def widens_joint(i: int, cand: Layer) -> bool:
+        """cand로 옮기면 같은 획의 이음이 벌어지나 (게이트)."""
+        pl = partners.get(i)
+        if not pl:
+            return False
+        cur = placed_line(cat, layers[i], upp, w, h)
+        new = placed_line(cat, cand, upp, w, h)
+        if cur is None or new is None:
+            return False
+        for k, pr in enumerate(pl):
+            if pr is None:
+                continue
+            j, ej = pr
+            pe = placed_line(cat, layers[j], upp, w, h)
+            if pe is None:
+                continue
+            d_old = float(np.hypot(*(cur[k] - pe[ej])))
+            d_new = float(np.hypot(*(new[k] - pe[ej])))
+            if d_new > max(d_old, _GAP_TOL) + 1e-6:
+                return True
+        return False
 
     def cost_at(ys: np.ndarray, xs: np.ndarray, o: np.ndarray) -> np.ndarray:
         """픽셀들의 비용 — 소유자 o(-1 = 미커버) 기준."""
@@ -291,6 +352,8 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         if dead:
                             break
                         cand = cand.quantized()
+                        if _jgate and widens_joint(i, cand):
+                            break
                         res = try_move(i, cand)
                         if res is None or res[0] > -_EPS:
                             break
