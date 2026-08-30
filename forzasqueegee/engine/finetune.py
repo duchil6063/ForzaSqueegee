@@ -149,6 +149,18 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             _e.astype(np.uint8),
             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))).astype(bool)
         not_ink = np.array([True] + [l.label != "ink" for l in layers])
+        # 획 면제의 사각지대 (기본 켜짐 · `FS_FT_INKBAND=0`으로 끈다) — 획이
+        # **선 지도 밖**으로
+        # 벗어난 px는 면제하지 않는다. 흐린 선 위를 긋는 것은 획의 일이지만,
+        # 선 지도가 없는 면 위의 대역색 발자국은 채움의 월경과 같은 유령이다
+        # (단계 귀속 실측: 벌점 채택 후에도 잔차 초점이 06에서 ghost +1,543 —
+        # 태반이 획 이동). 1px 팽창은 래스터 반 픽셀 몫이다
+        _lz = getattr(cel, "line_mask", None)
+        _inkband = (os.environ.get("FS_FT_INKBAND", "1") != "0"
+                    and _lz is not None)
+        if _inkband:
+            line_zone = cv2.dilate(_lz.astype(np.uint8),
+                                   np.ones((3, 3), np.uint8)).astype(bool)
 
     boxes = np.zeros((n, 4), np.int32)
     masks: list[np.ndarray] = [None] * n              # type: ignore[list-item]
@@ -165,7 +177,10 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         cov = o >= 0
         d[cov & ~sil[ys, xs]] += _P_BG
         if _jnd:
-            bsel = cov & band_ok[ys, xs] & not_ink[o + 1]
+            sub = not_ink[o + 1]
+            if _inkband:
+                sub = sub | ~line_zone[ys, xs]
+            bsel = cov & band_ok[ys, xs] & sub
             if bsel.any():
                 de = np.linalg.norm(tgt_lab[ys[bsel], xs[bsel]]
                                     - lut_lab[o[bsel] + 1], axis=1)
