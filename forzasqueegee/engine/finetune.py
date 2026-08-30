@@ -350,6 +350,33 @@ def reorder_fills(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     lut = np.full((n + 1, 3), 255, np.int32)
     for i, l in enumerate(layers):
         lut[i + 1] = l.rgb()
+    # 순서 수에도 같은 대역 자 (기본 켜짐 · `FS_RO_JND=0`으로 끈다, _P_JND
+    # 문서) — 제곱 오차만
+    # 보면 큰 오차 자리를 돌려받는 승급이 그 발자국의 다른 자리에 ΔE 4~12
+    # 유령을 새로 깔아도 이긴다 (단계 귀속 실측 S2-05: reorder가 ghost +350)
+    _jnd = os.environ.get("FS_RO_JND", "1") != "0"
+    if _jnd:
+        tgt_lab = cv2.cvtColor(tgt.astype(np.uint8),
+                               cv2.COLOR_RGB2LAB).astype(np.float32)
+        lut_lab = cv2.cvtColor(np.clip(lut, 0, 255).astype(np.uint8)
+                               .reshape(-1, 1, 3),
+                               cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+        _e = np.zeros((h, w), bool)
+        for _dx, _dy in ((1, 0), (0, 1)):
+            _d = np.linalg.norm(tgt_lab[_dy:, _dx:]
+                                - tgt_lab[:h - _dy, :w - _dx], axis=-1) > 4.0
+            _e[_dy:, _dx:] |= _d
+            _e[:h - _dy, :w - _dx] |= _d
+        sil_ = cel.labels >= 0
+        band_ok = sil_ & ~cv2.dilate(
+            _e.astype(np.uint8),
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))).astype(bool)
+
+        def _priced(ys, xs, ids):
+            d = ((tgt[ys, xs] - lut[ids + 1]) ** 2).sum(1).astype(np.float64)
+            de = np.linalg.norm(tgt_lab[ys, xs] - lut_lab[ids + 1], axis=1)
+            d += _P_JND * (band_ok[ys, xs] & (de > 4.0) & (de <= 12.0))
+            return d
     boxes = np.zeros((n, 4), np.int32)
     masks: list[np.ndarray] = [None] * n              # type: ignore[list-item]
     owner = np.full((h, w), -1, np.int32)             # 레이어 **id** (index 불변)
@@ -383,14 +410,16 @@ def reorder_fills(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             ys0 = ys0 + y0
             xs0 = xs0 + x0
             ow_flat = owner[ys0, xs0]
-            d_a = ((tgt[ys0, xs0] - lut[a + 1]) ** 2).sum(1)
+            d_a = (_priced(ys0, xs0, np.full(len(ys0), a, np.int32)) if _jnd
+                   else ((tgt[ys0, xs0] - lut[a + 1]) ** 2).sum(1))
             for b in top:
                 rb = int(rank[int(b)])
                 sel = (rank[ow_flat] > ra) & (rank[ow_flat] <= rb)
                 if not sel.any():
                     continue
-                d_o = ((tgt[ys0[sel], xs0[sel]]
-                        - lut[ow_flat[sel] + 1]) ** 2).sum(1)
+                d_o = (_priced(ys0[sel], xs0[sel], ow_flat[sel]) if _jnd
+                       else ((tgt[ys0[sel], xs0[sel]]
+                              - lut[ow_flat[sel] + 1]) ** 2).sum(1))
                 delta = float(d_a[sel].sum() - d_o.sum())
                 if delta < -_EPS and (best is None or delta < best[0]):
                     best = (delta, rb, sel)
