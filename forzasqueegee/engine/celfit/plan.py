@@ -22,7 +22,8 @@ from .fill import _fit_bars, region_shape
 from .geometry import _ink_cover, _min_span
 from .layered import fill_region, grow_fill, mop_up
 from .lines import _fit_lines, recolor_strokes
-from .scoring import _COVER_STOP, _MAX_PER_REGION, _PEN_WASTE_FILL, _Scorer
+from .scoring import (_COVER_STOP, _MAX_PER_REGION, _PEN_FORBID_FILL,
+                      _PEN_WASTE_FILL, _Scorer)
 from .stroke import _CURVE_STATS, _stroke_forms
 from .vocabulary import _FILL_SHAPES, _FILL_WIN, _check_vocab
 
@@ -214,6 +215,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         forbid = omap < oi                 # 먼저 그린 면 + 배경(-1)
         sc = _Scorer(cat, upp, w, h, roi, mask, forbid, omap < 0, guard=8.0,
                      pen_waste=_PEN_WASTE_FILL,
+                     pen_forbid=_PEN_FORBID_FILL,
                      ink=ink_cov[y0:y1, x0:x1] if ink_cov is not None else None,
                      val=value[y0:y1, x0:x1] if value is not None else None,
                      seam=True,

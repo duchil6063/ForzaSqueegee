@@ -34,6 +34,19 @@ _STROKE_R = float(os.environ.get("FS_STROKE_R", 2.6))    # px — 이 이하 주
 _MIN_GAIN = 6.0        # px — 이보다 못 버는 도형은 안 찍는다
 _COVER_STOP = float(os.environ.get("FS_COVER_STOP", 0.985))  # 영역 커버리지 목표
 _PEN_FORBID = 4.0      # 먼저 그린 면 침범 벌점 (px당) — 나중 획·면이 일부 덮는다
+# **채움의** 먼저 그린 면 침범 벌점 — 획(4.0)보다 네 배 무겁다.
+# 유령 계단(목표에 없는 저대비 경계, `work/lab/lcb.py`)의 97%는 **침범**이다:
+# 채움이 이웃 영역으로 2~8px 넘친 자리가 ΔE 4~12라 수리 문턱(12) 아래·
+# JND(4) 위에 남는다. 그 78%는 밑에 목표색 도형이 깔려 있는데 넘친 조각이
+# 위에서 가리는 꼴이고, 순서를 바꾸면 반대쪽이 드러나는 상호 스필이라
+# (쌍마다 좋은 순서를 골라도 1,341 → 1,198px) 순서 재배열로는 안 닫힌다 —
+# 넘침 자체를 배치에서 비싸게 하는 것이 손이다. 획에는 안 건다(공용 상수를
+# 올리면 이음 보수 몫 +0.04·joint_gap 악화 — 획 침범은 선화가 덮는 자리다).
+# 16은 무릎이다 (표준 3장, 보이는 오차 Σ / 도형): 8 −.087/+89 · **16
+# −.196/+198** · 32 −.191/+264. 11장: 보이는 오차 med .366→.274(11/11) ·
+# 면 안 틀림 10/11 · 유령 med 1,881→1,425 · 넘김률 11/11 · 도형 +3.5%
+# (10번 2,973 ≤ 3,000) · 게이트 전부 통과 · 획 지표 불변.
+_PEN_FORBID_FILL = 16.0
 # 투명 배경 침범은 따로 더 무겁게 — 아무도 안 덮어 흰 자국이 그대로 남는다.
 # 4×만으로는 큰 채움이 "새 픽셀 이득"으로 벌점을 눌러 실루엣 밖 사각형이
 # 찍히는 일이 실제로 났다 (어깨 밖에 살색 사각형이 그대로 남았다)
@@ -191,8 +204,9 @@ class _Scorer:
                  soft: np.ndarray | None = None, retrace: float = 0.0,
                  pen_far: float = 0.0, seam: bool = False,
                  protect: np.ndarray | None = None,
-                 silcap: bool = False):
+                 silcap: bool = False, pen_forbid: float = _PEN_FORBID):
         self.cat, self.upp, self.w, self.h, self.roi = cat, upp, w, h, roi
+        self.pen_forbid = pen_forbid      # 먼저 그린 면 침범 벌점 (px당)
         self.mask = mask                  # 내 면 전체 (bool, ROI)
         self.residual = mask.copy()       # 아직 안 덮인 내 면
         # §24-b 늘리기 전용 잔여 — 도형 가장자리 한 겹은 안 덮은 것으로 친다.
@@ -486,7 +500,7 @@ class _Scorer:
         forb = cnt(self.forbid[by0:by1, bx0:bx1])
         bg = cnt(self.bg[by0:by1, bx0:bx1])
         waste = cnt(self._spill[by0:by1, bx0:bx1]) - forb - bg
-        s = (new - _PEN_BG * bg - _PEN_FORBID * forb - self.pen_waste * waste)
+        s = (new - _PEN_BG * bg - self.pen_forbid * forb - self.pen_waste * waste)
         if self.pen_out:
             s -= self.pen_out * cnt(self.outb[by0:by1, bx0:bx1])
         if self.band_res is not None:      # §24 — 덧칠 띠는 잔여처럼 닳는다
@@ -565,7 +579,7 @@ class _Scorer:
         bg = cnt(self.bg)
         outb = cnt(self.outb) if self.pen_out else 0.0
         waste = cnt(self._spill) - forb - bg
-        pen = (_PEN_BG * bg + _PEN_FORBID * forb + self.pen_waste * waste
+        pen = (_PEN_BG * bg + self.pen_forbid * forb + self.pen_waste * waste
                + self.pen_out * outb)
         return {"new": cnt(self.residual), "forb": forb, "bg": bg, "outb": outb,
                 "waste": waste, "free": cnt(self.free), "pen": pen}
