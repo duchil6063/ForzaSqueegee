@@ -397,6 +397,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    flip: bool = False, manual: "list | None" = None,
                    deco: bool = True,
                    motif: str | None = None, family: str | None = None,
+                   text: "dict | None" = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -431,7 +432,8 @@ def compose_config(main_plan: Path, out: Path, *,
                         extra_plans=list(extra_plans or []),
                         mirror=mirror, paint=paint, base_rgb=base_rgb,
                         flip=flip, manual=manual,
-                        deco=deco, motif=motif, family=family, log=log)
+                        deco=deco, motif=motif, family=family, text=text,
+                        log=log)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).

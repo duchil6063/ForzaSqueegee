@@ -192,6 +192,20 @@ def cmd_flsedit(args) -> int:
             said = studio.act_decoration(st, args.action == "decoration")
         elif args.action == "motif":
             said = studio.act_motif(st, args.family)
+        elif args.action == "text":
+            if not args.text:
+                print(msg("오류: --text가 필요하다"))
+                return 2
+            said = studio.act_text(st, {
+                "main": args.text, "sub": args.subtext, "style": args.text_style,
+                "placement": args.text_placement, "priority": args.text_priority,
+                "allow_fallback_to_game_text": (
+                    None if args.game_text_fallback is None
+                    else args.game_text_fallback != "off"),
+                "max_layers": args.text_max_layers, "outline": args.text_outline,
+                "shadow": args.text_shadow})
+        elif args.action == "no-text":
+            said = studio.act_text(st, {"main": None})
         elif args.action == "mirror":
             said = studio.act_mirror(st, surface, args.group)
         elif args.action == "base-paint":

@@ -30,6 +30,9 @@ from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_dec
 from .intent import read_intent
 from .design import Design, compose_design
 from .families import FAMILIES
+from .textspec import TextSpec
+from .textbuild import mirrored_set
+from .facetext import face_text
 from .rigs import (
     _bumper_seed, _hood_seed, _place_for, carfiles_pick, side_rigs, surfaces_for)
 from .groups import (
@@ -53,7 +56,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           cat: Catalog | None = None,
           manual: list[ManualPlace] | None = None, deco: bool = True,
           motif: str | None = None, family: str | None = None,
-          log=print) -> Recipe:
+          text: "TextSpec | dict | None" = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
     나오는 것은 `auto.itasha`가 그대로 먹는 구성이다. 자동이든 손 배치든 **같은
@@ -107,7 +110,18 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     옆면 꾸밈은 **후보를 여럿 지어 점수로 고른다** (`design.compose_design` —
     계열 × 흐름 × 팔레트 변종 × 베드 크기). `family`를 주면 그 계열 안에서만
     고른다 (`families.FAMILIES`). 사람이 앉힌 도안은 어느 후보에서도 안 움직인다.
+
+    ## 글자 (`text`)
+
+    기본은 **안 넣는다** (이타샤 어휘에 글자가 없다는 규칙은 그대로다). 스펙
+    (`textspec.TextSpec` 또는 그 dict)을 켜서 주면 캐릭터 이름(+작품명)이 꾸밈의
+    한 요소로 후보에 들어간다 — 커스텀 텍스트 도안(동봉 OFL 글꼴, `engine.textglyph`)
+    이 기본이고 면 예산이 모자라면 층을 낮추다 게임 글꼴 비닐로 물러나고 그래도
+    안 되면 뺀다 (`textbudget`). 옆면 글자는 면마다 제 그룹(`text-<면>.json`)이다
+    — 꾸밈 그룹은 좌우를 미러로 나눠 쓰지만 글자는 뒤집히면 안 된다.
     """
+    text_spec = (text if isinstance(text, TextSpec) else TextSpec.from_dict(text)) \
+        if text is not None else TextSpec()
     mirror_side = "side_left" if flip else "side_right"
     from ...auto.itasha import PRESET             # 순환 참조를 피해 늦게 들여온다
 
@@ -287,6 +301,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     side0 = maps.get(deco_src) if deco_src else None
     deco_plan = deco_place = deco_front = front_place = None
     design: Design | None = None
+    face_summary: dict | None = None
+    text_groups: dict[str, dict] = {}         # 면 → 글자 그룹 항목 (커스텀 층)
+    text_jobs: dict[str, list[dict]] = {}     # 면 → 게임 글자 명세 (층 D)
     if not deco:
         notes.append(msg("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다"))
     if deco and side0 is not None and not side0.uncertain:
@@ -321,12 +338,22 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         root_plan, root_lk = hand_look[root_mp.key()]
         intent = read_intent(root_plan, root_lk, cat)
         L, t = place_xf(root_mp, group_unit)
+        side_cap = min([m.cap or 3000 for n in ROLE_MAIN
+                        if (m := maps.get(n)) is not None] or [3000])
+        side_person = max([sum(hand_group[hand_ix[id(m)]][1]
+                               for m in by_surface.get(n) or [])
+                           for n in ROLE_MAIN] or [0])
+        # 글자가 옆면에 서는 것은 자리가 옆면(또는 자동)일 때다 — 다른 면을 못
+        # 박았으면 옆면 설계는 글자 없이 돌고 그 면이 따로 짓는다 (`face_text`)
+        side_text = text_spec if (text_spec.active
+                                  and text_spec.placement in ("auto", "side")) else None
         design = compose_design(
             root_plan, root_lk, intent, cat, car_rgb, frame_box=frame_box,
             person_box=person_box, L=L, t=t, frame_center=(fcu, fcv), u=u,
             rear_sign=(r0.rear_dir if r0 is not None else 1.0),
             drawable_at=_drawable_at, motif=motif, halo=ocol, family=family,
-            phase=_face_phase(deco_src))
+            phase=_face_phase(deco_src), text=side_text, cap=side_cap,
+            n_person=side_person)
         notes += design.notes
         deco_plan = design.plan(plan, cat)
         # **빈 꾸밈 그룹은 안 만든다.** 이미 어두운 차라 로커가 빠지고
@@ -364,6 +391,41 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                              n=len(deco_front.layers)))
         else:
             deco_front = None
+        # ---- 옆면 글자 — 면마다 제 그룹 (미러 금지) 또는 게임 글자 명세 ----
+        if design.text is not None and deco_place is not None:
+            sets = {deco_src: design.text}
+            other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)), None)
+            if other is not None:
+                sets[other] = mirrored_set(design.text, design.pal, cat, design.text_plan)
+            for sname, tset in sets.items():
+                if tset.game_jobs:
+                    text_jobs[sname] = [
+                        {"text": j["text"], "font": j["font"],
+                         "center": [round(fcu + u * j["x"], 1), round(fcv + u * j["y"], 1)],
+                         "height": round(u * j["height"], 1), "rot": round(j["rot"], 1),
+                         "color": j["color"],
+                         **({"outline": j["outline"]} if j.get("outline") else {}),
+                         **({"shadow": j["shadow"],
+                             "shadow_shift": [round(0.06 * u * j["height"], 1),
+                                              round(-0.06 * u * j["height"], 1)]}
+                            if j.get("shadow") else {})}
+                        for j in tset.game_jobs]
+                custom = [l for l in tset.layers if not l.label.startswith("game")]
+                if not custom:
+                    continue
+                tp = design.plan(plan, cat)          # 캔버스 메타는 도안의 것
+                tp.layers = [replace(l, x=round(l.x, 4), y=round(l.y, 4), sx=round(l.sx, 4),
+                                     sy=round(l.sy, 4), rot=round(l.rot % 360.0, 4))
+                             for l in custom]
+                tpath = out_dir / f"text-{sname}.json"
+                tp.save(tpath)
+                written.append(tpath)
+                text_groups[sname] = {"plan": _rel(tpath, out_dir), "x": round(fcu, 1),
+                                      "y": round(fcv, 1), "scale": round(ds, 3),
+                                      "rot": 0.0, "mirror": False}
+            notes.append(msg("옆면 글자 그룹 {n}벌 — {what}", n=len(sets),
+                             what=(msg("게임 글꼴 비닐 (층 D)") if design.text.tier_main == "D"
+                                   else msg("커스텀 도안 {m:,}장", m=design.text.n))))
 
     # ---- 예산 사다리 — 넘치면 꾸밈부터 버린다 (도안이 주역이다) ----
     # 기준은 **가장 무거운 옆면**이다 (한 면에 여러 장을 올릴 수 있다). 장수는
@@ -376,8 +438,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                     for n in ROLE_MAIN] or [0])
     use_deco = deco_place is not None
     n_front = len(deco_front.layers) if deco_front is not None else 0
-    if use_deco and n_person + len(deco_plan.layers) + n_front > cap:
+    n_text = max([len(LayerPlan.load(out_dir / g["plan"]).layers)
+                  for g in text_groups.values()] or [0])
+    if use_deco and n_person + len(deco_plan.layers) + n_front + n_text > cap:
         use_deco = False                         # 도안만 남긴다 (`_check`가 나머지를 잡는다)
+        text_groups.clear()
         notes.append(msg("측면이 상한 {cap:,}을 넘는다 — 꾸밈 그룹을 뺀다", cap=cap))
 
     # 면에 직접 놓는 꾸밈의 색·어휘 — 캔버스 산포와 **같은 세 벌**이다 (액센트 +
@@ -509,6 +574,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 면이 기준이다 (반대편에서 x를 뒤집으면 같은 그림이 선다).
         if use_deco:
             item["pre_groups"] = [dict(deco_place, mirror=name != deco_src)]
+            # 글자 그룹은 꾸밈 위·도안 아래, 면마다 제 것 (미러 안 한다)
+            if name in text_groups:
+                item["pre_groups"].append(text_groups[name])
+            if name in text_jobs:
+                item["text"] = text_jobs[name]
         if mps:
             item["groups"] = [
                 _hand_group_job(m, hand_ix, hand_group, out_dir) for m in mps]
@@ -634,6 +704,13 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if n_motif:
         notes.append(msg("도어 유리에 모티프를 흩는다 (ARIS 문법)"))
 
+    # ---- 다른 면의 글자 — 자리를 못 박았을 때 (rear · hood · roof · window) ----
+    if (deco and text_spec.active and text_spec.placement not in ("auto", "side")
+            and design is not None):
+        face_summary = face_text(text_spec, design, items, maps, rigs, cat, out_dir, plan,
+                                 group_unit=group_unit, hood_u=hood_u, notes=notes,
+                                 written=written)
+
     # 모티프가 선 면마다 **어느 도안에서 자랐나**를 적는다 — 꾸밈이 엉뚱한 자리에
     # 섰을 때 사람이 먼저 볼 것이 이 뿌리다 (면을 잘못 짚었나, 투영이 딴 면에서
     # 왔나).
@@ -664,6 +741,18 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             "palette": {k: list(getattr(design.pal, k)) for k in
                         ("base", "bed", "bed_alt", "primary", "secondary",
                          "shadow", "highlight", "dark")}}
+        if text_spec.active:
+            tset = design.text
+            cfg["design"]["text"] = {
+                "enabled": True, "main": text_spec.main, "sub": text_spec.sub,
+                "style": (tset.style if tset else design.text_style),
+                "tier": (tset.tier_main if tset else "E"),
+                "tier_sub": (tset.tier_sub if tset else "E"),
+                "role": (tset.poses[0].role if tset else None),
+                "layers": (tset.n if tset else 0),
+                "placement": text_spec.placement, "priority": text_spec.priority}
+            if face_summary:
+                cfg["design"]["text"].update(face_summary)
     # 설치 차량을 못 박고 지었으면 **구성이 그걸 기억한다** — 안 적어 두면 다시
     # 돌릴 때 이름 매칭이 다른 차를 물어 미리보기와 검증이 딴 면 지도로 돈다.
     if media:

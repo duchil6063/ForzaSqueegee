@@ -7,6 +7,34 @@ import argparse
 from ..i18n import msg
 
 
+def _text_args(p: argparse.ArgumentParser) -> None:
+    """캐릭터 이름 글자 인자 — `itasha`와 `flsedit text`가 같은 벌을 쓴다.
+
+    문자열은 **그대로** 간다 (띄어쓰기·대소문자·구두점; `\\n`은 줄바꿈)."""
+    p.add_argument("--text", default=None, metavar=msg("이름"),
+                   help=msg("캐릭터 이름 글자를 꾸밈에 넣는다 (예: \"Asuka Langley\"). "
+                            "커스텀 텍스트 도안(동봉 OFL 글꼴)이 기본이고 면 예산이 "
+                            "모자라면 층을 낮추다 게임 글꼴로 물러난다"))
+    p.add_argument("--subtext", default=None, metavar=msg("작품명"),
+                   help=msg("보조 글자 — 작품명·별칭·팀명 (메인 밑에 작게)"))
+    p.add_argument("--text-style", default=None, dest="text_style",
+                   help=msg("auto · script · brush · graffiti · racing · techno · "
+                            "minimal · game (기본 auto: 구성 계열이 고른다)"))
+    p.add_argument("--text-placement", default=None, dest="text_placement",
+                   help=msg("auto · side · rear · hood · roof · window (기본 auto = 옆면)"))
+    p.add_argument("--text-priority", default=None, dest="text_priority",
+                   help=msg("high · normal · low — high면 산포·에코보다 글자가 먼저다"))
+    p.add_argument("--game-text-fallback", default=None, dest="game_text_fallback",
+                   choices=("on", "off"),
+                   help=msg("예산이 모자랄 때 게임 글꼴 비닐로 물러나나 (기본 on)"))
+    p.add_argument("--text-max-layers", default=None, type=int, dest="text_max_layers",
+                   help=msg("글자에 쓸 장수 상한 (층을 낮추는 시험용 레버)"))
+    p.add_argument("--text-outline", default=None, dest="text_outline",
+                   choices=("auto", "on", "off"), help=msg("테두리"))
+    p.add_argument("--text-shadow", default=None, dest="text_shadow",
+                   choices=("auto", "on", "off"), help=msg("그림자"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """`python -m forzasqueegee`의 파서. 명령 실행은 `cli.<갈래>`가 한다."""
     parser = argparse.ArgumentParser(prog="forzasqueegee",
@@ -135,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
                                "graphic_bed · diagonal_flow · motorsport · splash "
                                "(기본: 후보를 다 지어 점수로 고른다, "
                                "engine/compose/design)"))
+    _text_args(p_it)
     p_it.add_argument("--no-mirror", action="store_true",
                       help=msg("우측면을 미러하지 않는다"))
     p_it.add_argument("--flip", action="store_true",
@@ -257,12 +286,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_fx.add_argument("action",
                       choices=("load-design", "auto-place", "decoration",
                                "no-decoration", "motif", "mirror", "base-paint",
+                               "text", "no-text",
                                "export", "export-group", "rebuild", "state"),
                       help=msg("load-design(도안 올리기) · auto-place(자동 자리) · "
                                "decoration/no-decoration(꾸밈) · motif(계열) · "
                                "mirror(좌우 대칭) · base-paint(베이스 도색) · "
+                               "text/no-text(캐릭터 이름 글자) · "
                                "export(리버리 컨테이너) · export-group(비닐 그룹을 "
                                "FLS·KFPS·plan 셋 중 하나로) · rebuild · state"))
+    _text_args(p_fx)
     p_fx.add_argument("--project", required=True,
                       help=msg("편집기가 저장한 `.3so` 경로"))
     p_fx.add_argument("--geometry", default=None,

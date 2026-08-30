@@ -31,6 +31,7 @@ class Family:
     flows: tuple[str, ...]      # 흐름 후보 — auto · rear · front
     other_density: float        # 다른 면 모티프 수 배율
     torn: bool = False          # 베드 흐름 끝을 뜯는다 (스플래시)
+    text_budget: float = 1.0    # 글자 장수 예산 배율 (여백 계열은 글자도 절제한다)
 
 
 FAMILIES: dict[str, Family] = {
@@ -38,7 +39,7 @@ FAMILIES: dict[str, Family] = {
     "minimal": Family("minimal", bed="slab", bed_level=0.35, motif_n=7,
                       tier_scale=0.75, rocker=False, top_stripe=False, front_n=1,
                       empty_target=0.92, clutter=(0.04, 0.16), echo=False,
-                      flows=("auto",), other_density=0.45),
+                      flows=("auto",), other_density=0.45, text_budget=0.5),
     # 그래픽 베드 — 인물 뒤 큰 색면이 구도를 잡고 모티프는 그 가장자리에
     "graphic_bed": Family("graphic_bed", bed="plate", bed_level=0.75, motif_n=14,
                           tier_scale=0.95, rocker=True, top_stripe=False, front_n=2,
@@ -53,7 +54,7 @@ FAMILIES: dict[str, Family] = {
     "motorsport": Family("motorsport", bed="slab", bed_level=0.55, motif_n=9,
                          tier_scale=0.8, rocker=True, top_stripe=True, front_n=1,
                          empty_target=0.80, clutter=(0.12, 0.30), echo=True,
-                         flows=("rear", "front"), other_density=0.6),
+                         flows=("rear", "front"), other_density=0.6, text_budget=0.8),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
     "splash": Family("splash", bed="blob", bed_level=0.8, motif_n=22,
                      tier_scale=1.05, rocker=True, top_stripe=False, front_n=4,

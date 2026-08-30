@@ -81,17 +81,28 @@ def raster_layers(layers: list[Layer], fld: CompositionField, cat: Catalog
 
 
 def composite(fld: CompositionField, pal: RolePalette, cat: Catalog,
-              back: list[Layer], front: list[Layer]) -> dict:
-    """베이스 → 꾸밈 → 인물 → 전경 합성과 중간 래스터."""
+              back: list[Layer], front: list[Layer],
+              text: tuple[np.ndarray, np.ndarray] | None = None,
+              front_raster: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
+    """베이스 → 꾸밈 → (글자) → 인물 → 전경 합성과 중간 래스터.
+
+    `text`·`front_raster`는 미리 렌더한 (rgb, alpha) — 후보 루프가 같은 글자·전경을
+    수백 번 렌더하지 않게 부르는 쪽이 캐시해 준다 (실측: 글자 335장을 후보마다
+    렌더하니 97초).
+    """
     g = fld.grid
     base = np.zeros((g.rows, g.cols, 3), np.float32)
     base[:] = pal.base
     brgb, balpha = raster_layers(back, fld, cat)
     img = base * (1 - balpha[..., None]) + brgb.astype(np.float32) * balpha[..., None]
     behind = img.copy()                          # 인물 뒤에 실제로 보이는 것
+    if text is not None:
+        trgb, talpha = text
+        img = img * (1 - talpha[..., None]) + trgb.astype(np.float32) * talpha[..., None]
+        balpha = np.maximum(balpha, talpha)
     ca = fld.char[..., None]
     img = img * (1 - ca) + fld.char_rgb.astype(np.float32) * ca
-    frgb, falpha = raster_layers(front, fld, cat)
+    frgb, falpha = front_raster if front_raster is not None else raster_layers(front, fld, cat)
     img = img * (1 - falpha[..., None]) + frgb.astype(np.float32) * falpha[..., None]
     return {"img": img, "behind": behind, "back_alpha": balpha, "front_alpha": falpha}
 
@@ -117,9 +128,14 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
                  back: list[Layer], front: list[Layer], *,
                  clutter_target: tuple[float, float], empty_target: float,
                  motifs: list[tuple[float, float, float, int]],
-                 rocker: bool, gap: float = 3.0) -> ScoreCard:
+                 rocker: bool, gap: float = 3.0,
+                 extra: dict[str, float] | None = None,
+                 extra_weights: dict[str, float] | None = None,
+                 text: tuple[np.ndarray, np.ndarray] | None = None,
+                 front_raster: tuple[np.ndarray, np.ndarray] | None = None) -> ScoreCard:
+    """`extra`는 다른 자(텍스트 — `textscore`)가 낸 항목들 — 같은 표에 가중합한다."""
     g = fld.grid
-    comp = composite(fld, pal, cat, back, front)
+    comp = composite(fld, pal, cat, back, front, text=text, front_raster=front_raster)
     behind = comp["behind"]
     balpha, falpha = comp["back_alpha"], comp["front_alpha"]
     sil = fld.char > 0.5
@@ -232,5 +248,10 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
     parts["continuity"] = min(1.0, 0.5 * touch + (0.5 if rocker else 0.2))
     parts = {k: float(v) for k, v in parts.items()}
     info = {k: float(v) for k, v in info.items()}
-    total = sum(WEIGHTS[k] * v for k, v in parts.items()) / sum(WEIGHTS.values())
+    weights = dict(WEIGHTS)
+    if extra:
+        parts.update({k: float(v) for k, v in extra.items()})
+        weights.update(extra_weights or {})
+    total = sum(weights.get(k, 0.5) * v for k, v in parts.items()) / sum(
+        weights.get(k, 0.5) for k in parts)
     return ScoreCard(total=float(total), parts=parts, info=info)

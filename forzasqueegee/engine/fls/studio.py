@@ -89,7 +89,13 @@ def _blank_state() -> dict:
             # 띠·모티프·지붕 블랙아웃은 [Grow Decoration]을 누른 뒤에야 선다.
             # 한 번 켜면 그 뒤 굽기에는 계속 실린다 — 되돌리는 것은
             # [Drop Decoration]이다.
-            "paint": None, "deco": False, "motif": None, "designs": []}
+            "paint": None, "deco": False, "motif": None, "designs": [],
+            # 글자 — 기본 꺼짐. 켜면 캐릭터 이름(+작품명)이 꾸밈의 한 요소로
+            # 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져 있으면 안 선다.
+            "text": {"enabled": False, "main": None, "sub": None, "style": "auto",
+                     "placement": "auto", "priority": "normal",
+                     "allow_fallback_to_game_text": True, "max_layers": None,
+                     "outline": "auto", "shadow": "auto"}}
 
 
 def state_path(project_path: str | Path) -> Path:
@@ -283,6 +289,7 @@ def rebuild(st: Studio, *, log=None) -> dict:
         # 구성 계열은 자동(후보 점수)이 기본이다 — 조리법에 `family`가 적혀
         # 있으면 그 계열로 못 박는다 (메뉴는 없다, 사람이 조리법에 적는 레버)
         family=st.state.get("family"),
+        text=st.state.get("text") or None,
         mirror=False, preview=False, log=log)
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)
@@ -490,6 +497,29 @@ def act_decoration(st: Studio, on: bool) -> str:
     st.state["deco"] = bool(on)
     return (msg("꾸밈을 짠다 (띠·모티프·지붕)") if on
             else msg("꾸밈을 뺀다 — 도안만 올린다"))
+
+
+def act_text(st: Studio, fields: dict) -> str:
+    """캐릭터 이름 글자를 켜거나 고친다 — 문자열은 **그대로** 둔다 (띄어쓰기·대소문자).
+
+    `fields`는 `TextSpec`의 열쇠들(있는 것만 갱신). `main`이 비면 끈다."""
+    from ..compose.textspec import TextSpec
+
+    cur = dict(st.state.get("text") or {})
+    cur.update({k: v for k, v in fields.items() if v is not None})
+    if "main" in fields and fields["main"] is None:    # 명시적으로 지운다 (no-text)
+        cur["main"] = None
+    cur["enabled"] = bool(cur.get("main"))
+    spec = TextSpec.from_dict(cur)           # 값 검사 (모르는 스타일이면 ValueError)
+    st.state["text"] = spec.to_dict()
+    if not spec.active:
+        return msg("글자를 뺀다")
+    if not st.state.get("deco"):
+        st.notes.append(msg("꾸밈이 꺼져 있어 글자도 지금은 안 선다 — "
+                            "[Grow Decoration]을 누르면 같이 선다"))
+    return msg("글자 {main!r}{sub} · 스타일 {style} · 자리 {place}",
+               main=spec.main, sub=(msg(" + {sub!r}", sub=spec.sub) if spec.sub else ""),
+               style=spec.style, place=spec.placement)
 
 
 def act_motif(st: Studio, family: str | None) -> str:

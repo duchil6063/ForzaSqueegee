@@ -35,8 +35,12 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
   역할 팔레트(`roles`)가 그 위에 선다. 사람이 앉힌 도안은 어느 후보에서도 안
   움직인다.
 - 윗면 = 후드 인물(도안 재사용) + 지붕 블랙아웃.
-- **글자는 안 넣는다** — 스폰서 이름·넘버판 숫자 같은 텍스트는 어휘에 없다.
-  자동으로 서는 것은 도안과 그것을 받치는 꾸밈뿐이다.
+- **글자는 기본으로 안 넣는다** — 스폰서 이름·넘버판 숫자 같은 텍스트는 어휘에
+  없다. 사람이 캐릭터 이름을 **넣기로 하면**(`textspec.TextSpec`) 그 글자가 꾸밈의
+  한 요소로 후보에 들어간다: 커스텀 텍스트 도안(동봉 OFL 글꼴 → 막대·원,
+  `engine.textglyph`)이 기본이고 면 예산이 모자라면 층을 낮추다(A→B→C) 게임 글꼴
+  비닐(D)로 물러나고 그래도 안 되면 뺀다(E) (`textbudget`). 자리는 필드가 정한다
+  (`textlayout` — 워드마크 · 로커 위 · 사인) 그리고 점수가 고른다 (`textscore`).
 
 ## 크기는 계산해서 나온다
 
@@ -66,6 +70,13 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
     families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
     score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
+    textspec    텍스트 스펙 — 사람이 넣은 이름·작품명과 옵션 (기본 꺼짐).
+    textstyle   텍스트 스타일 — 계열·인상이 글꼴을, 역할 팔레트가 색을 준다.
+    textbudget  텍스트 예산 — 남은 장수·우선순위로 층(A~E)을 정한다.
+    textlayout  텍스트 배치 — 워드마크 · 로커 위 · 사인 포즈를 필드에서 찾는다.
+    textbuild   텍스트 조립 — 포즈 + 층 → 프레임 좌표 레이어 (또는 게임 글자 명세).
+    textscore   텍스트 점수 — 가독성 · 가림 · 흐름 · 어수선 · 위계.
+    facetext    다른 면의 글자 — 자리를 못 박았을 때 (rear · hood · roof · window).
     design      구성 설계 — 후보 생성 + 평가 + 선택 (옆면 꾸밈 그룹의 머리).
     rigs        차 한 대의 면 지도와 옆면 뼈대 — 실측이 프리셋보다 우선한다.
     groups      구성 파일의 그룹 항목 — 플랜 파일을 쓰고 그것을 가리킨다.
@@ -131,6 +142,12 @@ from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
 from .score import ScoreCard, score_design
 from .design import DECO_FRAME_FILL, Design, compose_design
+from .textspec import PLACEMENTS as TEXT_PLACEMENTS, STYLES as TEXT_STYLES, TextSpec
+from .textbudget import TextPlan, plan_tiers
+from .textlayout import TextPose, layout_sets
+from .textbuild import TextSet, build_text_sets
+from .textscore import TEXT_WEIGHTS, text_parts
+from .facetext import face_text
 from .rigs import (
     _arch_fallback, _avoid_on, _bumper_seed, _hood_seed, _place_for, carfiles_pick,
     probe_ok, side_rigs, surfaces_for)
