@@ -218,6 +218,13 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     def _snap(name):
         if _stg:
             plan.save(run_file(out, f"plan_{name}.json"))
+            # 단계별 선 구조 지표 — 어느 단이 이음을 되흔드는지 귀속용
+            if line_rec is not None:
+                import json as _json
+                from .celfit import stroke_metrics as _sm
+                run_file(out, f"struct_{name}.json").write_text(
+                    _json.dumps(_sm(plan, line_rec, cat, 900.0 / h)),
+                    encoding="utf-8")
     _grown_idx = stats.pop("_grown_idx", [])
     if _stg:
         import json as _json
