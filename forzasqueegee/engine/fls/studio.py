@@ -192,10 +192,20 @@ def _absorb(st: Studio) -> None:
     st.state["foreign"] = {
         name: entry["foreign"] for name, entry in chunks.items()
         if entry["foreign"]}
+    kept: list = []
     for d, n in zip(st.designs, decal_numbers(st.designs)):
         entry = chunks.get(d.get("surface") or "")
         if entry is None:
+            kept.append(d)
             continue
+        # 편집기에서 그 그룹을 **지웠으면** 조리법에서도 뺀다 — 안 그러면 다음
+        # 굽기에 도로 올라온다 (`FS:decal-<n>` · `-fit`·`-top` 따위 전부).
+        if not any(k == f"{DECAL}{n}" or k.startswith(f"{DECAL}{n}-")
+                   for k in entry["chunks"]):
+            st.notes.append(msg("{surface}: 편집기에서 지운 도안을 조리법에서 뺐다 — {name}",
+                                surface=d["surface"], name=Path(d["plan"]).name))
+            continue
+        kept.append(d)
         xf = None
         for key in (f"{DECAL}{n}-fit", f"{DECAL}{n}"):
             if key in entry["chunks"]:
@@ -213,6 +223,8 @@ def _absorb(st: Studio) -> None:
         d["mirror"] = sx < 0.0
         st.notes.append(msg("{surface}: 편집기에서 옮긴 자리를 받았다",
                             surface=d["surface"]))
+    if len(kept) != len(st.designs):
+        st.state["designs"] = kept
 
 
 # ────────────────────────────── 굽기 ──────────────────────────────
