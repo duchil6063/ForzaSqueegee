@@ -660,12 +660,19 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     # 만큼 뒤에서 채워야 후보 수가 안 줄어 어휘가 좁아지지 않는다
     rank = np.argsort(np.where(ok, res, np.inf))
     order, n_shape = [], 0
+    # 가늘기 자는 **이 호가 요구하는 비**보다 엄할 수 없다 — 폭 wtgt를 호
+    # 길이만큼 긋는 도형의 폭/길이는 정확히 wtgt/L이라, 절대 자(0.065)를 그대로
+    # 두면 31px보다 짧은 호(폭 2px)는 어떤 도형도 못 넘어 막대 사슬로
+    # 떨어진다. 실측(G1~G5) 짧은 마디(<15px) 이음의 30°대 지그재그가 이
+    # 자리다. 상수가 아니라 호에서 유도한다
+    arc_len = float(np.hypot(*np.diff(path, axis=0).T).sum())
+    slim_lim = max(_STROKE_SLIM, wtgt / max(arc_len, 1.0))
     for i in rank:
         if not ok[i] or len(order) >= _CURVE_TOP:
             break
         if line:
             tp, sl, wu = _placed_form(int(i), float(sx[i]), float(sy[i]))
-            if tp > _STROKE_TAPER or sl > _STROKE_SLIM:
+            if tp > _STROKE_TAPER or sl > slim_lim:
                 n_shape += 1
                 continue
             # **폭 충실도** — 놓인 폭이 원화 띠보다 이만큼 넘게 굵으면 획이
