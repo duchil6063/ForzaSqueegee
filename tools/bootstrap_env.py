@@ -28,6 +28,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# 파이프·리다이렉트에선 stdout이 콘솔 코드페이지(cp949 등)로 떨어져 한글이나
+# `—` 한 글자에 UnicodeEncodeError로 죽는다 — elevate.ensure_std_streams와 같은
+# 보호인데, 이 스크립트들은 독립 실행이라 여기 따로 둔다.
+for _s in (sys.stdout, sys.stderr):
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
+            pass
+
 # pip 부트스트랩 휠 — 임베더블에는 pip이 없어 이것부터 앉힌다. 휠은 zip이라
 # sys.path에 얹으면 그 안의 pip이 그대로 돌고, 그 pip으로 자신을 설치한다.
 _PIP_FILE = "pip-26.2.1-py3-none-any.whl"
@@ -38,10 +48,7 @@ _PIP_SHA = "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e"
 
 
 def _say(*a: object) -> None:
-    try:
-        print(*a, flush=True)
-    except UnicodeEncodeError:      # 파이프가 좁은 코드페이지일 때
-        print(str(a).encode("ascii", "replace").decode(), flush=True)
+    print(*a, flush=True)           # flush — 파이프 너머에서도 진행이 바로 보이게
 
 
 def _runtime_dir() -> Path | None:

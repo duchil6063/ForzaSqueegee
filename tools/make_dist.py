@@ -32,6 +32,17 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# 파이프·리다이렉트에선 stdout이 콘솔 코드페이지(cp949 등)로 떨어져 한글이나
+# `—` 한 글자에 UnicodeEncodeError로 죽는다 — elevate.ensure_std_streams와 같은
+# 보호인데, 이 스크립트들은 독립 실행이라 여기 따로 둔다.
+for _s in (sys.stdout, sys.stderr):
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
+            pass
+
 sys.path.insert(0, str(ROOT))
 
 # 실행에 필요한 것 — git이 추적하는 것 중에서 고른다 (기록·개인 파일이 안 샌다).

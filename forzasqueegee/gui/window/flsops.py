@@ -140,7 +140,8 @@ class _FlsOps:
             import sys
 
             r = subprocess.run([sys.executable, str(ROOT / "tools" / "get_fls.py")],
-                               capture_output=True, text=True, timeout=900)
+                               capture_output=True, timeout=900,
+                               encoding="utf-8", errors="replace")
             self._log((r.stdout or "") + (r.stderr or ""))
         except BaseException as e:            # noqa: BLE001
             self._msg(f"{type(e).__name__}: {e}", bad=True)

@@ -8,8 +8,8 @@
     python tools/check_env.py --quiet  # 찍지 않고 코드만
     python tools/check_env.py --deep   # 판 대조에 더해 실제로 임포트까지 해 본다
 
-표준 라이브러리만 쓴다 — 꾸러미가 아직 없을 때 도는 자리다. 출력은 콘솔
-코드페이지(cp949)에 실리므로 ASCII 문장부호만 쓴다.
+표준 라이브러리만 쓴다 — 꾸러미가 아직 없을 때 도는 자리다. stdout은 UTF-8
+(replace)로 돌려 앉히므로 파이프에 물려도 출력이 안 죽는다.
 """
 
 from __future__ import annotations
@@ -19,6 +19,16 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# 파이프·리다이렉트에선 stdout이 콘솔 코드페이지(cp949 등)로 떨어져 한글이나
+# `—` 한 글자에 UnicodeEncodeError로 죽는다 — elevate.ensure_std_streams와 같은
+# 보호인데, 이 스크립트들은 독립 실행이라 여기 따로 둔다.
+for _s in (sys.stdout, sys.stderr):
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
+            pass
 
 
 def _pins() -> tuple[list[tuple[str, str]], tuple[int, int] | None, tuple[int, int] | None]:

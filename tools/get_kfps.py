@@ -33,6 +33,17 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# 파이프·리다이렉트에선 stdout이 콘솔 코드페이지(cp949 등)로 떨어져 한글이나
+# `—` 한 글자에 UnicodeEncodeError로 죽는다 — elevate.ensure_std_streams와 같은
+# 보호인데, 이 스크립트들은 독립 실행이라 여기 따로 둔다.
+for _s in (sys.stdout, sys.stderr):
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
+            pass
+
 DEST = ROOT / "vendor" / "kfps-editor" / "Resources"
 
 REPO = "heyitshestia/kloudys-forza-painter-suite"
@@ -110,7 +121,8 @@ def _fetch_git(work: Path, log) -> Path | None:
         [git, "checkout", "-q", "FETCH_HEAD"],
     ]
     for cmd in cmds:
-        r = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=work, capture_output=True,
+                           encoding="utf-8", errors="replace")
         if r.returncode != 0:
             log(f"  git 실패 ({' '.join(cmd[1:3])}) — {r.stderr.strip()[:200]}")
             return None

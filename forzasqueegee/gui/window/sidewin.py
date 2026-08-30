@@ -79,7 +79,8 @@ class _SideWindows:
         self.show_log.setChecked(True)
         try:
             r = subprocess.run([sys.executable, str(ROOT / "tools" / "get_kfps.py")],
-                               capture_output=True, text=True, timeout=1800)
+                               capture_output=True, timeout=1800,
+                               encoding="utf-8", errors="replace")
             self._log((r.stdout or "") + (r.stderr or ""))
         except BaseException as e:            # noqa: BLE001 — 창이 죽으면 안 된다
             self._msg(f"{type(e).__name__}: {e}", bad=True)
