@@ -46,9 +46,18 @@ _P_HOLE = 8000.0
 _EPS = 1.0            # 이보다 못 버는 이동은 무시 (부동소수 채터 방지)
 _MAX_WALK = 8         # 같은 방향 연속 스텝 상한
 
-# (속성, 게임 양자화 스텝) — 짧은 스텝 먼저 (대부분의 개선은 반 스텝이다)
-_AXES = (("x", 0.5), ("y", 0.5), ("x", 1.0), ("y", 1.0),
-         ("sx", 0.01), ("sy", 0.01), ("rot", 0.1), ("rot", 0.4))
+# 수 하나 = (속성, 게임 양자화 스텝)의 묶음 — 짧은 스텝 먼저 (대부분의 개선은
+# 반 스텝이다). 홑 축 여덟 뒤에 **한쪽 변 수** 넷이 선다: 이동과 스케일을 한
+# 스텝으로 묶으면 반대쪽 변을 (거의) 붙든 채 한 변만 물러서거나 나아간다.
+# 축을 하나씩 밟는 하강에는 이 수가 없다 — 이동만 하면 양 변이 같이 밀리고
+# 스케일만 줄이면 양 변이 같이 물러서서, 낮은 대비 경계를 한 변만 넘어간
+# 도형이 국소 최적에 갇힌다 (실측 X3-01 허벅지: 목표 celΔ0 자리의 색조 계단.
+# 그 계단은 ΔE 4~12라 수리 문턱 아래고, 이 패스만이 만질 수 있는 자리다).
+# 바깥 sign 루프가 두 성분의 부호를 함께 뒤집으므로 궤도 대표 넷이면 여덟 수다.
+_AXES = ((("x", 0.5),), (("y", 0.5),), (("x", 1.0),), (("y", 1.0),),
+         (("sx", 0.01),), (("sy", 0.01),), (("rot", 0.1),), (("rot", 0.4),),
+         (("x", 0.5), ("sx", -0.01)), (("x", 0.5), ("sx", 0.01)),
+         (("y", 0.5), ("sy", -0.01)), (("y", 0.5), ("sy", 0.01)))
 
 
 def _win_mask(cat: Catalog, lay: Layer, upp: float, w: int, h: int
@@ -212,17 +221,22 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             if progress and si % 250 == 0:
                 progress((p + si / len(todo)) / max_passes,
                          f"미세 조정 {p + 1}/{max_passes}")
-            for name, step in _AXES:
+            for combo in _AXES:
                 for sign in (1.0, -1.0):
                     for _ in range(_MAX_WALK):
                         lay = layers[i]
-                        v = getattr(lay, name) + sign * step * (
-                            1.0 if getattr(lay, name) >= 0
-                            or name not in ("sx", "sy") else -1.0)
-                        if name in ("sx", "sy") and abs(v) < 0.01:
-                            break
                         cand = Layer(**{**lay.__dict__})
-                        setattr(cand, name, v)
+                        dead = False
+                        for name, step in combo:
+                            v = getattr(cand, name) + sign * step * (
+                                1.0 if getattr(cand, name) >= 0
+                                or name not in ("sx", "sy") else -1.0)
+                            if name in ("sx", "sy") and abs(v) < 0.01:
+                                dead = True
+                                break
+                            setattr(cand, name, v)
+                        if dead:
+                            break
                         cand = cand.quantized()
                         res = try_move(i, cand)
                         if res is None or res[0] > -_EPS:
