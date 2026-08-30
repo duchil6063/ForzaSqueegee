@@ -194,6 +194,21 @@ def cmd_flsedit(args) -> int:
             said = studio.act_motif(st, args.family)
         elif args.action == "family":
             said = studio.act_family(st, args.composition)
+        elif args.action == "decorate":
+            text_fields = None
+            if args.text:
+                text_fields = {
+                    "main": args.text, "sub": args.subtext, "style": args.text_style,
+                    "placement": args.text_placement, "priority": args.text_priority,
+                    "allow_fallback_to_game_text": (
+                        None if args.game_text_fallback is None
+                        else args.game_text_fallback != "off"),
+                    "max_layers": args.text_max_layers, "outline": args.text_outline,
+                    "shadow": args.text_shadow}
+            said = studio.act_decorate(
+                st, composition=args.composition, motif=args.family,
+                paint=args.color, auto_paint=bool(args.auto_paint),
+                text=text_fields, drop_text=bool(args.no_text))
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))

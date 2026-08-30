@@ -522,6 +522,37 @@ def act_text(st: Studio, fields: dict) -> str:
                style=spec.style, place=spec.placement)
 
 
+def act_decorate(st: Studio, *, composition: str | None = None,
+                 motif: str | None = None, paint: str | None = None,
+                 auto_paint: bool = False, text: dict | None = None,
+                 drop_text: bool = False) -> str:
+    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자를 한 번에 받아 켠다.
+
+    편집기의 [Auto Decoration...] 대화상자가 부른다 (`flsedit decorate`). 준 것만
+    바꾼다 — `composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
+    `auto_paint`면 도안에서 고르고, `text`는 스펙 열쇠들(`main`이 비면 끈다),
+    `drop_text`면 글자를 뺀다. 마지막에 꾸밈을 켠다 — 이 창의 뜻이 그것이다."""
+    from .. import compose
+
+    said: list[str] = []
+    if composition is not None:
+        said.append(act_family(st, None if composition == "auto" else composition))
+    if motif is not None:
+        said.append(act_motif(st, None if motif == "auto" else motif))
+    if auto_paint:
+        said.append(act_base_paint(st, None, True))
+    elif paint is not None:
+        said.append(act_base_paint(st, paint, False))
+    if drop_text:
+        said.append(act_text(st, {"main": None}))
+    elif text is not None:
+        said.append(act_text(st, text))
+    st.state["deco"] = True
+    st.notes = [n for n in st.notes if "[Grow Decoration]" not in n]   # 이제 켰다
+    del compose
+    return msg("자동 꾸밈: {what}", what=" · ".join(said) if said else msg("그대로 짠다"))
+
+
 def act_family(st: Studio, family: str | None) -> str:
     """옆면 꾸밈의 **구성 계열**을 못 박거나(None이면 자동) 푼다.
 

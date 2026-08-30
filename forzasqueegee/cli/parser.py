@@ -285,11 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
                  "거의 없다 (편집기가 QSettings `itasha/command`로 부른다)"))
     p_fx.add_argument("action",
                       choices=("load-design", "auto-place", "decoration",
-                               "no-decoration", "motif", "family", "mirror",
-                               "base-paint", "text", "no-text",
+                               "no-decoration", "decorate", "motif", "family",
+                               "mirror", "base-paint", "text", "no-text",
                                "export", "export-group", "rebuild", "state"),
                       help=msg("load-design(도안 올리기) · auto-place(자동 자리) · "
                                "decoration/no-decoration(꾸밈) · motif(계열) · "
+                               "decorate(자동 꾸밈 창 — 계열·모티프·도색·글자를 한 번에) · "
                                "family(구성 계열) · mirror(좌우 대칭) · "
                                "base-paint(베이스 도색) · text/no-text(캐릭터 이름 글자) · "
                                "export(리버리 컨테이너) · export-group(비닐 그룹을 "
@@ -313,6 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help=msg("export-group의 갈래"))
     p_fx.add_argument("--color", default=None, metavar="#RRGGBB",
                       help=msg("base-paint 색 (안 주면 도안에서 고른다)"))
+    p_fx.add_argument("--auto-paint", action="store_true", dest="auto_paint",
+                      help=msg("decorate: 바탕 도색을 도안에서 고른다"))
+    p_fx.add_argument("--no-text", action="store_true", dest="no_text",
+                      help=msg("decorate: 글자를 뺀다"))
     p_fx.add_argument("--family", default=None,
                       help=msg("motif 계열 — star · flower · splat · swirl · crystal "
                                "(안 주면 도안의 테마색이 고른다)"))

@@ -1,0 +1,609 @@
+From 5327cc484a4537ba8ef38af2ae1dde5f9ae2e83b Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Mon, 31 Aug 2026 00:52:14 +0900
+Subject: [PATCH 4/4] itasha: an Auto Decoration dialog - family, motif, base
+ paint and name text in one place
+
+The scattered entries (Grow Decoration, Motif Family, Base Paint, and the
+composition family and name text the engine grew) become one dialog.
+Opening it reads the project's recipe (flsedit state) so it shows the
+current choices; Compose sends everything at once to the "decorate"
+action - composition family, motif family, base paint (from the design or
+a picked colour) and the optional character name text (name, title,
+style, placement, priority, outline, shadow, layer cap, game-font
+fallback) - and switches the decoration on. Drop Decoration stays. The
+last text input is also kept in QSettings itasha/text/*. Strings go to
+the engine as single QProcess arguments, so spaces and case survive.
+Korean entries for every new string.
+---
+ src/gui/app/main_window.h          |   3 +
+ src/gui/app/main_window_itasha.cpp | 396 ++++++++++++++++++++++++-----
+ src/gui/i18n.cpp                   | 110 ++++++++
+ 3 files changed, 452 insertions(+), 57 deletions(-)
+
+diff --git a/src/gui/app/main_window.h b/src/gui/app/main_window.h
+index 597f24f..0e939da 100644
+--- a/src/gui/app/main_window.h
++++ b/src/gui/app/main_window.h
+@@ -240,6 +240,9 @@ private:
+     void refreshSplitTally();
+     void applySplit();
+     void setupItashaMenu();
++    void showItashaDecorationDialog();
++    bool saveProjectForItasha(QString *projectPath);
++    QJsonObject itashaState();
+     bool runItashaAction(const QString &action, const QStringList &extra = {},
+                          bool needLivery = true, bool reload = true);
+     QStringList itashaCommand() const;
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 6058e7d..5009a9e 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -29,9 +29,26 @@
+ 
+ #include <QAction>
+ #include <QApplication>
++#include <QCheckBox>
+ #include <QColor>
+ #include <QColorDialog>
++#include <QComboBox>
++#include <QDialog>
++#include <QDialogButtonBox>
+ #include <QDir>
++#include <QFormLayout>
++#include <QGroupBox>
++#include <QHBoxLayout>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QLabel>
++#include <QLineEdit>
++#include <QPushButton>
++#include <QSpinBox>
++#include <QVBoxLayout>
++
++#include <iterator>
+ #include <QFileDialog>
+ #include <QGuiApplication>
+ #include <QMenu>
+@@ -57,6 +74,40 @@ constexpr int kItashaTimeoutMs = 30 * 60 * 1000;   // 도안 하나가 몇 분 
+ const char *const kMotifFamilies[] = {"star", "flower", "splat", "swirl",
+                                       "crystal"};
+ 
++// Composition families the side decoration is built from (engine/compose/
++// families.py). Auto builds every candidate and keeps the best-scoring one.
++struct CompositionFamily {
++    const char *name;
++    const char *text;
++    const char *tip;
++};
++
++const CompositionFamily kCompositionFamilies[] = {
++    {"minimal", "&Minimal",
++     "A thin slab, a few motifs, lots of empty space"},
++    {"graphic_bed", "&Graphic Bed",
++     "A big colour plate behind the character carries the composition"},
++    {"diagonal_flow", "&Diagonal Flow",
++     "Two diagonal plates run past the character; motifs follow the grain"},
++    {"motorsport", "Moto&rsport",
++     "Rocker, stripes and straight lines - a low slab, few motifs"},
++    {"splash", "&Splash",
++     "A blob bed with torn edges and many motifs, some over the artwork"},
++};
++
++// Text styles, placements and priorities the engine accepts
++// (engine/compose/textspec.py). The first entry of each list is the default.
++const char *const kTextStyles[] = {"auto", "script", "brush", "graffiti",
++                                   "racing", "techno", "minimal", "game"};
++const char *const kTextPlacements[] = {"auto", "side", "rear", "hood", "roof",
++                                       "window"};
++const char *const kTextPriorities[] = {"normal", "high", "low"};
++const char *const kTextTri[] = {"auto", "on", "off"};
++
++// The last text the user typed comes back the next time the dialog opens -
++// a name is typed once and tweaked many times.
++constexpr auto kItashaTextKey = "itasha/text";
++
+ // Exporting a vinyl group: the same design, in the three formats the tools
+ // share.
+ struct GroupFormat {
+@@ -191,63 +242,29 @@ void MainWindow::setupItashaMenu() {
+     // move one of the two groups.
+     //
+     // Decoration is off until it is asked for. Loading a design puts the
+-    // artwork on the car and nothing else; bands, motifs and the roof blackout
+-    // grow only when someone picks this entry, and stay on from then until
+-    // Drop Decoration.
+-    addLiveryEntry(itashaMenu_,
+-                   i18n::t("Grow &Decoration (bands, motifs, roof)"),
+-                   QStringLiteral("decoration"),
+-                   i18n::t("Grow the bands, scattered motifs and roof "
+-                                  "blackout around the artwork. Off until you "
+-                                  "ask for it."));
++    // artwork on the car and nothing else; bands, bed, motifs, roof blackout
++    // and (if typed) the name text grow only when someone accepts this dialog,
++    // and stay on from then until Drop Decoration. Everything the decoration
++    // can be told - composition family, motif family, base paint, text - lives
++    // in the one dialog, prefilled from the project's recipe.
++    QAction *decorate = itashaMenu_->addAction(i18n::t("&Auto Decoration..."));
++    decorate->setStatusTip(i18n::t(
++        "Compose the decoration around the artwork - composition family, motif "
++        "family, base paint and the character's name text, all in one dialog"));
++    connect(decorate, &QAction::triggered, this,
++            &MainWindow::showItashaDecorationDialog);
++    itashaLiveryActions_.push_back(decorate);
+     addLiveryEntry(itashaMenu_, i18n::t("Drop Decoration (artwork &only)"),
+                    QStringLiteral("no-decoration"),
+                    i18n::t("Leave only the artwork - no bands, motifs or "
+                                   "roof blackout. The base paint stays."));
+ 
+-    QMenu *motif = itashaMenu_->addMenu(i18n::t("&Motif Family"));
+-    motif->setStatusTip(i18n::t(
+-        "Which family the scattered decoration draws from. The design's theme "
+-        "colour picks one; a character you know is better picked by hand. "
+-        "Picking a family does not switch the decoration on."));
+-    addLiveryEntry(motif, i18n::t("&Auto (the design picks)"),
+-                   QStringLiteral("motif"),
+-                   i18n::t("Let the design's theme colour choose"));
+-    for (const char *family : kMotifFamilies) {
+-        const QString name = QString::fromLatin1(family);
+-        const QString displayName = i18n::t(name.at(0).toUpper() + name.mid(1));
+-        addLiveryEntry(motif, displayName,
+-                       QStringLiteral("motif"),
+-                       i18n::t("Use the %1 family").arg(displayName),
+-                       {QStringLiteral("--family"), name});
+-    }
+-
+     itashaMenu_->addSeparator();
+     addLiveryEntry(itashaMenu_, i18n::t("Mirror Left/&Right"),
+                    QStringLiteral("mirror"),
+                    i18n::t("Copy the side and door-glass panels onto "
+                                   "their mirrored counterparts"));
+ 
+-    QMenu *paint = itashaMenu_->addMenu(i18n::t("&Base Paint"));
+-    paint->setStatusTip(i18n::t(
+-        "The single colour the whole car is painted. It is paint, not vinyl - "
+-        "it costs no layers and carries a gloss no decal can."));
+-    addLiveryEntry(paint, i18n::t("&From the Design"),
+-                   QStringLiteral("base-paint"),
+-                   i18n::t("Choose the colour from the artwork"));
+-    QAction *pick = paint->addAction(i18n::t("&Pick Colour..."));
+-    pick->setStatusTip(i18n::t("Paint the car a colour you choose"));
+-    connect(pick, &QAction::triggered, this, [this]() {
+-        const QColor chosen = QColorDialog::getColor(
+-            Qt::white, this, i18n::t("Base Paint"));
+-        if (!chosen.isValid()) {
+-            return;
+-        }
+-        runItashaAction(QStringLiteral("base-paint"),
+-                        {QStringLiteral("--color"), chosen.name(QColor::HexRgb)});
+-    });
+-    itashaLiveryActions_.push_back(pick);
+-
+     itashaMenu_->addSeparator();
+     QAction *exportLivery = itashaMenu_->addAction(
+         i18n::t("&Export to Game Container..."));
+@@ -343,6 +360,279 @@ void MainWindow::refreshItashaMenu() {
+     }
+ }
+ 
++bool MainWindow::saveProjectForItasha(QString *projectPath) {
++    // The engine works on a saved project, so an unsaved one goes to the work
++    // folder first and stays there - reopening it later is the user's business.
++    QString path = projectJsonPath_;
++    if (path.isEmpty()) {
++        path = QDir(itashaWorkDir()).filePath(
++            mw_detail::safeGroupName(state_->project_.name) + QStringLiteral(".3so"));
++    }
++    QString error;
++    if (!saveProjectJson(path, &error)) {
++        QMessageBox::critical(this, i18n::t("Itasha"), error);
++        return false;
++    }
++    projectJsonPath_ = path;
++    *projectPath = path;
++    return true;
++}
++
++QJsonObject MainWindow::itashaState() {
++    // The recipe the engine keeps beside the project - what the dialog is
++    // prefilled from. Empty when there is no engine or no project yet.
++    const QStringList command = itashaCommand();
++    if (command.isEmpty() || state_ == nullptr || !state_->hasProject()) {
++        return {};
++    }
++    QString projectPath;
++    if (!saveProjectForItasha(&projectPath)) {
++        return {};
++    }
++    QStringList arguments = command.mid(1);
++    arguments << QStringLiteral("state") << QStringLiteral("--project") << projectPath;
++    QSettings settings;
++    const QString cwd = settings.value(QLatin1String(kItashaCwdKey)).toString();
++    QProcess process;
++    if (!cwd.isEmpty()) {
++        process.setWorkingDirectory(cwd);
++    }
++    process.start(command.first(), arguments);
++    if (!process.waitForFinished(kItashaTimeoutMs) || process.exitCode() != 0) {
++        return {};
++    }
++    const QByteArray out = process.readAllStandardOutput();
++    // The state is the last JSON object in the output (notes may precede it).
++    const int brace = out.indexOf('{');
++    if (brace < 0) {
++        return {};
++    }
++    return QJsonDocument::fromJson(out.mid(brace)).object();
++}
++
++void MainWindow::showItashaDecorationDialog() {
++    if (itashaCommand().isEmpty()) {
++        runItashaAction(QStringLiteral("decoration"));   // shows the "no engine" note
++        return;
++    }
++    const QJsonObject state = itashaState();
++    const QJsonObject textState = state.value(QStringLiteral("text")).toObject();
++    QSettings settings;
++    settings.beginGroup(QLatin1String(kItashaTextKey));
++
++    QDialog dialog(this);
++    dialog.setWindowTitle(i18n::t("Auto Decoration"));
++    auto *layout = new QVBoxLayout(&dialog);
++    auto *intro = new QLabel(i18n::t(
++        "The decoration is composed around the artwork you placed - the "
++        "artwork itself never moves. Auto lets the engine build every "
++        "candidate and keep the best-scoring one."), &dialog);
++    intro->setWordWrap(true);
++    layout->addWidget(intro);
++
++    const auto pickCombo = [&](QComboBox *box, const QString &value) {
++        const int at = box->findData(value);
++        box->setCurrentIndex(at < 0 ? 0 : at);
++    };
++
++    // ---- Composition ----
++    auto *compGroup = new QGroupBox(i18n::t("Composition"), &dialog);
++    auto *compForm = new QFormLayout(compGroup);
++    auto *composition = new QComboBox(compGroup);
++    composition->addItem(i18n::t("Auto (score picks)"), QStringLiteral("auto"));
++    for (const CompositionFamily &fam : kCompositionFamilies) {
++        composition->addItem(i18n::t(QString::fromLatin1(fam.text)).remove(QLatin1Char('&')),
++                             QString::fromLatin1(fam.name));
++        composition->setItemData(composition->count() - 1, i18n::t(fam.tip),
++                                 Qt::ToolTipRole);
++    }
++    pickCombo(composition, state.value(QStringLiteral("family")).toString(
++                               QStringLiteral("auto")));
++    composition->setToolTip(i18n::t(
++        "Which grammar the side decoration is composed in - bed, flow, density, "
++        "empty space. Auto builds every family and keeps the best-scoring one."));
++    compForm->addRow(i18n::t("Composition family:"), composition);
++    auto *motif = new QComboBox(compGroup);
++    motif->addItem(i18n::t("Auto (the design picks)"), QStringLiteral("auto"));
++    for (const char *family : kMotifFamilies) {
++        const QString name = QString::fromLatin1(family);
++        motif->addItem(i18n::t(name.at(0).toUpper() + name.mid(1)), name);
++    }
++    pickCombo(motif, state.value(QStringLiteral("motif")).toString(QStringLiteral("auto")));
++    motif->setToolTip(i18n::t(
++        "Which family the scattered decoration draws from. The design's theme "
++        "colour picks one; a character you know is better picked by hand."));
++    compForm->addRow(i18n::t("Motif family:"), motif);
++    layout->addWidget(compGroup);
++
++    // ---- Base paint ----
++    auto *paintGroup = new QGroupBox(i18n::t("Base Paint"), &dialog);
++    auto *paintRow = new QHBoxLayout(paintGroup);
++    auto *paintMode = new QComboBox(paintGroup);
++    paintMode->addItem(i18n::t("From the design"), QStringLiteral("auto"));
++    paintMode->addItem(i18n::t("Colour I pick"), QStringLiteral("pick"));
++    auto *swatch = new QPushButton(paintGroup);
++    swatch->setToolTip(i18n::t("Paint the car a colour you choose"));
++    QColor chosen = Qt::white;
++    const QJsonArray paintRgb = state.value(QStringLiteral("paint")).toArray();
++    if (paintRgb.size() == 3) {
++        chosen = QColor(paintRgb.at(0).toInt(), paintRgb.at(1).toInt(),
++                        paintRgb.at(2).toInt());
++        pickCombo(paintMode, QStringLiteral("pick"));
++    }
++    const auto showSwatch = [&]() {
++        swatch->setText(chosen.name(QColor::HexRgb).toUpper());
++        swatch->setStyleSheet(QStringLiteral("background:%1;color:%2;")
++                                  .arg(chosen.name(QColor::HexRgb),
++                                       chosen.lightness() < 128
++                                           ? QStringLiteral("white")
++                                           : QStringLiteral("black")));
++        swatch->setEnabled(paintMode->currentData().toString() == QStringLiteral("pick"));
++    };
++    showSwatch();
++    connect(paintMode, &QComboBox::currentIndexChanged, &dialog, [&]() { showSwatch(); });
++    connect(swatch, &QPushButton::clicked, &dialog, [&]() {
++        const QColor got = QColorDialog::getColor(chosen, &dialog, i18n::t("Base Paint"));
++        if (got.isValid()) {
++            chosen = got;
++            showSwatch();
++        }
++    });
++    paintRow->addWidget(paintMode, 1);
++    paintRow->addWidget(swatch, 1);
++    paintGroup->setToolTip(i18n::t(
++        "The single colour the whole car is painted. It is paint, not vinyl - "
++        "it costs no layers and carries a gloss no decal can."));
++    layout->addWidget(paintGroup);
++
++    // ---- Text ----
++    auto *textGroup = new QGroupBox(i18n::t("Character Name Text"), &dialog);
++    textGroup->setCheckable(true);
++    textGroup->setChecked(textState.value(QStringLiteral("enabled")).toBool(false));
++    textGroup->setToolTip(i18n::t(
++        "Put the character's name (and a title) into the decoration as a "
++        "wordmark - a custom decal from bundled fonts, or the game font when "
++        "layers run short"));
++    auto *textLayout = new QVBoxLayout(textGroup);
++    auto *textIntro = new QLabel(i18n::t(
++        "Spaces, case and punctuation are kept as typed; \\n breaks a line."),
++        textGroup);
++    textIntro->setWordWrap(true);
++    textLayout->addWidget(textIntro);
++    auto *form = new QFormLayout;
++    textLayout->addLayout(form);
++    const auto stateOr = [&](const char *key, const QString &fallback) {
++        const QJsonValue v = textState.value(QString::fromLatin1(key));
++        return v.isString() && !v.toString().isEmpty()
++                   ? v.toString()
++                   : settings.value(QString::fromLatin1(key), fallback).toString();
++    };
++    auto *name = new QLineEdit(stateOr("main", QString()), textGroup);
++    name->setPlaceholderText(QStringLiteral("Asuka Langley"));
++    form->addRow(i18n::t("Character name:"), name);
++    auto *title = new QLineEdit(stateOr("sub", QString()), textGroup);
++    title->setPlaceholderText(QStringLiteral("EVANGELION"));
++    form->addRow(i18n::t("Title / tagline (optional):"), title);
++    const auto combo = [&](const char *const *items, int count, const char *key) {
++        auto *box = new QComboBox(textGroup);
++        for (int i = 0; i < count; ++i) {
++            box->addItem(i18n::t(QString::fromLatin1(items[i])),
++                         QString::fromLatin1(items[i]));
++        }
++        pickCombo(box, stateOr(key, QString::fromLatin1(items[0])));
++        return box;
++    };
++    QComboBox *style = combo(kTextStyles, int(std::size(kTextStyles)), "style");
++    style->setToolTip(i18n::t(
++        "auto lets the composition family choose - script for soft beds, racing "
++        "and techno for diagonal and motorsport, brush and graffiti for splash. "
++        "game uses the game's own font vinyl."));
++    form->addRow(i18n::t("Style:"), style);
++    QComboBox *placement = combo(kTextPlacements, int(std::size(kTextPlacements)),
++                                 "placement");
++    placement->setToolTip(i18n::t(
++        "auto puts the wordmark beside the character on the sides; rear, hood, "
++        "roof and window pin it to that panel instead."));
++    form->addRow(i18n::t("Placement:"), placement);
++    QComboBox *priority = combo(kTextPriorities, int(std::size(kTextPriorities)),
++                                "priority");
++    priority->setToolTip(i18n::t(
++        "high keeps the name even if scattered motifs have to go; low gives it "
++        "half the layer budget."));
++    form->addRow(i18n::t("Priority:"), priority);
++    QComboBox *outline = combo(kTextTri, int(std::size(kTextTri)), "outline");
++    form->addRow(i18n::t("Outline:"), outline);
++    QComboBox *shadow = combo(kTextTri, int(std::size(kTextTri)), "shadow");
++    form->addRow(i18n::t("Shadow:"), shadow);
++    auto *maxLayers = new QSpinBox(textGroup);
++    maxLayers->setRange(0, 3000);
++    maxLayers->setSpecialValueText(i18n::t("no cap"));
++    maxLayers->setValue(textState.value(QStringLiteral("max_layers")).toInt(
++        settings.value(QStringLiteral("maxLayers"), 0).toInt()));
++    maxLayers->setToolTip(i18n::t(
++        "Layers the text may use. 0 lets the panel budget decide - the engine "
++        "steps down from a full custom decal to a simpler one, then to the game "
++        "font, then drops the text."));
++    form->addRow(i18n::t("Layer cap:"), maxLayers);
++    auto *fallback = new QCheckBox(
++        i18n::t("Fall back to the game font when layers run short"), textGroup);
++    fallback->setChecked(textState.value(QStringLiteral("allow_fallback_to_game_text"))
++                             .toBool(settings.value(QStringLiteral("fallback"), true).toBool()));
++    textLayout->addWidget(fallback);
++    layout->addWidget(textGroup);
++
++    auto *buttons = new QDialogButtonBox(
++        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
++    buttons->button(QDialogButtonBox::Ok)->setText(i18n::t("Compose"));
++    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
++    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
++    layout->addWidget(buttons);
++
++    if (dialog.exec() != QDialog::Accepted) {
++        return;
++    }
++    QStringList extra{QStringLiteral("--composition"), composition->currentData().toString(),
++                      QStringLiteral("--family"), motif->currentData().toString()};
++    if (paintMode->currentData().toString() == QStringLiteral("pick")) {
++        extra << QStringLiteral("--color") << chosen.name(QColor::HexRgb);
++    } else {
++        extra << QStringLiteral("--auto-paint");
++    }
++    const QString main = name->text();
++    if (textGroup->isChecked() && !main.trimmed().isEmpty()) {
++        settings.setValue(QStringLiteral("main"), main);
++        settings.setValue(QStringLiteral("sub"), title->text());
++        settings.setValue(QStringLiteral("style"), style->currentData().toString());
++        settings.setValue(QStringLiteral("placement"), placement->currentData().toString());
++        settings.setValue(QStringLiteral("priority"), priority->currentData().toString());
++        settings.setValue(QStringLiteral("outline"), outline->currentData().toString());
++        settings.setValue(QStringLiteral("shadow"), shadow->currentData().toString());
++        settings.setValue(QStringLiteral("maxLayers"), maxLayers->value());
++        settings.setValue(QStringLiteral("fallback"), fallback->isChecked());
++        // The strings go to the engine untouched - QProcess passes each
++        // argument as one item, so spaces survive without any quoting here.
++        extra << QStringLiteral("--text") << main;
++        if (!title->text().trimmed().isEmpty()) {
++            extra << QStringLiteral("--subtext") << title->text();
++        }
++        extra << QStringLiteral("--text-style") << style->currentData().toString()
++              << QStringLiteral("--text-placement") << placement->currentData().toString()
++              << QStringLiteral("--text-priority") << priority->currentData().toString()
++              << QStringLiteral("--text-outline") << outline->currentData().toString()
++              << QStringLiteral("--text-shadow") << shadow->currentData().toString()
++              << QStringLiteral("--game-text-fallback")
++              << (fallback->isChecked() ? QStringLiteral("on") : QStringLiteral("off"));
++        if (maxLayers->value() > 0) {
++            extra << QStringLiteral("--text-max-layers")
++                  << QString::number(maxLayers->value());
++        }
++    } else {
++        extra << QStringLiteral("--no-text");
++    }
++    settings.endGroup();
++    runItashaAction(QStringLiteral("decorate"), extra);
++}
++
+ bool MainWindow::runItashaAction(const QString &action, const QStringList &extra,
+                                  bool needLivery, bool reload) {
+     const QStringList command = itashaCommand();
+@@ -370,19 +660,11 @@ bool MainWindow::runItashaAction(const QString &action, const QStringList &extra
+         return false;
+     }
+ 
+-    // The engine works on a saved project, so an unsaved one goes to the work
+-    // folder first and stays there - reopening it later is the user's business.
+-    QString projectPath = projectJsonPath_;
+-    if (projectPath.isEmpty()) {
+-        projectPath = QDir(itashaWorkDir()).filePath(
+-            mw_detail::safeGroupName(state_->project_.name) + QStringLiteral(".3so"));
+-    }
+-    QString error;
+-    if (!saveProjectJson(projectPath, &error)) {
+-        QMessageBox::critical(this, i18n::t("Itasha"), error);
++    QString projectPath;
++    if (!saveProjectForItasha(&projectPath)) {
+         return false;
+     }
+-    projectJsonPath_ = projectPath;
++    QString error;
+ 
+     // Panel geometry: the engine needs to know where the car's surface is to
+     // carry artwork across a seam, and the dump's file name tells it which car
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index e00074e..3f31df8 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -493,6 +493,116 @@ const Entry kTable[] = {
+     {"Swirl", "소용돌이"},
+     {"Crystal", "수정"},
+     {"Use the %1 family", "%1 계열을 씁니다"},
++    {"&Auto Decoration...", "자동 꾸밈(&A)..."},
++    {"Compose the decoration around the artwork - composition family, motif "
++     "family, base paint and the character's name text, all in one dialog",
++     "그림 둘레에 꾸밈을 짭니다 — 구성 계열·무늬 계열·바탕 도색·캐릭터 이름 "
++     "글자를 창 하나에서 정합니다"},
++    {"Auto Decoration", "자동 꾸밈"},
++    {"The decoration is composed around the artwork you placed - the "
++     "artwork itself never moves. Auto lets the engine build every "
++     "candidate and keep the best-scoring one.",
++     "꾸밈은 사람이 놓은 그림 둘레에 짜입니다 — 그림 자체는 움직이지 않습니다. "
++     "자동이면 엔진이 후보를 전부 지어 점수가 가장 높은 것을 씁니다."},
++    {"Composition", "구성"},
++    {"Auto (score picks)", "자동 (점수가 고름)"},
++    {"Composition family:", "구성 계열:"},
++    {"Auto (the design picks)", "자동 (도안이 고름)"},
++    {"Which family the scattered decoration draws from. The design's theme "
++     "colour picks one; a character you know is better picked by hand.",
++     "흩뿌린 꾸밈이 어느 계열에서 나올지 정합니다. 도안의 주제색이 하나를 "
++     "고르지만, 아는 캐릭터라면 직접 고르는 편이 낫습니다."},
++    {"Motif family:", "무늬 계열:"},
++    {"From the design", "도안에서 고르기"},
++    {"Colour I pick", "직접 고른 색"},
++    {"Spaces, case and punctuation are kept as typed; \\n breaks a line.",
++     "띄어쓰기·대소문자·구두점은 친 그대로 지켜지고, \\n은 줄바꿈입니다."},
++    {"Compose", "짓기"},
++    {"&Composition Family", "구성 계열(&C)"},
++    {"Which grammar the side decoration is composed in - bed, flow, density, "
++     "empty space. Auto builds every family and keeps the best-scoring one.",
++     "옆면 꾸밈을 어느 문법으로 짤지 정합니다 — 받침판·흐름·밀도·여백. 자동은 "
++     "모든 계열을 후보로 지어 점수가 가장 높은 것을 씁니다."},
++    {"&Auto (score picks)", "자동(&A) (점수가 고름)"},
++    {"Build every family as a candidate and keep the best",
++     "모든 계열을 후보로 지어 가장 좋은 것을 씁니다"},
++    {"&Minimal", "미니멀(&M)"},
++    {"A thin slab, a few motifs, lots of empty space",
++     "얇은 띠판 하나, 무늬 몇 개, 넉넉한 여백"},
++    {"&Graphic Bed", "그래픽 받침판(&G)"},
++    {"A big colour plate behind the character carries the composition",
++     "캐릭터 뒤의 큰 색면이 구도를 잡습니다"},
++    {"&Diagonal Flow", "사선 흐름(&D)"},
++    {"Two diagonal plates run past the character; motifs follow the grain",
++     "사선 판 둘이 캐릭터를 지나 흐르고 무늬가 그 결을 따릅니다"},
++    {"Moto&rsport", "모터스포츠(&R)"},
++    {"Rocker, stripes and straight lines - a low slab, few motifs",
++     "로커·스트라이프 같은 직선 요소 — 낮은 띠판, 적은 무늬"},
++    {"&Splash", "스플래시(&S)"},
++    {"A blob bed with torn edges and many motifs, some over the artwork",
++     "뜯긴 가장자리의 덩어리 받침판과 많은 무늬 — 일부는 그림 위로"},
++    {"Character Name &Text...", "캐릭터 이름 글자(&T)..."},
++    {"Put the character's name (and a title) into the decoration as a "
++     "wordmark - a custom decal from bundled fonts, or the game font when "
++     "layers run short",
++     "캐릭터 이름(과 작품명)을 워드마크로 꾸밈에 넣습니다 — 동봉 글꼴로 만든 "
++     "커스텀 데칼이고, 레이어가 모자라면 게임 글꼴로 물러납니다"},
++    {"Remove Text", "글자 빼기"},
++    {"Take the name text out of the decoration", "꾸밈에서 이름 글자를 뺍니다"},
++    {"Character Name Text", "캐릭터 이름 글자"},
++    {"The name goes into the decoration as a wordmark. Spaces, case and "
++     "punctuation are kept as typed; \\n breaks a line.",
++     "이름이 워드마크로 꾸밈에 들어갑니다. 띄어쓰기·대소문자·구두점은 친 그대로 "
++     "지켜지고, \\n은 줄바꿈입니다."},
++    {"Character name:", "캐릭터 이름:"},
++    {"Title / tagline (optional):", "작품명 / 태그라인 (선택):"},
++    {"auto lets the composition family choose - script for soft beds, racing "
++     "and techno for diagonal and motorsport, brush and graffiti for splash. "
++     "game uses the game's own font vinyl.",
++     "auto는 구성 계열이 고릅니다 — 부드러운 받침판엔 필기체, 사선·모터스포츠엔 "
++     "레이싱·테크노, 스플래시엔 붓·그래피티. game은 게임 자체 글꼴 비닐을 씁니다."},
++    {"Style:", "스타일:"},
++    {"auto puts the wordmark beside the character on the sides; rear, hood, "
++     "roof and window pin it to that panel instead.",
++     "auto는 옆면 캐릭터 곁에 워드마크를 둡니다. rear·hood·roof·window는 그 "
++     "구획에 못 박습니다."},
++    {"Placement:", "자리:"},
++    {"high keeps the name even if scattered motifs have to go; low gives it "
++     "half the layer budget.",
++     "high는 흩뿌린 무늬를 빼서라도 이름을 지킵니다. low는 레이어 예산을 절반만 "
++     "줍니다."},
++    {"Priority:", "우선순위:"},
++    {"Outline:", "테두리:"},
++    {"Shadow:", "그림자:"},
++    {"no cap", "상한 없음"},
++    {"Layers the text may use. 0 lets the panel budget decide - the engine "
++     "steps down from a full custom decal to a simpler one, then to the game "
++     "font, then drops the text.",
++     "글자가 쓸 수 있는 레이어 수. 0이면 구획 예산이 정합니다 — 엔진이 온전한 "
++     "커스텀 데칼에서 단순한 것으로, 다음 게임 글꼴로 내려가고, 그래도 안 되면 "
++     "글자를 뺍니다."},
++    {"Layer cap:", "레이어 상한:"},
++    {"Fall back to the game font when layers run short",
++     "레이어가 모자라면 게임 글꼴로 물러나기"},
++    {"Type a character name first.", "먼저 캐릭터 이름을 입력하세요."},
++    {"script", "필기체"},
++    {"brush", "붓글씨"},
++    {"graffiti", "그래피티"},
++    {"racing", "레이싱"},
++    {"techno", "테크노"},
++    {"minimal", "미니멀"},
++    {"game", "게임 글꼴"},
++    {"side", "옆면"},
++    {"rear", "뒷면"},
++    {"hood", "보닛"},
++    {"roof", "지붕"},
++    {"window", "유리"},
++    {"normal", "보통"},
++    {"high", "높음"},
++    {"low", "낮음"},
++    {"auto", "자동"},
++    {"on", "켬"},
++    {"off", "끔"},
+     {"Mirror Left/&Right", "좌우 대칭(&R)"},
+     {"Copy the side and door-glass panels onto "
+      "their mirrored counterparts",
