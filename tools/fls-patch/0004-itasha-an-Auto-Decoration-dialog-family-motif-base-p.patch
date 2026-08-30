@@ -1,4 +1,4 @@
-From 5327cc484a4537ba8ef38af2ae1dde5f9ae2e83b Mon Sep 17 00:00:00 2001
+From dd6ea8805fae378a57f5fd401ce6a10b6aa4282a Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Mon, 31 Aug 2026 00:52:14 +0900
 Subject: [PATCH 4/4] itasha: an Auto Decoration dialog - family, motif, base
@@ -36,7 +36,7 @@ index 597f24f..0e939da 100644
                           bool needLivery = true, bool reload = true);
      QStringList itashaCommand() const;
 diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
-index 6058e7d..5009a9e 100644
+index 6058e7d..ad07a38 100644
 --- a/src/gui/app/main_window_itasha.cpp
 +++ b/src/gui/app/main_window_itasha.cpp
 @@ -29,9 +29,26 @@
@@ -125,7 +125,7 @@ index 6058e7d..5009a9e 100644
 +    // and stay on from then until Drop Decoration. Everything the decoration
 +    // can be told - composition family, motif family, base paint, text - lives
 +    // in the one dialog, prefilled from the project's recipe.
-+    QAction *decorate = itashaMenu_->addAction(i18n::t("&Auto Decoration..."));
++    QAction *decorate = itashaMenu_->addAction(i18n::t("Auto &Decoration..."));
 +    decorate->setStatusTip(i18n::t(
 +        "Compose the decoration around the artwork - composition family, motif "
 +        "family, base paint and the character's name text, all in one dialog"));
@@ -487,14 +487,14 @@ index 6058e7d..5009a9e 100644
      // Panel geometry: the engine needs to know where the car's surface is to
      // carry artwork across a seam, and the dump's file name tells it which car
 diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
-index e00074e..3f31df8 100644
+index e00074e..4053a55 100644
 --- a/src/gui/i18n.cpp
 +++ b/src/gui/i18n.cpp
 @@ -493,6 +493,116 @@ const Entry kTable[] = {
      {"Swirl", "소용돌이"},
      {"Crystal", "수정"},
      {"Use the %1 family", "%1 계열을 씁니다"},
-+    {"&Auto Decoration...", "자동 꾸밈(&A)..."},
++    {"Auto &Decoration...", "자동 꾸밈(&D)..."},
 +    {"Compose the decoration around the artwork - composition family, motif "
 +     "family, base paint and the character's name text, all in one dialog",
 +     "그림 둘레에 꾸밈을 짭니다 — 구성 계열·무늬 계열·바탕 도색·캐릭터 이름 "
