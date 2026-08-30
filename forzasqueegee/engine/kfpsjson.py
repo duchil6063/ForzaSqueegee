@@ -49,6 +49,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from ..paths import run_file
 from .catalog import Catalog, default_catalog_path
 from .model import UNITS_PER_SCALE, Layer, LayerPlan
@@ -250,7 +251,7 @@ def import_kfps(src: str | Path | dict, *,
         json.loads(src_path.read_text(encoding="utf-8"))
     shapes = data.get("shapes") if isinstance(data, dict) else data
     if not isinstance(shapes, list) or not shapes:
-        raise ValueError("KFPS JSON이 아니다 — {'shapes': [...]}여야 한다")
+        raise ValueError(msg("KFPS JSON이 아니다 — {'shapes': [...]}여야 한다"))
     typed = [sp for sp in shapes if isinstance(sp, dict)]
     if any(int(sp.get("type", 0) or 0) > 1000000 or "type_word" in sp
            for sp in typed):
@@ -298,7 +299,7 @@ def _import_typecode(shapes: list[dict],
             alpha=100.0 if mask else round(a255 / 255.0 * 100.0, 2),
             label="mask" if mask else "kfps", mask=mask).quantized())
     if not layers:
-        raise ValueError("옮길 수 있는 도형이 하나도 없다")
+        raise ValueError(msg("옮길 수 있는 도형이 하나도 없다"))
     plan = LayerPlan(source_image=source_image, layers=layers)
     plan.image_size, plan.units_per_px = _fit_canvas(layers)
     return plan, {"kind": "typecode", "layers": len(layers),
@@ -393,7 +394,7 @@ def _import_legacy(shapes: list[dict], source_image: str,
             continue
         plan.layers.append(lay)
     if not plan.layers:
-        raise ValueError("옮길 수 있는 도형이 하나도 없다")
+        raise ValueError(msg("옮길 수 있는 도형이 하나도 없다"))
     return plan, {"kind": "legacy", "layers": len(plan.layers),
                   "masks": 0, "invisible": invisible, "unknown": {},
                   "size_from": how}

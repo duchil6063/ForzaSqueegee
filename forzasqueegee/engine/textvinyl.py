@@ -40,6 +40,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..i18n import msg
 from .catalog import Catalog, default_catalog_path
 from .model import UNITS_PER_SCALE, Layer, LayerPlan
 
@@ -125,7 +126,8 @@ def font_groups(font: str) -> tuple[str, str]:
     if "/" in font:
         a, b = font.split("/", 1)
         return a.strip(), b.strip()
-    raise ValueError(f"모르는 글꼴: {font} (아는 것: {', '.join(sorted(FONTS))})")
+    raise ValueError(msg("모르는 글꼴: {font} (아는 것: {known})",
+                         font=font, known=", ".join(sorted(FONTS))))
 
 
 def has_em_box(cat: Catalog, group: str) -> bool:
@@ -269,8 +271,9 @@ def text_layers(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
     space = font_space(font) if space is None else space
     bad = supported(text, font, cat)
     if bad:
-        raise ValueError(f"이 글꼴에 없는 글자: {''.join(bad)} "
-                         f"(글꼴 {font} — A~Z a~z 0~9 ! ? @ & 가 든다)")
+        raise ValueError(msg("이 글꼴에 없는 글자: {chars} "
+                             "(글꼴 {font} — A~Z a~z 0~9 ! ? @ & 가 든다)",
+                             chars="".join(bad), font=font))
     s = height / (cap_height(cat, font) * UNITS_PER_SCALE)
     layers: list[Layer] = []
     pen = 0.0
@@ -302,7 +305,7 @@ def text_layers(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
         y1 = max(y1, gb.y1 * UNITS_PER_SCALE * s)
         pen = gx1 + tracking * height
     if not layers:
-        raise ValueError("빈 문자열")
+        raise ValueError(msg("빈 문자열"))
     if outline is not None:                         # 테두리가 상자를 넓힌다
         pad = outline_grow / 2 * height
         x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
@@ -370,7 +373,7 @@ def text_metrics(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
         y1 = max(y1, gb.y1 * UNITS_PER_SCALE * s)
         pen += gb.w * UNITS_PER_SCALE * s + tracking * height
     if x1 < x0:
-        raise ValueError("빈 문자열")
+        raise ValueError(msg("빈 문자열"))
     # 펜 원점 기준: 첫 글리프의 왼쪽 잉크는 그 글리프 상자의 x0만큼 밀려 있다
     first = next((glyph_name(c, font, cat) for c in text if not c.isspace()), None)
     off = glyph_box(cat, first).x0 * UNITS_PER_SCALE * s if first else 0.0

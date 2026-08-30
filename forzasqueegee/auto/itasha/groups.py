@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ...engine.model import LayerPlan
 from ...game import io as gio
+from ...i18n import msg
 from ..bodyedit import BodyEditor
 from ..driver import Driver, DriverError
 from .config import Config, Placement
@@ -49,8 +50,8 @@ def prepare_group(d: Driver, p: Placement, log=print,
             if template.canvas_count() == 0:
                 break
         else:
-            raise DriverError("새 비닐 그룹 에디터가 안 열렸다 (빈 캔버스 미확인)")
-    log(f"  새 비닐 그룹 · 도안 {p.layers:,}장 주입 준비")
+            raise DriverError(msg("새 비닐 그룹 에디터가 안 열렸다 (빈 캔버스 미확인)"))
+    log(msg("  새 비닐 그룹 · 도안 {layers:,}장 주입 준비", layers=p.layers))
     with clock.stage("prepare.inject", of=p.group, n=p.layers):
         # 준비(씨앗·채우기) + **신원 비켜 가기** + 주입. 셋이 한 호출인 이유는
         # 가운데 것이 앞뒤 사이에서만 안전하기 때문이다 (`inject.apply_plan`의
@@ -61,12 +62,13 @@ def prepare_group(d: Driver, p: Placement, log=print,
     # 읽어 두면 부르는 쪽이 신원을 실제값으로 갱신한다.
     n_now = template.canvas_count()
     if n_now and n_now != p.layers:
-        log(f"  캔버스 실제 {n_now:,}장 (플랜 {p.layers:,} + 준비 잔여) — "
-            f"그룹 신원을 {n_now:,}장으로 갱신한다")
+        log(msg("  캔버스 실제 {now:,}장 (플랜 {layers:,} + 준비 잔여) — "
+                "그룹 신원을 {now:,}장으로 갱신한다", now=n_now, layers=p.layers))
         p.layers = n_now
     with clock.stage("prepare.save", of=p.group, n=p.layers):
         Driver(d.hwnd).save_group(p.group)
-    log(f"  저장 슬롯 '{p.group}' ({p.layers:,}장)")
+    log(msg("  저장 슬롯 '{group}' ({layers:,}장)",
+            group=p.group, layers=p.layers))
 
 
 def prepare_group_reuse(d: Driver, p: "Placement | GroupLoad",
@@ -106,24 +108,27 @@ def prepare_group_reuse(d: Driver, p: "Placement | GroupLoad",
         xy = template.plant_sentinel()
         pid = find_pid()
         if not pid:
-            raise DriverError("FH6 프로세스를 못 찾았다 (재사용 주입)")
+            raise DriverError(msg("FH6 프로세스를 못 찾았다 (재사용 주입)"))
         proc = Proc(pid)
         layout = Layout.load()
         try:
             got = find_folded_table(proc, layout, xy, cc)
             if got is None:
-                raise DriverError(f"{p.group}: 접힌 그룹 내부 표를 못 찾았다")
+                raise DriverError(msg("{group}: 접힌 그룹 내부 표를 못 찾았다",
+                                      group=p.group))
             tbl, tcount = got
             plan = LayerPlan.load(p.plan)
             wrote = write_plan_to_table(proc, tbl, plan, layout, tcount)
-            log(f"  재사용 주입 {wrote}/{tcount:,}장 (표 0x{tbl:x})")
+            log(msg("  재사용 주입 {wrote}/{total:,}장 (표 0x{table:x})",
+                    wrote=wrote, total=tcount, table=tbl))
         finally:
             proc.close()
         b.remove_sentinel()
     with clock.stage("reuse.save", of=p.group):
         b.resave_overwrite(saved_layers)
     design.back_to_menu(d)
-    log(f"  저장 그룹 재사용 완료 — '{p.group}' ({saved_layers:,}장)")
+    log(msg("  저장 그룹 재사용 완료 — '{group}' ({layers:,}장)",
+            group=p.group, layers=saved_layers))
 
 
 def prepare_groups(cfg: Config, prog: dict, log=print,
@@ -169,13 +174,14 @@ def prepare_groups(cfg: Config, prog: dict, log=print,
             continue
         todo[key] = p
     if not todo and not reuse:
-        log("그룹 준비: 할 것 없다 (진행 파일 기준)")
+        log(msg("그룹 준비: 할 것 없다 (진행 파일 기준)"))
         return
     d = Driver()
     # ---- 재사용 먼저 (저장 그룹 열어 값만 주입) ----
     for key, p in list(reuse.items()):
         done = prog["groups"][key]
-        log(f"그룹 '{p.group}' 재사용 ({done:,}장) — 저장 그룹을 열어 값만 다시 쓴다")
+        log(msg("그룹 '{group}' 재사용 ({layers:,}장) — 저장 그룹을 열어 값만 다시 쓴다",
+                group=p.group, layers=done))
         try:
             prepare_group_reuse(d, p, done, log=log, clock=clock)
             for q in cfg.placements:
@@ -186,7 +192,8 @@ def prepare_groups(cfg: Config, prog: dict, log=print,
                         g.layers = done
             save_progress(cfg, prog)          # 진행 파일 mtime 갱신 (다음엔 재사용 안 함)
         except DriverError as e:
-            log(f"그룹 '{p.group}' 재사용 실패 ({e}) — 새로 만들기로 폴백한다")
+            log(msg("그룹 '{group}' 재사용 실패 ({err}) — 새로 만들기로 폴백한다",
+                    group=p.group, err=e))
             todo[key] = p
     if not todo:
         design.back_to_menu(d)
@@ -209,8 +216,9 @@ def prepare_groups(cfg: Config, prog: dict, log=print,
                     if str(g.plan) == key:
                         g.layers = p.layers
                         g.plan = p.plan
-        log(f"그룹 '{p.group}' 준비 ({p.layers:,}장) — "
-            f"{max(1, int(p.layers * 0.44 / 60))}분쯤 걸린다")
+        log(msg("그룹 '{group}' 준비 ({layers:,}장) — {minutes}분쯤 걸린다",
+                group=p.group, layers=p.layers,
+                minutes=max(1, int(p.layers * 0.44 / 60))))
         with clock.stage("prepare", of=p.group, n=p.layers):
             prepare_group(d, p, log=log, clock=clock, avoid=have)
         # 준비가 장수를 키웠을 수 있다 (센티널 레이어) — 신원을 실제값으로
@@ -249,8 +257,9 @@ def _dodge_count(p: Placement, have: set[int], log=print) -> Placement:
     out = Path(str(p.plan) + f".dodge{n}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False)
-    log(f"그룹 '{p.group}': {p.layers:,}장이 기존 그룹과 겹친다 — "
-        f"투명 패딩 {n - p.layers}장을 덧대 {n:,}장으로 비켜 간다")
+    log(msg("그룹 '{group}': {layers:,}장이 기존 그룹과 겹친다 — "
+            "투명 패딩 {pad}장을 덧대 {n:,}장으로 비켜 간다",
+            group=p.group, layers=p.layers, pad=n - p.layers, n=n))
     return dataclasses.replace(p, plan=out, layers=n)
 
 
@@ -264,7 +273,7 @@ def scan_saved_groups(d: Driver, log=print) -> set[int]:
     b = BodyEditor(d)
     design.back_to_menu(d)
     design.goto_row(d, design.ROW_BODY_VINYL)
-    b.d._step("enter", lambda: b.screen() == "list", "차체 에디터 진입",
+    b.d._step("enter", lambda: b.screen() == "list", msg("차체 에디터 진입"),
               tries=3, wait=4.0)
     try:
         # 저장된 그룹이 하나도 없는 판(새 프로필·그룹을 다 지운 뒤)에서는 그리드가
@@ -277,5 +286,6 @@ def scan_saved_groups(d: Driver, log=print) -> set[int]:
             gio.press("esc")
             time.sleep(1.2)
         design.back_to_menu(d)
-    log(f"게임에 저장된 비닐 그룹 {len(got)}개 (장수 {sorted(got)})")
+    log(msg("게임에 저장된 비닐 그룹 {n}개 (장수 {counts})",
+            n=len(got), counts=sorted(got)))
     return got

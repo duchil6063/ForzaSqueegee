@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from ...game import body
+from ...i18n import msg
 from ..bodyedit import BodyEditor
 from ..driver import DriverError
 from .config import Config, Placement
@@ -39,7 +40,7 @@ def place_all(cfg: Config, prog: dict, log=print,
     fav = FavStack()      # 면 도형 색 — 같은 모티프 색이 면마다 되풀이된다
     for p in cfg.placements:
         if p.key in prog["placed"]:
-            log(f"{p.surface}: 이미 올렸다 — 건너뛴다")
+            log(msg("{surface}: 이미 올렸다 — 건너뛴다", surface=p.surface))
             continue
         with clock.stage("place", of=p.surface,
                          n=p.group_layers + len(p.shapes) + len(p.post_shapes)):
@@ -140,7 +141,7 @@ def autofit(b: BodyEditor, bg, smap, p: Placement, got: dict[str, float],
         meas = measure_placement(b, bg, smap, p, log=log)
         if meas is None or "scale_fix" not in meas or meas.get("outside"):
             if meas is not None and meas.get("outside"):
-                log("    발자국이 면 밖까지 물렸다 — 판독을 버리고 계산값을 쓴다")
+                log(msg("    발자국이 면 밖까지 물렸다 — 판독을 버리고 계산값을 쓴다"))
             return meas
         # 보정은 **한 바퀴에 크게 못 움직인다** — 판독이 한 번 새면 그 한 번으로
         # 도안이 사라지는 것을 막고, **일부러 면 밖으로 흘린 요소**(띠·데코) 때문에
@@ -150,14 +151,16 @@ def autofit(b: BodyEditor, bg, smap, p: Placement, got: dict[str, float],
         cx, cy = meas["center_err"]
         tw = max(1e-6, p.target[2] - p.target[0])
         off = max(abs(cx), abs(cy)) / tw
-        log(f"    발자국 {meas['box']} · 크기비 {meas['size_ratio']} "
-            f"· 중심오차 {meas['center_err']}")
+        log(msg("    발자국 {box} · 크기비 {size_ratio} · 중심오차 {center_err}",
+                box=meas['box'], size_ratio=meas['size_ratio'],
+                center_err=meas['center_err']))
         if abs(fix - 1.0) <= tol and off <= tol:
             return meas
         p.scale = round(min(scale0 * 1.25, max(scale0 * 0.75, p.scale * fix)), 3)
         p.x = round(p.x - cx, 1)
         p.y = round(p.y - cy, 1)
-        log(f"    보정 {k + 1}회 → scale {p.scale:g} x {p.x:g} y {p.y:g}")
+        log(msg("    보정 {round}회 → scale {scale:g} x {x:g} y {y:g}",
+                round=k + 1, scale=p.scale, x=p.x, y=p.y))
         # **회전은 지금 읽힌 값을 쓴다.** 미러는 Tab + 180°인데 Tab은 값 칸에 안
         # 뜨므로, 여기서 p.rot(=0)을 다시 넣으면 미러가 반쪽만 남아 인물이 뒤집힌다.
         got.update(b.place(x=p.x, y=p.y, scale=p.scale,
@@ -175,52 +178,60 @@ def place_one(b: BodyEditor, p: Placement, log=print,
     b.goto_tab(idx)
     n0, cap = b.count_stable(), b.counts()[1]
     if n0 is None or cap is None:
-        raise DriverError(f"{p.surface}: 면 카운터를 못 읽었다 — 차체 에디터 화면이 맞나")
+        raise DriverError(msg("{surface}: 면 카운터를 못 읽었다 — 차체 에디터 화면이 맞나",
+                              surface=p.surface))
     # **면을 비우고 올리는 것이 기본이다.** 구성 파일이 "이 면은 이 도안"이라고
     # 말하고 있고, 마지막에 차 디자인을 통째로 덮으므로 그 면의 옛 레이어만
     # 남겨 봐야 얻는 것이 없다 — 게다가 안 비우면 두 번째 실행이 예산 초과로
     # 통째로 멈춘다. 남기고 싶으면 `--keep-existing`.
     if n0:
         if not replace:
-            raise DriverError(
-                f"{p.surface}: 이미 {n0:,}장이 있다 (--keep-existing) — "
-                f"게임에서 그 면을 비우고 다시 할 것")
-        log(f"{p.surface}: 이미 {n0:,}장이 있다 — 비우고 올린다")
+            raise DriverError(msg(
+                "{surface}: 이미 {n:,}장이 있다 (--keep-existing) — "
+                "게임에서 그 면을 비우고 다시 할 것", surface=p.surface, n=n0))
+        log(msg("{surface}: 이미 {n:,}장이 있다 — 비우고 올린다",
+                surface=p.surface, n=n0))
         with clock.stage("place.clear", of=p.surface, n=n0):
             b.clear_surface()
         n0 = b.count_stable() or 0
     if p.copy_from is not None:
-        log(f"{p.surface}: 반대편({p.copy_from}) 레이어 붙여넣기")
+        log(msg("{surface}: 반대편({copy_from}) 레이어 붙여넣기",
+                surface=p.surface, copy_from=p.copy_from))
         b.paste_other_side()
         n1 = b.count_stable()
-        log(f"  카운터 {n0} → {n1} / {cap}")
+        log(msg("  카운터 {before} → {after} / {cap}",
+                before=n0, after=n1, cap=cap))
         return
     if (p.group_layers == 0 and not p.texts and not p.shapes
             and not p.post_shapes):
-        raise DriverError(f"{p.surface}: 빈 플랜 (글자·도형도 없다)")
+        raise DriverError(msg("{surface}: 빈 플랜 (글자·도형도 없다)",
+                              surface=p.surface))
     want = p.group_layers + p.text_layers + len(p.shapes) + len(p.post_shapes)
     if n0 + want > cap:
-        raise DriverError(
-            f"{p.surface}: 이미 {n0:,}장이 있어 {want:,}장을 "
-            f"더 못 올린다 (상한 {cap:,}) — 그 면을 비우고 다시 할 것")
+        raise DriverError(msg(
+            "{surface}: 이미 {n:,}장이 있어 {want:,}장을 "
+            "더 못 올린다 (상한 {cap:,}) — 그 면을 비우고 다시 할 것",
+            surface=p.surface, n=n0, want=want, cap=cap))
     # 순서 = 그려지는 순서다 (나중 것이 위): 밑 도형(블랙아웃·관통 띠·모티프) →
     # 꾸밈 그룹 → 그룹(도안·넘어온 조각) → 덮개 도형 → 글자. 도안 뒤에 깔릴
     # 것은 전부 그룹을 불러오기 전에 면에 넣는다.
     n_shapes = add_shape_jobs(b, p.shapes, log=log, clock=clock,
                               of=p.surface, fav=fav)
     for g in p.pre_groups:
-        log(f"{p.surface}: 보조 그룹 '{g.group}' ({g.layers:,}장) 불러오는 중")
+        log(msg("{surface}: 보조 그룹 '{group}' ({layers:,}장) 불러오는 중",
+                surface=p.surface, group=g.group, layers=g.layers))
         with clock.stage("place.group", of=f"{p.surface}/{g.group}", n=g.layers):
             b.open_group_grid()
             b.load_group(g.layers)
             gg = b.place(x=g.x, y=g.y, scale=g.scale, rot=g.rot,
                          mirror=g.mirror, soft=True, log=log)
             b.commit()
-        log(f"  배치 {gg}")
+        log(msg("  배치 {place}", place=gg))
     got = {}
     meas = None
     if p.layers:
-        log(f"{p.surface}: 그룹 '{p.group}' ({p.layers:,}장) 불러오는 중")
+        log(msg("{surface}: 그룹 '{group}' ({layers:,}장) 불러오는 중",
+                surface=p.surface, group=p.group, layers=p.layers))
         with clock.stage("place.group", of=f"{p.surface}/{p.group}", n=p.layers):
             bg = b.cap()               # (참고용 캡처 — 발자국은 `footprint_of`가 잰다)
             b.open_group_grid()
@@ -232,18 +243,19 @@ def place_one(b: BodyEditor, p: Placement, log=print,
                 with clock.stage("place.autofit", of=p.surface):
                     meas = autofit(b, bg, smap, p, got, log=log)
             b.commit()
-        log(f"  배치 {got}")
+        log(msg("  배치 {place}", place=got))
     # 사람이 앉힌 도안들 — 목록 순서대로, 뒤가 위다. 오토핏은 안 돈다: 자리가
     # 사람의 결정이라 화면으로 다시 맞출 목표가 없다 (`engine.compose`가 fit을 끈다).
     for g in p.groups:
-        log(f"{p.surface}: 도안 그룹 '{g.group}' ({g.layers:,}장) 불러오는 중")
+        log(msg("{surface}: 도안 그룹 '{group}' ({layers:,}장) 불러오는 중",
+                surface=p.surface, group=g.group, layers=g.layers))
         with clock.stage("place.group", of=f"{p.surface}/{g.group}", n=g.layers):
             b.open_group_grid()
             b.load_group(g.layers)
             gg = b.place(x=g.x, y=g.y, scale=g.scale, rot=g.rot,
                          mirror=g.mirror, soft=True, log=log)
             b.commit()
-        log(f"  배치 {gg}")
+        log(msg("  배치 {place}", place=gg))
     n_post = add_shape_jobs(b, p.post_shapes, log=log, clock=clock,
                             of=p.surface, fav=fav)
     for spec in p.texts:
@@ -252,7 +264,8 @@ def place_one(b: BodyEditor, p: Placement, log=print,
             add_text_job(b, spec, log=log)
     want = p.group_layers + p.text_layers + n_shapes + n_post
     n1 = b.count_stable()
-    log(f"  카운터 {n0} → {n1} / {cap}")
+    log(msg("  카운터 {before} → {after} / {cap}",
+            before=n0, after=n1, cap=cap))
     if shots is not None:
         _shot(b, shots / f"{p.surface}.png")
         if meas is not None:
@@ -262,7 +275,10 @@ def place_one(b: BodyEditor, p: Placement, log=print,
                             "measured": meas}, ensure_ascii=False, indent=1),
                 encoding="utf-8")
     if n1 is None or n1 - n0 != want:
-        raise DriverError(
-            f"{p.surface}: 카운터가 {n0} → {n1}이다 (기대 {want:,}장 = 그룹 "
-            f"{p.group_layers:,} + 글자 {p.text_layers} + 도형 {n_shapes + n_post}) — "
-            f"다른 그룹을 불러왔거나 배치가 안 확정됐다")
+        raise DriverError(msg(
+            "{surface}: 카운터가 {before} → {after}이다 (기대 {want:,}장 = 그룹 "
+            "{group_layers:,} + 글자 {text_layers} + 도형 {shape_count}) — "
+            "다른 그룹을 불러왔거나 배치가 안 확정됐다",
+            surface=p.surface, before=n0, after=n1, want=want,
+            group_layers=p.group_layers, text_layers=p.text_layers,
+            shape_count=n_shapes + n_post))

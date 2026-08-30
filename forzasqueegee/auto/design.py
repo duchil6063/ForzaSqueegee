@@ -23,6 +23,7 @@ import time
 import numpy as np
 
 from ..game import io as gio
+from ..i18n import msg
 from .driver import Driver, DriverError
 
 ROW_PAINT = 0
@@ -97,7 +98,7 @@ def wait_menu(d: Driver, timeout: float = 8.0) -> None:
         if menu_open(d.cap()):
             return
         time.sleep(0.3)
-    raise DriverError("`디자인 및 도색` 메뉴 화면이 아니다")
+    raise DriverError(msg("`디자인 및 도색` 메뉴 화면이 아니다"))
 
 
 def goto_row(d: Driver, idx: int, max_steps: int = 12) -> None:
@@ -106,7 +107,7 @@ def goto_row(d: Driver, idx: int, max_steps: int = 12) -> None:
     for _ in range(max_steps):
         img = d.cap()
         if not menu_open(img):
-            raise DriverError("`디자인 및 도색` 메뉴 화면이 아니다")
+            raise DriverError(msg("`디자인 및 도색` 메뉴 화면이 아니다"))
         cur = row_index(img)
         if cur is None:
             time.sleep(0.25)
@@ -115,7 +116,7 @@ def goto_row(d: Driver, idx: int, max_steps: int = 12) -> None:
             return
         gio.press("down" if idx > cur else "up")
         time.sleep(0.3)
-    raise DriverError(f"`디자인 및 도색` 행 이동 실패: 목표 {idx}")
+    raise DriverError(msg("`디자인 및 도색` 행 이동 실패: 목표 {idx}", idx=idx))
 
 
 def back_to_menu(d: Driver, tries: int = 6) -> None:
@@ -141,4 +142,4 @@ def back_to_menu(d: Driver, tries: int = 6) -> None:
             continue
         gio.press("esc")
         time.sleep(1.5)
-    raise DriverError("`디자인 및 도색` 메뉴 복귀 실패")
+    raise DriverError(msg("`디자인 및 도색` 메뉴 복귀 실패"))

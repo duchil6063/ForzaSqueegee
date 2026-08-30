@@ -22,6 +22,7 @@ import numpy as np
 
 from ..game import io as gio
 from ..game import ocr
+from ..i18n import msg
 
 # 도형 그리드 기하 (1776×999 실측, 클라이언트 크기 비율로 환산)
 CELL0_CX, CELL0_CY = 205.5 / 1776, 299.5 / 999  # (0,0) 셀 중심
@@ -103,7 +104,7 @@ def _alpha_presses(cur8: int, tgt8: int) -> tuple[int, int]:
         rem = d + ALPHA_DOWN8 * a
         if rem >= 0 and rem % ALPHA_UP8 == 0:
             return a, rem // ALPHA_UP8
-    raise DriverError(f"투명도: 도달 불가 ({cur8} → {tgt8})")
+    raise DriverError(msg("투명도: 도달 불가 ({cur8} → {tgt8})", cur8=cur8, tgt8=tgt8))
 
 
 def _alpha_batches(cur8: int, tgt8: int) -> list[tuple[str, int]]:
@@ -157,9 +158,9 @@ class Driver:
         gio.set_dpi_aware()
         self.hwnd = hwnd or gio.find_hwnd()
         if not self.hwnd:
-            raise DriverError("FH6 창을 찾을 수 없음")
+            raise DriverError(msg("FH6 창을 찾을 수 없음"))
         if not gio.focus(self.hwnd):
-            raise DriverError("FH6 포그라운드 전환 실패")
+            raise DriverError(msg("FH6 포그라운드 전환 실패"))
         self._cell_map: dict | None = None
         self._shape_loc: dict[str, tuple[int, int, int]] | None = None
         self._verify_refs: dict[int, list[tuple[int, int, np.ndarray]]] = {}
@@ -186,7 +187,7 @@ class Driver:
         shape = SHAPE_ALIASES.get(shape, shape)
         loc = self._shape_loc.get(shape)
         if loc is None:
-            raise DriverError(f"셀 매핑 없는 도형: {shape}")
+            raise DriverError(msg("셀 매핑 없는 도형: {shape}", shape=shape))
         return loc
 
     def _cell_thumb(self, img, r: int, c: int) -> np.ndarray | None:
@@ -347,7 +348,7 @@ class Driver:
                 if self._verify_tab(self.cap(), tab):
                     self.current_tab = tab
                     return
-        raise DriverError(f"탭 이동 실패: 목표 {tab}")
+        raise DriverError(msg("탭 이동 실패: 목표 {tab}", tab=tab))
 
     def select_shape(self, shape: str) -> None:
         """도형 선택 화면에서 카탈로그 도형으로 이동 (탭 검증·전환 포함)."""
@@ -457,7 +458,7 @@ class Driver:
                 time.sleep(poll)
                 if check():
                     return
-        raise DriverError(f"단계 전이 실패: {desc}")
+        raise DriverError(msg("단계 전이 실패: {desc}", desc=desc))
 
     def _menu_open(self) -> bool:
         """레이어 만들기 메뉴(중앙 흰 행 4개) 표시 여부 — P 배경 상태와 무관."""
@@ -528,7 +529,7 @@ class Driver:
                 return
             gio.press("up")
             time.sleep(0.25)
-        raise DriverError("'+' 셀 이동 실패 (리스트 선택 미검출 포함)")
+        raise DriverError(msg("'+' 셀 이동 실패 (리스트 선택 미검출 포함)"))
 
     def _open_create_menu(self) -> None:
         """레이어 리스트('+' 셀로 이동) → 레이어 만들기 메뉴.
@@ -548,13 +549,13 @@ class Driver:
             gio.press("esc")  # 잘못 열린 메뉴 정리
             time.sleep(0.4)
             self.goto_plus()
-        raise DriverError("단계 전이 실패: 레이어 만들기 메뉴")
+        raise DriverError(msg("단계 전이 실패: 레이어 만들기 메뉴"))
 
     def open_wizard(self) -> None:
         """레이어 리스트 → 레이어 만들기 메뉴 → 도형 선택."""
         self._open_create_menu()
         self._step("enter", lambda: self.find_highlight(self.cap()) is not None,
-                   "도형 선택 화면")
+                   msg("도형 선택 화면"))
 
     def _menu_row_index(self, img=None) -> tuple[int, int] | None:
         """만들기 메뉴의 (선택 행 인덱스, 전체 행 수). 검출 실패 시 None.
@@ -576,12 +577,12 @@ class Driver:
         for _ in range(max_steps):
             cur = self._menu_row_index()
             if cur is None:
-                raise DriverError("만들기 메뉴 선택 행 미검출")
+                raise DriverError(msg("만들기 메뉴 선택 행 미검출"))
             if cur[0] == idx:
                 return
             gio.press("down" if idx > cur[0] else "up")
             time.sleep(0.3)
-        raise DriverError(f"만들기 메뉴 행 이동 실패: 목표 {idx}")
+        raise DriverError(msg("만들기 메뉴 행 이동 실패: 목표 {idx}", idx=idx))
 
     # 마스크 도형 선택 화면: 추천 그룹 탭 없음 → 기본 탭 = 탭 0. 배열은 비닐
     # 기본 탭(cell_map 탭 1)과 동일 (실측 10차). 내용 검증은 같은 참조 재사용.
@@ -598,7 +599,7 @@ class Driver:
                 gio.press("pgup")
                 time.sleep(0.22)
             time.sleep(0.5)
-        raise DriverError("마스크 기본 탭 이동 실패")
+        raise DriverError(msg("마스크 기본 탭 이동 실패"))
 
     def open_mask_wizard(self, shape: str) -> None:
         """리스트 → 만들기 메뉴 3행(마스크 도안 적용) → 도형 선택 → 변형 편집.
@@ -608,15 +609,16 @@ class Driver:
         """
         tab, row, col = self.shape_loc(shape)
         if tab != self.MASK_BASIC_TAB:
-            raise DriverError(f"마스크 도형은 기본 탭만 지원: {shape} (탭 {tab})")
+            raise DriverError(msg("마스크 도형은 기본 탭만 지원: {shape} (탭 {tab})",
+                                  shape=shape, tab=tab))
         self._open_create_menu()
         self.menu_goto_row(2)
         self._step("enter", lambda: self.find_highlight(self.cap()) is not None,
-                   "마스크 도형 선택 화면")
+                   msg("마스크 도형 선택 화면"))
         self.current_tab = None  # 비닐 선택 화면과 별개 탭 상태 — 캐시 무효화
         self.ensure_mask_basic_tab()
         self.select_cell(row, col)
-        self._step("enter", self.in_transform_edit, "마스크 변형 편집 진입")
+        self._step("enter", self.in_transform_edit, msg("마스크 변형 편집 진입"))
 
     @staticmethod
     def _menu_title_bottom(sub, h: int) -> int:
@@ -712,7 +714,7 @@ class Driver:
         for _ in range(max_steps):
             cur = self.find_highlight(self.cap())
             if cur is None:
-                raise DriverError("선택 하이라이트 미검출")
+                raise DriverError(msg("선택 하이라이트 미검출"))
             if cur == (row, col):
                 return
             if cur[0] != row:
@@ -721,7 +723,7 @@ class Driver:
                 key = "right" if col > cur[1] else "left"
             gio.press(key)
             time.sleep(0.25)
-        raise DriverError(f"셀 이동 실패: 목표 ({row},{col})")
+        raise DriverError(msg("셀 이동 실패: 목표 ({row},{col})", row=row, col=col))
 
     def confirm_shape_and_color(self, hsb: tuple[float, float, float] | None = None,
                                 fav=None, tol: float = 0.0) -> None:
@@ -747,14 +749,14 @@ class Driver:
                         used_fav = True
                     except DriverError as e:
                         fav.forget(hsb)  # 모델 불신 — HSB 폴백 + 재등록
-                        print(f"  즐겨찾기 폴백({e})")
+                        print(msg("  즐겨찾기 폴백({err})", err=e))
             if not used_fav:
-                self._step("x", self.in_hsb_edit, "HSB 미세 조정 진입")
+                self._step("x", self.in_hsb_edit, msg("HSB 미세 조정 진입"))
                 self.set_hsb(*hsb, tol=tol)
                 if fav is not None:
                     self.fav_register()
                     fav.register(hsb)
-        self._step("enter", self.in_transform_edit, "변형 편집 진입")
+        self._step("enter", self.in_transform_edit, msg("변형 편집 진입"))
 
     # ---------- HSB 색상 설정 ----------
     HSB_KEYS = ("h", "s", "b")
@@ -809,12 +811,12 @@ class Driver:
                         str(work_file("verify", "hsbfail.png")))
                 except Exception:      # noqa: BLE001 — 디버그 캡처는 최선노력
                     pass
-                raise DriverError("HSB 선택 행 미검출")
+                raise DriverError(msg("HSB 선택 행 미검출"))
             if cur == key:
                 return
             gio.press("down" if order.index(key) > order.index(cur) else "up")
             time.sleep(0.2)
-        raise DriverError(f"HSB 행 선택 실패: 목표 {key}")
+        raise DriverError(msg("HSB 행 선택 실패: 목표 {key}", key=key))
 
     # 슬라이더 트랙 기하 (1776×999): 클릭 x=100 → 0.00, x=356 → 1.00 (선형 256px),
     # 트랙 클릭 = 비례 값 점프 + 해당 행 선택 동시
@@ -859,12 +861,13 @@ class Driver:
         for k in range(8):  # 잔차 보정 폐루프 — 배치 대량 키 드롭도 잔차만 재전송
             v = ocr.read_hsb_stable(self.hwnd, key, tries=15)
             if v is None:
-                raise DriverError(f"HSB {key}: 값 판독 실패")
+                raise DriverError(msg("HSB {key}: 값 판독 실패", key=key))
             if abs(v - target) < 0.0051:
                 return v
             if k >= self.HSB_TOL_AT and abs(v - target) <= tol + 1e-9:
-                print(f"  HSB {key}: 목표 {target} ↔ 판독 {v} — 허용차 {tol} "
-                      f"안이라 받는다 (표시 절사 한 스텝)")
+                print(msg("  HSB {key}: 목표 {target} ↔ 판독 {v} — 허용차 {tol} "
+                          "안이라 받는다 (표시 절사 한 스텝)",
+                          key=key, target=target, v=v, tol=tol))
                 return v
             resid = round((target - v) * 200)
             if v in seen and abs(resid) > 1:     # 제자리 — 위상을 깬다 (반 스텝)
@@ -874,7 +877,8 @@ class Driver:
             seen.append(v)
             gio.press_batch("right" if resid > 0 else "left", abs(resid))
             time.sleep(0.15 + 0.002 * abs(resid))
-        raise DriverError(f"HSB {key}: 수렴 실패 (목표 {target}, 현재 {v})")
+        raise DriverError(msg("HSB {key}: 수렴 실패 (목표 {target}, 현재 {v})",
+                              key=key, target=target, v=v))
 
     def set_hsb(self, h: float, s: float, b: float,
                 tol: float = 0.0) -> dict[str, float]:
@@ -922,7 +926,7 @@ class Driver:
             for _ in range(3):
                 gio.press("pgdn")
                 time.sleep(0.45)
-        raise DriverError("즐겨찾기 서브탭 이동 실패")
+        raise DriverError(msg("즐겨찾기 서브탭 이동 실패"))
 
     def _fav_thumb(self, img) -> tuple[int, int] | None:
         """스크롤바 썸 (y_top, y_bot) px. 스크롤바 없음(항목 ≤10) 시 None."""
@@ -996,7 +1000,8 @@ class Driver:
                 img = self.cap()
                 tb2 = self._fav_thumb(img)
                 if tb2 is None or abs(tb2[0] + th / 2 - ty) > 6:
-                    raise DriverError(f"즐겨찾기 스크롤 점프 실패 (목표 top {want})")
+                    raise DriverError(msg("즐겨찾기 스크롤 점프 실패 (목표 top {want})",
+                                          want=want))
                 top = want
         k = self._fav_focus(img)
         if k is None:  # 포커스 미진입 — down 1회 = 최상단 표시 행
@@ -1005,10 +1010,11 @@ class Driver:
             img = self.cap()
             k = self._fav_focus(img)
             if k is None:
-                raise DriverError("즐겨찾기 포커스 진입 실패")
+                raise DriverError(msg("즐겨찾기 포커스 진입 실패"))
         kt = idx - top
         if not 0 <= kt < self.FAV_VISIBLE:
-            raise DriverError(f"즐겨찾기 목표가 표시 범위 밖 (idx {idx}, top {top})")
+            raise DriverError(msg("즐겨찾기 목표가 표시 범위 밖 (idx {idx}, top {top})",
+                                  idx=idx, top=top))
         for _ in range(4):  # 잔여 이동 폐루프 (키 드롭 대비)
             if k == kt:
                 break
@@ -1025,17 +1031,18 @@ class Driver:
                 img = self.cap()
                 k2 = self._fav_focus(img)
                 if k2 is None:
-                    raise DriverError("즐겨찾기 포커스 소실")
+                    raise DriverError(msg("즐겨찾기 포커스 소실"))
             k = k2
         else:
-            raise DriverError(f"즐겨찾기 행 이동 수렴 실패 (목표 {kt}, 현재 {k})")
+            raise DriverError(msg("즐겨찾기 행 이동 수렴 실패 (목표 {kt}, 현재 {k})",
+                                  kt=kt, k=k))
         if expect_rgb is not None:
             got = self._fav_row_rgb(img, k)
             if max(abs(a - b) for a, b in zip(got, expect_rgb)) > tol:
                 raise DriverError(
-                    f"즐겨찾기 색 불일치 idx {idx}: 기대 "
-                    f"{tuple(round(v) for v in expect_rgb)}, "
-                    f"실측 {tuple(round(v) for v in got)}")
+                    msg("즐겨찾기 색 불일치 idx {idx}: 기대 {expect}, 실측 {got}",
+                        idx=idx, expect=tuple(round(v) for v in expect_rgb),
+                        got=tuple(round(v) for v in got)))
 
     def fav_register(self) -> None:
         """HSB 미세 조정 화면에서 현재 색을 즐겨찾기에 등록.
@@ -1129,7 +1136,7 @@ class Driver:
             gio.unlatch_menu()
             gio.press(tool)
             time.sleep(0.25)
-        raise DriverError(f"도구 {tool} 전환 확인 실패")
+        raise DriverError(msg("도구 {tool} 전환 확인 실패", tool=tool))
 
     def set_move_xy(self, tx: float, ty: float,
                     prev: dict[str, float] | None = None) -> dict[str, float]:
@@ -1147,7 +1154,7 @@ class Driver:
             y0 = ocr.read_stable(self.hwnd, "y")
         w, h = gio.client_size(self.hwnd)
         if x0 is None or y0 is None:
-            raise DriverError("이동: 값 판독 실패")
+            raise DriverError(msg("이동: 값 판독 실패"))
         # 1유닛 = 렌더 1px, 클라 스케일 = 클라높이/렌더세로 (창 크기 무관 실측).
         # 1440 = 게임 그래픽 설정의 렌더 해상도 — 다른 설정에선 코스가 어긋나지만
         # 드래그는 코스 전용이라 화살표 폐루프가 흡수한다.
@@ -1177,7 +1184,7 @@ class Driver:
         if dragged:
             r = ocr.read_stable_multi(self.hwnd, ("x", "y"), tries=40)
             if r is None:
-                raise DriverError("이동: 드래그 후 판독 실패")
+                raise DriverError(msg("이동: 드래그 후 판독 실패"))
             cur = {"x": r["x"], "y": r["y"]}
         if any(abs(targets[a] - cur[a]) > TOOL_AXES[a][5] * MIN_HOLD_S
                for a in ("x", "y")):
@@ -1194,7 +1201,7 @@ class Driver:
             self._assert_tool("2")
             r = ocr.read_stable_multi(self.hwnd, ("x", "y"), tries=40)
             if r is None:
-                raise DriverError("크기: 값 판독 실패")
+                raise DriverError(msg("크기: 값 판독 실패"))
             cur = {"sx": r["x"], "sy": r["y"]}
         targets = {"sx": tsx, "sy": tsy}
         if any(abs(targets[a] - cur[a]) > TOOL_AXES[a][5] * MIN_HOLD_S
@@ -1273,7 +1280,8 @@ class Driver:
             if not sent:
                 return cur
             if TRACE:
-                print(f"    fine{names} 목표{targets} 현재{cur} 전송{sent}")
+                print(msg("    fine{names} 목표{targets} 현재{cur} 전송{sent}",
+                          names=names, targets=targets, cur=cur, sent=sent))
             time.sleep(0.05)
             r = ocr.read_stable_multi(self.hwnd, boxes, tries=40)
             if r is None:
@@ -1290,7 +1298,8 @@ class Driver:
                 eff[n] = max(steps[n] * 0.25,
                              0.6 * eff[n] + 0.4 * abs(moved) / cnt)
             cur = new
-        raise DriverError(f"{names}: 미세 보정 수렴 실패 (목표 {targets}, 현재 {cur})")
+        raise DriverError(msg("{names}: 미세 보정 수렴 실패 (목표 {targets}, 현재 {cur})",
+                              names=names, targets=targets, cur=cur))
 
     def _arrow_fine(self, axis: str, box: str, step: float, ap: str, an: str,
                     target: float, is_rot: bool = False,
@@ -1324,8 +1333,10 @@ class Driver:
             time.sleep(0.05)
             v3 = ocr.read_stable(self.hwnd, box, tries=40)
             if TRACE:
-                print(f"    fine[{axis}] 목표{target:g} 현재{v:g} "
-                      f"전송{'+' if err > 0 else '-'}{n} → {v3}", flush=True)
+                print(msg("    fine[{axis}] 목표{target:g} 현재{v:g} "
+                          "전송{sign}{n} → {v3}",
+                          axis=axis, target=target, v=v,
+                          sign="+" if err > 0 else "-", n=n, v3=v3), flush=True)
             if v3 is None:
                 v = None
                 continue
@@ -1341,9 +1352,11 @@ class Driver:
                 pinned += 1
                 if pinned >= 3:
                     raise DriverError(
-                        f"{axis}: 값이 {v}에 꽂혀 있다 (목표 {target} — 클램프)")
+                        msg("{axis}: 값이 {v}에 꽂혀 있다 (목표 {target} — 클램프)",
+                            axis=axis, v=v, target=target))
             v = v3
-        raise DriverError(f"{axis}: 미세 보정 수렴 실패 (목표 {target}, 현재 {v})")
+        raise DriverError(msg("{axis}: 미세 보정 수렴 실패 (목표 {target}, 현재 {v})",
+                              axis=axis, target=target, v=v))
 
     def set_axis(self, axis: str, target: float,
                  prev: dict[str, float] | None = None,
@@ -1368,7 +1381,8 @@ class Driver:
             self._assert_tool(tool)
             v = ocr.read_stable(self.hwnd, box)
         if v is None:
-            raise DriverError(f"{axis}: 값 판독 실패(도구 {tool})")
+            raise DriverError(msg("{axis}: 값 판독 실패(도구 {tool})",
+                                  axis=axis, tool=tool))
         if gentle:
             return self._arrow_fine(axis, box, step, ap, an, target, is_rot,
                                     v0=v, slow=True)
@@ -1390,8 +1404,10 @@ class Driver:
             time.sleep(0.08)  # 나머지 정착 대기는 read_stable 폴링이 적응적으로 맡는다
             v2 = ocr.read_stable(self.hwnd, box, tries=30)
             if TRACE:
-                print(f"    hold[{axis}] 목표{target:g} 현재{v:g} "
-                      f"{kp if err > 0 else kn}×{dur:.2f}s → {v2} (속도추정 {speed:.1f})",
+                print(msg("    hold[{axis}] 목표{target:g} 현재{v:g} "
+                          "{key}×{dur:.2f}s → {v2} (속도추정 {speed:.1f})",
+                          axis=axis, target=target, v=v,
+                          key=kp if err > 0 else kn, dur=dur, v2=v2, speed=speed),
                       flush=True)
             if v2 is None:
                 fresh = False
@@ -1443,11 +1459,13 @@ class Driver:
         time.sleep(2.0)
         try:
             got = self.set_axis(axis, target, press_tool=True, gentle=True)
-            log(f"    {axis} 느린 화살표 재시도로 앉혔다 (목표 {target:g})")
+            log(msg("    {axis} 느린 화살표 재시도로 앉혔다 (목표 {target:g})",
+                    axis=axis, target=target))
             return got
         except DriverError as e:
             v = ocr.read_stable(self.hwnd, "y" if axis == "y" else "x", tries=20)
-            log(f"    {axis}가 {v}에서 멈춘다 (목표 {target:g}) — 그대로 둔다 ({e})")
+            log(msg("    {axis}가 {v}에서 멈춘다 (목표 {target:g}) — 그대로 둔다 ({err})",
+                    axis=axis, v=v, target=target, err=e))
             return v
 
     def set_alpha(self, target: float, prev: dict[str, float] | None = None,
@@ -1473,7 +1491,7 @@ class Driver:
             self._assert_tool(ALPHA_TOOL)
             v = ocr.read_stable(self.hwnd, ALPHA_BOX)
         if v is None:
-            raise DriverError("투명도: 값 판독 실패")
+            raise DriverError(msg("투명도: 값 판독 실패"))
         for _ in range(8):
             cur8 = alpha8(v)
             if cur8 == tgt8:
@@ -1485,16 +1503,18 @@ class Driver:
             if v2 is None:  # 롤이 길어졌을 뿐일 수 있다 — 한 번 더 기다려 본다
                 v2 = ocr.read_stable(self.hwnd, ALPHA_BOX, tries=40)
                 if v2 is None:
-                    raise DriverError("투명도: 전송 후 판독 실패")
+                    raise DriverError(msg("투명도: 전송 후 판독 실패"))
             if TRACE:
-                print(f"    alpha 목표{tgt8} 현재{cur8} → {alpha8(v2)}")
+                print(msg("    alpha 목표{tgt8} 현재{cur8} → {new8}",
+                          tgt8=tgt8, cur8=cur8, new8=alpha8(v2)))
             v = v2
-        raise DriverError(f"투명도: 수렴 실패 (목표 {target}, 현재 {v})")
+        raise DriverError(msg("투명도: 수렴 실패 (목표 {target}, 현재 {v})",
+                              target=target, v=v))
 
     # ---------- 마무리 ----------
     def commit(self) -> None:
         """변형 편집에서 Enter → 레이어 확정, 리스트 복귀(양성 확인)."""
-        self._step("enter", lambda: not self.in_transform_edit(), "레이어 커밋")
+        self._step("enter", lambda: not self.in_transform_edit(), msg("레이어 커밋"))
         for _ in range(15):  # 리스트 도착 대기 (전환 애니메이션)
             img = self.cap()
             if self._edit_menu_open(img):  # 잉여 Enter로 열린 편집 메뉴 정리
@@ -1504,7 +1524,7 @@ class Driver:
             if self.list_selection(img) is not None:
                 return
             time.sleep(0.15)
-        raise DriverError("커밋 후 리스트 미도착")
+        raise DriverError(msg("커밋 후 리스트 미도착"))
 
     def discard(self) -> None:
         """변형 편집에서 Esc×3 → 미확정 폐기, 리스트 복귀 (Esc 과다 금지)."""
@@ -1512,7 +1532,7 @@ class Driver:
             gio.press("esc")
             time.sleep(0.6)
         if self.in_transform_edit():
-            raise DriverError("폐기 실패: 여전히 변형 편집")
+            raise DriverError(msg("폐기 실패: 여전히 변형 편집"))
 
     # ---------- 비닐 그룹 저장 (실측 2026-08-02) ----------
     # 플로우: 리스트 Backspace → 슬롯 그리드(기본 선택=새 저장 슬롯, lime 링)
@@ -1560,10 +1580,12 @@ class Driver:
         """
         s = self._save_screen()
         if s == "list":
-            self._step("backspace", lambda: self._save_screen() == "slots", "저장 슬롯 화면")
+            self._step("backspace", lambda: self._save_screen() == "slots",
+                       msg("저장 슬롯 화면"))
         elif s != "slots":  # 이미 슬롯 화면이면 바로 진행
-            raise DriverError(f"저장 시작: 예상 밖 화면({s})")
-        self._step("enter", lambda: self._save_screen() == "name", "이름 입력 대화상자")
+            raise DriverError(msg("저장 시작: 예상 밖 화면({screen})", screen=s))
+        self._step("enter", lambda: self._save_screen() == "name",
+                   msg("이름 입력 대화상자"))
         gio.press_batch("backspace", 70, hold_s=0.02, gap_s=0.02)  # 기본 텍스트 클리어(64자 상한)
         gio.type_text(name)
         time.sleep(0.4)
@@ -1572,7 +1594,7 @@ class Driver:
         name_seen: float | None = None
         while True:
             if time.time() >= t_end:
-                raise DriverError("저장 후 공유 대화상자/리스트 미도착")
+                raise DriverError(msg("저장 후 공유 대화상자/리스트 미도착"))
             s = self._save_screen()
             if s == "share":
                 break
@@ -1591,7 +1613,8 @@ class Driver:
         # 공유 안 함 — 대화상자 표시 직후 수 초간 입력 무시(저장 처리 중) 실측(9차),
         # Esc 드롭 대비 재시도. 복귀 지점(리스트/슬롯) 모두 수용
         time.sleep(1.5)
-        self._step("esc", lambda: self._save_screen() in ("list", "slots"), "공유 취소",
-                   tries=5, wait=2.5)
+        self._step("esc", lambda: self._save_screen() in ("list", "slots"),
+                   msg("공유 취소"), tries=5, wait=2.5)
         if self._save_screen() == "slots":
-            self._step("esc", lambda: self._save_screen() == "list", "슬롯 화면 닫기")
+            self._step("esc", lambda: self._save_screen() == "list",
+                       msg("슬롯 화면 닫기"))

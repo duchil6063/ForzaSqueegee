@@ -9,6 +9,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
@@ -216,6 +217,7 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
         plan.layers[ink0:ink0] = added["fill"]
         plan.layers.extend(added["over"])
         plan.layers.extend(added["line"])
-        log(f"  잔차 수리 {n}장 (면 {len(added['fill'])}"
-            f"·덧칠 {len(added['over'])}·선 {len(added['line'])})")
+        log(msg("  잔차 수리 {n}장 (면 {n_fill}·덧칠 {n_over}·선 {n_line})",
+                n=n, n_fill=len(added["fill"]), n_over=len(added["over"]),
+                n_line=len(added["line"])))
     return n

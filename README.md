@@ -199,6 +199,20 @@ python tools/fls_build.py          # 패치를 얹어서 빌드
 
 둘 다 없어도 **내보내기는 다 됩니다.** 게임이 읽는 건 파일이지 편집기가 아니니까요.
 
+### 언어 · Language
+
+UI는 한국어(기본)와 영어를 지원합니다. 제품 창 왼쪽 아래의 **언어** 콤보에서
+고르면 저장되고, KFPS·FLS 편집기와 명령줄도 그 언어로 뜹니다.
+
+The UI speaks Korean (default) and English. Pick a language in the **Language**
+combo at the bottom-left of the main window — the choice is saved, and the
+KFPS/FLS editors and the CLI follow it.
+
+```
+python -m forzasqueegee lang en        # 저장해 두기 · save the choice
+python -m forzasqueegee --lang en …    # 이번 실행만 · this run only
+```
+
 ## 알아 둘 것
 
 - **원본과 픽셀 단위로 똑같아지지는 않습니다.** 목표는 "캐릭터의 특징은 살리면서

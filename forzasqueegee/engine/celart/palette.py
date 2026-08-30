@@ -25,6 +25,8 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
+
 # 팔레트 후보 (작은 것부터, 오차 기준 채택). 상한 48 — 24에서 멈추면 색이
 # 조밀한 그림(레이스·홍채·볼터치)에서 평균 오차가 5.9까지 남아 작은 고채도
 # 특징이 이웃 톤에 씻긴다 (실측 04: 홍채 적색 파편화·볼터치 소실. 48이면 4.1로
@@ -103,9 +105,12 @@ def quantize(lab: np.ndarray, sel: np.ndarray, log=print):
     K = len(ctr)
     out = np.full(sel.shape, -1, np.int32)
     out[sel] = np.asarray(lbl_flat).ravel().astype(np.int32)
-    log(f"  팔레트 {K}색"
-        + (f" (꼬리 보강 +{extra})" if extra else "")
-        + f" · 평균 Lab 오차 {mean_de:.2f} · ΔE>{_K_TAIL_DE:g} 꼬리 {tail * 100:.2f}%")
+    log(msg("  팔레트 {k}색{extra_note} · 평균 Lab 오차 {mean_de:.2f}"
+            " · ΔE>{tail_de:g} 꼬리 {tail_pct:.2f}%",
+            k=K,
+            extra_note=(msg(" (꼬리 보강 +{extra})", extra=extra)
+                        if extra else ""),
+            mean_de=mean_de, tail_de=_K_TAIL_DE, tail_pct=tail * 100))
     return K, out, ctr, {"palette_k": K, "palette_extra": extra,
                          "palette_mean_de": round(mean_de, 2),
                          "palette_tail": round(tail, 5)}

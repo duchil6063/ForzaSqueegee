@@ -35,6 +35,7 @@ from pathlib import Path
 from ..engine import textvinyl as tv
 from ..game import io as gio
 from ..game import ocr
+from ..i18n import msg
 from .driver import Driver, DriverError
 
 FONT_TAB = 14                  # 도형 선택 화면의 '글꼴' 탭 (cell_map meta.tabs 인덱스)
@@ -67,8 +68,9 @@ def font_cell(font: str) -> tuple[int, int]:
     if font in cells:
         return cells[font]
     raise DriverError(
-        f"게임 글꼴 목록에 '{font}'이 없다 (아는 것: {', '.join(sorted(cells))}).\n"
-        f"  표는 catalog/font_cells.json이고 근거는 그 안의 note다")
+        msg("게임 글꼴 목록에 '{font}'이 없다 (아는 것: {fonts}).\n"
+            "  표는 catalog/font_cells.json이고 근거는 그 안의 note다",
+            font=font, fonts=", ".join(sorted(cells))))
 
 
 @dataclass
@@ -184,8 +186,9 @@ def _type_and_confirm(d: Driver, text: str) -> None:
         gio.press_batch("backspace", len(text) + 4)
         time.sleep(0.2)
     else:
-        raise DriverError(f"텍스트 입력칸에 '{text}'가 안 들어갔다")
-    d._step("enter", d.in_transform_edit, "텍스트 → 변형 편집", tries=3, wait=3.0)
+        raise DriverError(msg("텍스트 입력칸에 '{text}'가 안 들어갔다", text=text))
+    d._step("enter", d.in_transform_edit, msg("텍스트 → 변형 편집"),
+            tries=3, wait=3.0)
 
 
 def _place_xy(t: TextJob, scale: float) -> tuple[float, float]:
@@ -244,17 +247,17 @@ def _one_pass(d: Driver, t: TextJob, scale: float,
             time.sleep(0.3)
         if found:
             if back != 1:
-                print(f"    글꼴 탭 = 오른끝−{back} (이 세션)")
+                print(msg("    글꼴 탭 = 오른끝−{back} (이 세션)", back=back))
             break
         _discard_to_list(host, times=3, d=d)
     if not found:
-        raise DriverError("'텍스트 입력' 대화상자가 안 떴다 — 글꼴 탭 탐색 실패 (오른끝−1..3·0)")
+        raise DriverError(msg("'텍스트 입력' 대화상자가 안 떴다 — 글꼴 탭 탐색 실패 (오른끝−1..3·0)"))
     _type_and_confirm(d, t.text)
     got: dict[str, float] = {}
     if hsb is not None:
-        d._step("x", d.in_hsb_edit, "글자 색 HSB 진입")
+        d._step("x", d.in_hsb_edit, msg("글자 색 HSB 진입"))
         d.set_hsb(*hsb)
-        d._step("enter", d.in_transform_edit, "색 → 변형 편집 복귀")
+        d._step("enter", d.in_transform_edit, msg("색 → 변형 편집 복귀"))
     got["rot"] = d.set_axis("rot", t.rot)
     # 글자 덩어리의 스케일은 **값 칸이 하나**다 (균등) — 불러온 비닐 그룹과 같다.
     # 두 칸을 요구하면 두 번째에서 판독 실패로 죽는다 (2026-08-17 실측).
@@ -302,9 +305,9 @@ def add_text(d: Driver, t: TextJob, log=print, host=None,
         time.sleep(1.0)
         n0 = read_n()
     if n0 is None:
-        raise DriverError("레이어 리스트 화면이 아니다 (레이어 수를 못 읽었다)")
+        raise DriverError(msg("레이어 리스트 화면이 아니다 (레이어 수를 못 읽었다)"))
     if t.shadow is not None:
-        log(f"  글자 '{t.text}' 그림자 ({t.font})")
+        log(msg("  글자 '{text}' 그림자 ({font})", text=t.text, font=t.font))
         _one_pass(d, t, t.scale, t.shadow, host=host, shift=t.shadow_shift)
     if t.outline is not None:
         # 140.8 = 스케일 1.0의 대문자 높이(유닛) — `sans` 'H' 실측 2026-08-17,
@@ -312,15 +315,18 @@ def add_text(d: Driver, t: TextJob, log=print, host=None,
         h = t.height if t.height is not None else t.scale * 140.8
         s = OUTLINE_SHIFT * h
         for i, (ox, oy) in enumerate(((s, s), (s, -s), (-s, s), (-s, -s))):
-            log(f"  글자 '{t.text}' 테두리 {i + 1}/4 ({t.font})")
+            log(msg("  글자 '{text}' 테두리 {i}/4 ({font})",
+                    text=t.text, i=i + 1, font=t.font))
             _one_pass(d, t, t.scale, t.outline, host=host, shift=(ox, oy))
-    log(f"  글자 '{t.text}' 본색 ({t.font})")
+    log(msg("  글자 '{text}' 본색 ({font})", text=t.text, font=t.font))
     got = _one_pass(d, t, t.scale, t.hsb, host=host)
     n1 = read_n()
     if n0 is not None and n1 is not None:
-        log(f"    레이어 {n0} → {n1} (기대 +{t.n_layers})")
+        log(msg("    레이어 {n0} → {n1} (기대 +{expect})",
+                n0=n0, n1=n1, expect=t.n_layers))
         if n1 - n0 != t.n_layers:
             raise DriverError(
-                f"글자 '{t.text}': 레이어가 {n1 - n0}장 늘었다 (기대 {t.n_layers}장) — "
-                f"게임이 글자를 다르게 나눴다")
+                msg("글자 '{text}': 레이어가 {delta}장 늘었다 (기대 {expect}장) — "
+                    "게임이 글자를 다르게 나눴다",
+                    text=t.text, delta=n1 - n0, expect=t.n_layers))
     return got

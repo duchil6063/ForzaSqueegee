@@ -15,6 +15,8 @@ import time
 
 import numpy as np
 
+from ..i18n import msg
+
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
@@ -342,9 +344,9 @@ def capture(hwnd: int, rows: tuple[int, int] | None = None) -> np.ndarray:
     alt = _blt_screen(hwnd, w, h, y0, nh)
     if alt.any():
         _SCREEN_GRAB.add(hwnd)
-        print("[io] PrintWindow가 검은 프레임만 준다 — 화면 뜨기로 갈아탄다. "
-              "게임이 우리보다 높은 권한으로 도는 것이 원인이고(스팀을 관리자로 "
-              "켠 경우), 그러면 **키·마우스 입력도 막힌다**. 스팀과 게임을 일반 "
-              "권한으로 다시 켤 것.", file=sys.stderr)
+        print(msg("[io] PrintWindow가 검은 프레임만 준다 — 화면 뜨기로 갈아탄다. "
+                  "게임이 우리보다 높은 권한으로 도는 것이 원인이고(스팀을 관리자로 "
+                  "켠 경우), 그러면 **키·마우스 입력도 막힌다**. 스팀과 게임을 일반 "
+                  "권한으로 다시 켤 것."), file=sys.stderr)
         return alt
     return out

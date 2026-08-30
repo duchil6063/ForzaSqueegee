@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from .. import modelstore
+from ..i18n import msg
 
 # detail 판은 Basic이 놓친 세부선·추가 경계를 **낮은 우선순위 증거**로 얹는
 # 자리다 (`celfit.evidence`). 못 받으면 Basic만으로 돈다 (한 버튼 원칙 —
@@ -185,18 +186,19 @@ def extract(rgb: np.ndarray, log=print, cap: bool = False,
     if not available(variant):
         if variant != "basic":
             return None
-        log("  경고: 선화 추출을 못 쓴다(onnxruntime 없음) — 고전 방식으로 진행")
+        log(msg("  경고: 선화 추출을 못 쓴다(onnxruntime 없음) — 고전 방식으로 진행"))
         return None
     model = modelstore.ensure(_NAMES[variant], log=log)
     if model is None:
         if variant != "basic":
             return None
-        log("  경고: 선화 모델을 못 받았다 — 고전 방식으로 진행")
+        log(msg("  경고: 선화 모델을 못 받았다 — 고전 방식으로 진행"))
         return None
     if cap and rgb.shape[0] * rgb.shape[1] > _MAX_PX:
         s = (_MAX_PX / (rgb.shape[0] * rgb.shape[1])) ** 0.5
         nw, nh = max(1, round(rgb.shape[1] * s)), max(1, round(rgb.shape[0] * s))
-        log(f"  선화 입력 상한 — {rgb.shape[1]}×{rgb.shape[0]} → {nw}×{nh}")
+        log(msg("  선화 입력 상한 — {w}×{h} → {nw}×{nh}",
+                w=rgb.shape[1], h=rgb.shape[0], nw=nw, nh=nh))
         rgb = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
     sess = _session(model, variant)
     try:
@@ -209,10 +211,12 @@ def extract(rgb: np.ndarray, log=print, cap: bool = False,
                 y = sess.run(None, {"image": x})[0]
             except Exception as e:                    # onnxruntime OOM 등
                 if attempt == 2:
-                    log(f"  경고: 선화 추출 실패 — 고전 방식으로 진행 ({type(e).__name__})")
+                    log(msg("  경고: 선화 추출 실패 — 고전 방식으로 진행 ({kind})",
+                            kind=type(e).__name__))
                     return None
                 nw, nh = max(1, round(w / 1.42)), max(1, round(h / 1.42))
-                log(f"  선화 추출 실패({type(e).__name__}) — {nw}×{nh}로 재시도")
+                log(msg("  선화 추출 실패({kind}) — {nw}×{nh}로 재시도",
+                        kind=type(e).__name__, nw=nw, nh=nh))
                 rgb = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
                 continue
             return np.clip(y[0, 0, :h, :w] * 255.0 + 0.5, 0, 255).astype(np.uint8)

@@ -37,6 +37,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..price import price_of
 from . import atoms, dense, inkfill, palette, prep
 from .model import _ALPHA_OPAQUE, CelArt
@@ -72,7 +73,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     h, w = rgba.shape[:2]
     sel = rgba[..., 3] >= _ALPHA_OPAQUE
     if not sel.any():
-        raise SystemExit("불투명 픽셀이 없다 — 입력을 확인할 것")
+        raise SystemExit(msg("불투명 픽셀이 없다 — 입력을 확인할 것"))
     trace: dict = {}
 
     # 0) 선화 — 선 픽셀을 **양쪽 면에 나눠** 복원한다 (§1).
@@ -84,7 +85,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         line_mask = lineart.hysteresis(lm) & sel if lm is not None else None
     src0 = src
     if line_mask is not None:
-        log(f"  선화: 선 픽셀 {int(line_mask.sum()):,}개")
+        log(msg("  선화: 선 픽셀 {n:,}개", n=int(line_mask.sum())))
         src = inkfill.complete(src, sel, line_mask, log)[0]
 
     # 1) 평활 — mean-shift가 부드러운 음영을 톤 면으로 뭉친다
@@ -155,10 +156,10 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
             swallowed = cand
         trace["line_swallowed"] = swallowed
         if swallowed.any():
-            log(f"  삼킨 선 {int(swallowed.sum()):,}px — 밝은 면에 먹힌 "
-                "어두운 잔선, 선 얹기로 되칠한다")
+            log(msg("  삼킨 선 {px:,}px — 밝은 면에 먹힌 어두운 잔선, "
+                    "선 얹기로 되칠한다", px=int(swallowed.sum())))
 
-    log(f"  영역 {len(regions)}개 (병합 후)")
+    log(msg("  영역 {n}개 (병합 후)", n=len(regions)))
     trace["regions_decomposed"] = len(regions)
     return CelArt(size=(w, h), labels=labels, regions=regions,
                   line_mask=line_mask,

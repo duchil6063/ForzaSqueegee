@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ...i18n import msg
 from ...paths import find_run_file, run_file, run_label
 from ..model import Layer, LayerPlan
 from . import folder, header as hdr, livery, project
@@ -152,8 +153,8 @@ def import_any(path: str | Path, out_root: str | Path) -> tuple[Path, dict]:
     p = Path(path)
     kind = folder.sniff(p)
     if kind is None:
-        raise ValueError(f"FLS 파일로 안 읽힌다 — {p.name} "
-                         f"(.3so · C_group · C_livery)")
+        raise ValueError(msg("FLS 파일로 안 읽힌다 — {name} "
+                             "(.3so · C_group · C_livery)", name=p.name))
     out_root = Path(out_root)
     stem = folder.safe_name(p.stem if p.is_file() else p.name, "fls")
     for pref in (folder.LIVERY_PREFIX, folder.GROUP_PREFIX):

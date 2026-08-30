@@ -28,6 +28,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from .i18n import msg
 from .paths import data_root, work_root
 
 EXE_NAME = "ForzaLiveryStudio.exe"
@@ -44,6 +45,12 @@ _REG_VALUE = "associationPrompted"
 # 아니까 비어 있을 때만 적어 준다 — 사람이 고른 값은 안 건드린다.
 _REG_UI = r"Software\ForzaTools\ForzaLiveryStudio\ui\behavior"
 _REG_GAME = "gameFolder"
+# 표시 언어 — 우리 포크(패치 0003)가 `QSettings("ui/language")`("ko"/"en",
+# 기본 ko)를 읽는다. 우리가 띄울 때는 **앱의 언어 설정으로 덮는다** — 앱에서
+# 고른 언어로 편집기가 뜨는 것이 계약이다 (FLS 설정 창에서 바꾸면 다음
+# FS 실행 전까지는 그 값이 산다).
+_REG_LANG_KEY = r"Software\ForzaTools\ForzaLiveryStudio\ui"
+_REG_LANG = "language"
 # [Itasha] 메뉴가 부르는 엔진 — 우리 자신이다 (`cli.design.cmd_flsedit`).
 # 편집기는 이것을 `QSettings("itasha/command")`로 읽고, 없으면 메뉴가 그 사실을
 # 제목에 적고 꺼진 채로 선다. 그래서 **띄울 때마다 적어 준다** — 저장소를 옮기거나
@@ -90,7 +97,7 @@ def set_path(path: str | Path | None) -> Path | None:
     if p.is_dir():
         p = p / EXE_NAME
     if not p.is_file():
-        raise ValueError(f"{EXE_NAME}이 아니다 — {path}")
+        raise ValueError(msg("{exe}이 아니다 — {path}", exe=EXE_NAME, path=path))
     SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS.write_text(json.dumps({"exe": str(p)}, ensure_ascii=False, indent=1),
                         encoding="utf-8")
@@ -156,18 +163,37 @@ def _seed_game_folder() -> str | None:
         return None
 
 
+def _set_ui_language() -> None:
+    """FLS의 표시 언어를 앱의 언어 설정으로 맞춘다 (`ui/language`)."""
+    try:
+        import winreg
+
+        from .i18n import current_language
+
+        lang = "en" if current_language() == "en" else "ko"
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _REG_LANG_KEY, 0,
+                                winreg.KEY_READ | winreg.KEY_WRITE) as k:
+            winreg.SetValueEx(k, _REG_LANG, 0, winreg.REG_SZ, lang)
+    except (ImportError, OSError):
+        pass
+
+
 def engine_command() -> list[str]:
     """[Itasha] 메뉴가 실행할 명령줄.
 
     `pythonw.exe`로 떠 있으면 **콘솔 없는 판**을 그대로 쓴다 — 엔진이 창을
-    띄우지 않아야 편집기 위로 검은 창이 튀지 않는다."""
+    띄우지 않아야 편집기 위로 검은 창이 튀지 않는다. 언어를 같이 못 박아
+    상태줄에 뜨는 엔진의 문장도 편집기와 같은 언어다."""
     import sys
+
+    from .i18n import current_language
 
     exe = Path(sys.executable)
     quiet = exe.with_name("pythonw.exe")
     if quiet.is_file():
         exe = quiet
-    return [str(exe), "-m", "forzasqueegee", "flsedit"]
+    return [str(exe), "-m", "forzasqueegee",
+            "--lang", "en" if current_language() == "en" else "ko", "flsedit"]
 
 
 def register_engine() -> bool:
@@ -200,17 +226,18 @@ def open_file(path: str | Path | None = None, *,
     binary = Path(exe) if exe else find_exe()
     if binary is None:
         raise FileNotFoundError(
-            f"{EXE_NAME}을 못 찾았다 — vendor/fls-editor/에 두거나 "
-            f"`python tools/get_fls.py`로 받으세요")
+            msg("{exe}을 못 찾았다 — vendor/fls-editor/에 두거나 "
+                "`python tools/get_fls.py`로 받으세요", exe=EXE_NAME))
     p = None
     if path is not None:
         # **절대 경로여야 한다** — FLS는 인자를 제 작업 폴더 기준으로 푼다
         # (상대 경로를 주면 조용히 못 찾고 빈 프로젝트로 뜬다, 2026-08-26 실측)
         p = Path(path).resolve()
         if not p.is_file():
-            raise FileNotFoundError(f"열 파일이 없다 — {p}")
+            raise FileNotFoundError(msg("열 파일이 없다 — {path}", path=p))
     _quiet_association()
     _seed_game_folder()
+    _set_ui_language()
     register_engine()
     cwd = str(p.parent) if p is not None else str(binary.parent)
     return subprocess.Popen([str(binary)] + ([str(p)] if p is not None else []),

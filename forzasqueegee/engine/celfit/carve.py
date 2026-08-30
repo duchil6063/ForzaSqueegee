@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import UNITS_PER_SCALE, Layer, LayerPlan
@@ -59,7 +60,7 @@ def _carve_lines(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
     n = _carve_range(plan, cel.line_mask, flat, cat, upp, cel.size, left, 0,
                      floor, floor_lo=floor_lo, defer=defer)
     if n:
-        log(f"  획 덮개 {n}장 (덮어서 그리기 — 최소 도형보다 가는 선)")
+        log(msg("  획 덮개 {n}장 (덮어서 그리기 — 최소 도형보다 가는 선)", n=n))
     return n
 
 

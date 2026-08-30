@@ -30,6 +30,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ...i18n import msg
+
 _MODEL = os.environ.get("FS_DENSE_MODEL", "")
 _DEFAULT = Path(__file__).resolve().parents[3] / "models" / "dense_feat.onnx"
 _SIDE = int(os.environ.get("FS_DENSE_SIDE", 518))     # 모델 입력 한 변
@@ -126,5 +128,6 @@ def region_features(rgb: np.ndarray, labels: np.ndarray, sel: np.ndarray,
     cnt = np.bincount(idx_flat, minlength=max(n, 1)).astype(np.float64)
     acc /= np.maximum(cnt, 1)[:, None]
     nrm = np.linalg.norm(acc, axis=1, keepdims=True)
-    log(f"  밀집 특징 {c}차 → {d}차 (격자 {gh}×{gw}) — 병합 보조 증거")
+    log(msg("  밀집 특징 {c}차 → {d}차 (격자 {gh}×{gw}) — 병합 보조 증거",
+            c=c, d=d, gh=gh, gw=gw))
     return (acc / np.maximum(nrm, 1e-9)).astype(np.float32)

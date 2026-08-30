@@ -20,6 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from ..paths import run_file
 from . import textvinyl as tv
 from .catalog import Catalog, default_catalog_path
@@ -314,7 +315,7 @@ def render_config(cfg_path: Path, out_path: Path | None = None,
     # 미리보기가 있지도 않은 면 위에 그려진다
     maps = compose.surfaces_for(car, media=media or raw.get("media"))
     if not maps:
-        log("미리보기: 면 지도가 없다 (실측도 설치 파일도) — 건너뛴다")
+        log(msg("미리보기 생략: 면 지도가 없다 (실측도 설치 파일도)"))
         return None
     base = None
     if raw.get("paint", {}).get("rgb"):
@@ -335,7 +336,8 @@ def render_config(cfg_path: Path, out_path: Path | None = None,
                 item, smap, Path(cfg_path).parent, cat, base, mask_map=mm,
                 exposure=compose.surface_exposure(name, mm, maps))
         except Exception as e:
-            log(f"미리보기 {name} 실패: {type(e).__name__}: {e}")
+            log(msg("미리보기 {name} 실패: {kind}: {err}",
+                    name=name, kind=type(e).__name__, err=e))
     if not panels:
         return None
     if faces_out is not None:
@@ -356,7 +358,8 @@ def render_config(cfg_path: Path, out_path: Path | None = None,
                                     panels[wname], wmap, rig)
             order.insert(0, key)
         except Exception as e:
-            log(f"미리보기 이음새({sname}) 실패: {type(e).__name__}: {e}")
+            log(msg("미리보기 이음새({name}) 실패: {kind}: {err}",
+                    name=sname, kind=type(e).__name__, err=e))
     # 세로로 쌓는다 (면 이름 라벨 띠 포함)
     cols: list[np.ndarray] = []
     W = max(p.shape[1] for p in panels.values()) + 8
@@ -373,5 +376,6 @@ def render_config(cfg_path: Path, out_path: Path | None = None,
     sheet = np.concatenate(cols, axis=0)
     out_path = out_path or run_file(Path(cfg_path).parent, "preview_itasha.png")
     cv2.imencode(".png", sheet[:, :, ::-1])[1].tofile(str(out_path))
-    log(f"미리보기: {out_path}")
+    # `gui.window.shell._log`가 이 문구로 미리보기를 건다 — 같은 msg 템플릿이다
+    log(msg("미리보기: {path}", path=out_path))
     return out_path

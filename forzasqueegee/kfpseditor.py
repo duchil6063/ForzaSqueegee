@@ -59,6 +59,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
+from .i18n import msg
 from .paths import data_root, find_run_file, out_root, run_file, work_root
 
 ROOT = data_root()
@@ -291,10 +292,11 @@ def stage_plan_project(plan_path: str | Path, *, name: str | None = None) -> str
     plan = LayerPlan.load(plan_path)
     data, _st = export_typecode(plan, Catalog(default_catalog_path()))
     if not data["shapes"]:
-        raise ValueError("내보낼 수 있는 레이어가 하나도 없다")
+        raise ValueError(msg("내보낼 수 있는 레이어가 하나도 없다"))
     if len(data["shapes"]) > MAX_LAYERS:
-        raise ValueError(f"레이어 {len(data['shapes'])}장 — 편집기 상한"
-                         f"({MAX_LAYERS})을 넘는다. pruneplan으로 줄일 것")
+        raise ValueError(msg("레이어 {n}장 — 편집기 상한"
+                             "({cap})을 넘는다. pruneplan으로 줄일 것",
+                             n=len(data['shapes']), cap=MAX_LAYERS))
     base = _clean_name(name or plan_path.parent.name or plan_path.stem)
     suffix = _PLAN_NAMES.get(plan_path.name)
     if suffix:
@@ -350,7 +352,7 @@ def recover_project() -> str:
     스키마와 같고, 머리 두 칸(`format`·`layer_count`)만 갈아 끼우면 된다."""
     state = recovery_state()
     if state is None:
-        raise ValueError("자동 복구본이 없다")
+        raise ValueError(msg("자동 복구본이 없다"))
     payload = json.loads(AUTOSAVE.read_text(encoding="utf-8"))
     base = _clean_name(f"{state['name'] or 'autosave'}-recovered", "recovered")
     target = _unique_path(PROJECTS, base, ".fabric-project.json")
@@ -662,9 +664,9 @@ def _inject_overlays(body: bytes) -> bytes:
 
     - 표시 언어(`fs-i18n*.js`)는 **editor-core.js 앞**이다. 정적 DOM이 첫 페인트
       전에 번역되고, editor.js가 이후에 쓰는 텍스트는 오버레이의
-      MutationObserver가 받는다. 기본 언어는 이 프로세스의 GUI/CLI 언어
-      (`--lang`)이고, 편집기 안에서 고른 언어가 localStorage에 남아 그다음부터는
-      그 선택이 우선한다.
+      MutationObserver가 받는다. 뜰 때의 언어는 이 프로세스의 언어 설정
+      (`work/state/lang.json`·`--lang`)이 **이긴다** — 편집기 안에서 바꾼
+      선택은 그 세션 동안만 유지된다.
     - 선으로 가르기(`fs-split.js`)는 **editor.js 뒤**다. 편집기가 세운 캔버스와
       전역 손잡이를 그대로 쓰기 때문이다.
 
@@ -1073,11 +1075,11 @@ def ensure_server(port: int | None = None) -> EditorServer:
     if _server is not None:
         return _server
     if not (VENDOR / "index.html").is_file():
-        raise FileNotFoundError(f"편집기 동봉본이 없다 — {VENDOR}")
+        raise FileNotFoundError(msg("편집기 동봉본이 없다 — {path}", path=VENDOR))
     if not resources_available():
-        raise FileNotFoundError(
-            f"편집기 도형 리소스가 없다 — {RESOURCES}\n"
-            f"  받으려면: python tools/get_kfps.py")
+        raise FileNotFoundError(msg(
+            "편집기 도형 리소스가 없다 — {path}\n"
+            "  받으려면: python tools/get_kfps.py", path=RESOURCES))
     for p in ([port] if port else [DEFAULT_PORT, 0]):
         try:
             _server = EditorServer(("127.0.0.1", p), _Handler)
@@ -1126,20 +1128,21 @@ def _offer_resources() -> bool:
     try:
         import get_kfps
     except ImportError as e:
-        print(f"오류: 수신 도구를 못 읽었다 — {e}")
+        print(msg("오류: 수신 도구를 못 읽었다 — {err}", err=e))
         return False
-    print("편집기 도형 리소스가 없다 (2,800파일 · 30MB).\n"
-          "  게임 도형 메시라 저장소에 안 싣고 KFPS 고정 커밋에서 받는다.")
+    print(msg("편집기 도형 리소스가 없다 (2,800파일 · 30MB).\n"
+              "  게임 도형 메시라 저장소에 안 싣고 KFPS 고정 커밋에서 받는다."))
     if sys.stdin and sys.stdin.isatty():
         try:
-            yes = input("  지금 받을까요? [Y/n] ").strip().lower() in ("", "y", "예")
+            yes = input(msg("  지금 받을까요? [Y/n] ")).strip().lower() \
+                in ("", "y", "예")
         except (EOFError, KeyboardInterrupt):
             print()
             yes = False
     else:
         yes = False
     if not yes:
-        print("  받으려면: python tools/get_kfps.py")
+        print(msg("  받으려면: python tools/get_kfps.py"))
         return False
     return get_kfps.fetch() == 0
 
@@ -1161,37 +1164,38 @@ def serve_cli(plan: str | None = None, port: int = 0,
         try:
             project = recover_project()
         except (OSError, ValueError) as e:
-            print(f"오류: {e}")
+            print(msg("오류: {err}", err=e))
             return 1
-        print(f"복구본을 프로젝트로 굳혔다 → {PROJECTS / project}")
+        print(msg("복구본을 프로젝트로 굳혔다 → {path}", path=PROJECTS / project))
         plan = None
     elif plan and recovery_state():
         try:
-            print(f"자동 복구본을 프로젝트로 굳혀 둔다 → "
-                  f"{PROJECTS / recover_project()}")
+            print(msg("자동 복구본을 프로젝트로 굳혀 둔다 → {path}",
+                      path=PROJECTS / recover_project()))
         except (OSError, ValueError) as e:
-            print(f"경고: 복구본을 못 굳혔다 — {e}")
+            print(msg("경고: 복구본을 못 굳혔다 — {err}", err=e))
     if plan:
         from .engine.kfpsjson import resolve_plan
 
         plan_path, st = resolve_plan(Path(plan), OUT / "kfpsimport")
         if st is not None:
-            print(f"KFPS JSON을 도안으로 변환했다 → {plan_path.parent}")
+            print(msg("KFPS JSON을 도안으로 변환했다 → {path}",
+                      path=plan_path.parent))
         try:
             project = stage_plan_project(plan_path)
         except (OSError, ValueError) as e:
-            print(f"오류: {e}")
+            print(msg("오류: {err}", err=e))
             return 1
     try:
         server = ensure_server(port or None)
     except OSError as e:
-        print(f"오류: 포트를 못 연다 — {e}")
+        print(msg("오류: 포트를 못 연다 — {err}", err=e))
         return 1
     url = editor_url(server, project)
-    print("KFPS 편집기 (내장)")
-    print(f"  주소: {url}")
-    print(f"  Export JSON → work/editor/exports/ 원본 보존 + "
-          f"out/kfpsedit/<이름>/<이름>.plan.json 자동 변환")
+    print(msg("KFPS 편집기 (내장)"))
+    print(msg("  주소: {url}", url=url))
+    print(msg("  Export JSON → work/editor/exports/ 원본 보존 + "
+              "out/kfpsedit/<이름>/<이름>.plan.json 자동 변환"))
     if open_browser:
         import webbrowser
         threading.Timer(0.3, lambda: webbrowser.open(url)).start()
@@ -1199,7 +1203,7 @@ def serve_cli(plan: str | None = None, port: int = 0,
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        print("\n종료.")
+        print("\n" + msg("종료."))
     finally:
         stop_server()
     return 0

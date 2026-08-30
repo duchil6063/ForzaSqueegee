@@ -22,6 +22,7 @@ import gzip
 import json
 from pathlib import Path
 
+from ...i18n import msg
 from ..model import Layer
 from . import ids
 from .binfmt import normalize_rotation
@@ -247,15 +248,16 @@ def write(doc: dict, path: str | Path) -> Path:
 def read(path: str | Path) -> dict:
     raw = Path(path).read_bytes()
     if len(raw) < 2 or raw[0] != 0x1F or raw[1] != 0x8B:
-        raise ValueError("`.3so` 프로젝트가 아니다 (gzip 껍데기가 없다)")
+        raise ValueError(msg("`.3so` 프로젝트가 아니다 (gzip 껍데기가 없다)"))
     doc = json.loads(gzip.decompress(raw).decode("utf-8"))
     if not isinstance(doc, dict):
-        raise ValueError("프로젝트 문서가 객체가 아니다")
+        raise ValueError(msg("프로젝트 문서가 객체가 아니다"))
     fmt = doc.get("format")
     if fmt not in (None, FORMAT, "fh6_editor_project"):
-        raise ValueError(f"FLS 편집기 프로젝트가 아니다 (format={fmt!r})")
+        raise ValueError(msg("FLS 편집기 프로젝트가 아니다 (format={fmt!r})", fmt=fmt))
     if int(doc.get("version", 0)) > VERSION:
-        raise ValueError(f"프로젝트 판 {doc.get('version')} — 이 판은 못 읽는다")
+        raise ValueError(msg("프로젝트 판 {version} — 이 판은 못 읽는다",
+                             version=doc.get("version")))
     return doc
 
 

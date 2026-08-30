@@ -24,6 +24,8 @@ import math
 import struct
 import zlib
 
+from ...i18n import msg
+
 # ── 리틀엔디언 원시값 ────────────────────────────────────────────────
 
 _U16 = struct.Struct("<H")
@@ -76,13 +78,15 @@ def wrap_container(payload: bytes) -> bytes:
 def unwrap_container(blob: bytes) -> bytes:
     """껍데기를 벗긴다. 길이가 안 맞으면 이유를 대고 죽는다."""
     if len(blob) < 8:
-        raise ValueError("컨테이너가 껍데기(8바이트)보다 짧다")
+        raise ValueError(msg("컨테이너가 껍데기(8바이트)보다 짧다"))
     n_comp, n_raw = r_u32(blob, 0), r_u32(blob, 4)
     if n_comp != len(blob) - 8:
-        raise ValueError(f"압축 길이 머리({n_comp})가 파일 크기({len(blob) - 8})와 다르다")
+        raise ValueError(msg("압축 길이 머리({header})가 파일 크기({actual})와 다르다",
+                             header=n_comp, actual=len(blob) - 8))
     out = zlib.decompress(blob[8 : 8 + n_comp])
     if len(out) != n_raw:
-        raise ValueError(f"원본 길이 머리({n_raw})가 실제({len(out)})와 다르다")
+        raise ValueError(msg("원본 길이 머리({header})가 실제({actual})와 다르다",
+                             header=n_raw, actual=len(out)))
     return out
 
 

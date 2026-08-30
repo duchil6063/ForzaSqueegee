@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from ...i18n import msg
 from ...paths import run_file
 from ..render import _BASE_HEIGHT_UNITS
 from .base import (CHECKPOINTS_DIR_NAME, FINALS_DIR_NAME, GENERATOR_BIN,
@@ -104,10 +105,10 @@ def generate(image: str | Path, out_dir: str | Path, *,
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     if not GENERATOR_BIN.is_file() and not finalize_only:
-        raise RuntimeError(f"GPU 생성기가 없다: {GENERATOR_BIN}")
+        raise RuntimeError(msg("GPU 생성기가 없다: {path}", path=GENERATOR_BIN))
     preset_file = SETTINGS_DIR / PRESETS.get(preset, PRESETS["shaded"])
     if not preset_file.is_file():
-        raise RuntimeError(f"프리셋이 없다: {preset_file}")
+        raise RuntimeError(msg("프리셋이 없다: {path}", path=preset_file))
 
     checkpoint_dir = out / CHECKPOINTS_DIR_NAME
     finals_dir = out / FINALS_DIR_NAME
@@ -189,44 +190,54 @@ def generate(image: str | Path, out_dir: str | Path, *,
         Image.fromarray(np.clip(processed_rgba, 0, 255).astype(np.uint8), mode="RGBA").save(preprocess_output_path)
         generation_image_path = preprocess_output_path
 
-    log(f"KFPS 동일 로직 생성 — 프리셋 {preset} ({preset_file.name})")
-    log(f"  목표 {target_shapes}장 · 원시 상한 {raw_stop} · 해상도 {max_resolution} · "
-        f"루마 {preprocess_mode} · 수리 {'켬' if repair_enabled else '끔'} · 씨드 {seed or '무작위'}")
-    log(f"  원화 분류: {art_profile['category']} — {art_profile['recommendation']}")
+    log(msg("KFPS 동일 로직 생성 — 프리셋 {preset} ({file})",
+            preset=preset, file=preset_file.name))
+    log(msg("  목표 {target}장 · 원시 상한 {raw_stop} · 해상도 {resolution} · "
+            "루마 {luma} · 수리 {repair} · 씨드 {seed}",
+            target=target_shapes, raw_stop=raw_stop, resolution=max_resolution,
+            luma=preprocess_mode,
+            repair=msg("켬") if repair_enabled else msg("끔"),
+            seed=seed or msg("무작위")))
+    log(msg("  원화 분류: {category} — {recommendation}",
+            category=art_profile["category"],
+            recommendation=art_profile["recommendation"]))
     if alpha_cleanup.get("changed"):
-        log(f"  알파 부스러기 정리: {alpha_cleanup['removed_pixels']}px")
+        log(msg("  알파 부스러기 정리: {px}px", px=alpha_cleanup["removed_pixels"]))
 
     # ── 원시 생성 (GPU) ──
     raw_generator_error = None
     if finalize_only:
         interrupted = True
-        log("체크포인트 재사용 — 원시 생성 없이 마무리만 다시 돈다")
+        log(msg("체크포인트 재사용 — 원시 생성 없이 마무리만 다시 돈다"))
     else:
         if progress:
-            progress(0.0, "GPU 원시 생성")
+            progress(0.0, msg("GPU 원시 생성"))
         try:
             interrupted = run_generator(
                 generation_image_path, v2_settings_path, checkpoint_dir, previews_dir,
                 stem, stop_file=stop_file, seed=int(seed or 0), log=log,
                 progress=(lambda n, total: progress(0.02 + 0.48 * n / max(1, total),
-                                                    f"GPU {n}/{total}장")) if progress else None)
+                                                    msg("GPU {n}/{total}장",
+                                                        n=n, total=total)))
+                if progress else None)
         except subprocess.CalledProcessError as exc:
             recoverable = collect_candidate_jsons(checkpoint_dir, stem, max_checkpoint=raw_stop, log=log)
             if not recoverable:
                 raise RuntimeError(
-                    f"GPU 생성기 실패 (exit {exc.returncode}) — OpenCL/Vulkan 드라이버가 있는 "
-                    "GPU가 필요하다") from exc
+                    msg("GPU 생성기 실패 (exit {code}) — OpenCL/Vulkan 드라이버가 있는 "
+                        "GPU가 필요하다", code=exc.returncode)) from exc
             interrupted = True
             raw_generator_error = f"exit {exc.returncode}"
-            log(f"원시 생성기가 비정상 종료 — 있는 체크포인트 {len(recoverable)}개로 마무리한다")
+            log(msg("원시 생성기가 비정상 종료 — 있는 체크포인트 {n}개로 마무리한다",
+                    n=len(recoverable)))
 
     # ── Finalize Checkpoints (V2 이식 + 수정 1·2) ──
     requested_checkpoints = parse_save_points(base_settings.get("saveAt", ""), raw_stop)
     synthesize_missing_checkpoints(checkpoint_dir, stem, requested_checkpoints, raw_stop, log=log)
     raw_candidates = collect_candidate_jsons(checkpoint_dir, stem, max_checkpoint=raw_stop, log=log)
     if not raw_candidates:
-        raise RuntimeError("체크포인트가 하나도 없다 — 원시 생성이 전혀 저장하지 못했다")
-    log(f"마무리: 체크포인트 {len(raw_candidates)}개 채점·프루닝·최종화")
+        raise RuntimeError(msg("체크포인트가 하나도 없다 — 원시 생성이 전혀 저장하지 못했다"))
+    log(msg("마무리: 체크포인트 {n}개 채점·프루닝·최종화", n=len(raw_candidates)))
 
     score_rgba = downscale_rgba(source_rgba, score_size)
     score_importance = build_importance_map(score_rgba)
@@ -241,7 +252,7 @@ def generate(image: str | Path, out_dir: str | Path, *,
     for index, candidate_path in enumerate(raw_candidates):
         if progress:
             progress(0.52 + 0.18 * index / max(1, len(raw_candidates)),
-                     f"채점 {index + 1}/{len(raw_candidates)}")
+                     msg("채점 {n}/{total}", n=index + 1, total=len(raw_candidates)))
         try:
             payload = normalize_payload(candidate_path)
             background = background_shape(payload)
@@ -284,7 +295,8 @@ def generate(image: str | Path, out_dir: str | Path, *,
                 kept_original = list(drawables)
                 final_count = len(kept_original)
         except Exception as exc:
-            log(f"후보 건너뜀 {candidate_path.name}: {type(exc).__name__}: {exc}")
+            log(msg("후보 건너뜀 {name}: {kind}: {error}", name=candidate_path.name,
+                    kind=type(exc).__name__, error=exc))
             continue
         candidate_records.append({
             "index": index,
@@ -301,7 +313,7 @@ def generate(image: str | Path, out_dir: str | Path, *,
             "v6_raw": is_modern_raw,
         })
     if not candidate_records:
-        raise RuntimeError("검증을 통과한 체크포인트가 없다")
+        raise RuntimeError(msg("검증을 통과한 체크포인트가 없다"))
 
     repair_indices = select_top_checkpoint_indices(candidate_records, repair_candidate_limit) if repair_enabled else set()
 
@@ -309,7 +321,8 @@ def generate(image: str | Path, out_dir: str | Path, *,
     for result_index, record in enumerate(candidate_records, start=1):
         if progress:
             progress(0.70 + 0.28 * (result_index - 1) / max(1, len(candidate_records)),
-                     f"최종화 {result_index}/{len(candidate_records)}")
+                     msg("최종화 {n}/{total}", n=result_index,
+                         total=len(candidate_records)))
         candidate_path = record["candidate_path"]
         background = record["background"]
         raw_count = record["raw_drawables"]
@@ -357,7 +370,8 @@ def generate(image: str | Path, out_dir: str | Path, *,
                 refinement = dict(refinement)
                 refinement.update({"enabled": True, "failed": True,
                                    "error": f"{type(exc).__name__}: {exc}"})
-                log(f"수리 실패 {candidate_path.name}: {exc} — 프루닝 결과를 그대로 쓴다")
+                log(msg("수리 실패 {name}: {error} — 프루닝 결과를 그대로 쓴다",
+                        name=candidate_path.name, error=exc))
         if enforce_canvas_boundary:
             try:
                 scaled_bg = dict(background)
@@ -390,7 +404,9 @@ def generate(image: str | Path, out_dir: str | Path, *,
                 if flat_color_summary.get("changed", 0):
                     final_shapes = [unscale_quantized(shape) for shape in stabilized_scaled]
                     scaled_selected = stabilized_scaled
-                    log(f"  평면색 안정화: {flat_color_summary['changed']}장 색 스냅 ({candidate_path.name})")
+                    log(msg("  평면색 안정화: {n}장 색 스냅 ({name})",
+                            n=flat_color_summary["changed"],
+                            name=candidate_path.name))
             refinement = dict(refinement)
             refinement["flat_color_stabilization"] = flat_color_summary
             cleanup_budget = max(0, len(final_shapes) - drawable_target_shapes)
@@ -402,7 +418,8 @@ def generate(image: str | Path, out_dir: str | Path, *,
             final_error = cleaned_error
             if covered_cleanup.get("removed", 0):
                 final_shapes = [unscale_quantized(shape) for shape in cleaned_scaled]
-                log(f"  가려진 레이어 정리: {covered_cleanup['removed']}장 제거 ({candidate_path.name})")
+                log(msg("  가려진 레이어 정리: {n}장 제거 ({name})",
+                        n=covered_cleanup["removed"], name=candidate_path.name))
             refinement = dict(refinement)
             refinement["covered_layer_cleanup"] = covered_cleanup
         except Exception as exc:
@@ -473,8 +490,9 @@ def generate(image: str | Path, out_dir: str | Path, *,
             "v2_preview": str(final_preview_path),
             "checkpoint_tag": checkpoint_tag,
         })
-        log(f"  후보 {candidate_path.name}: 원시 {raw_count} → 최종 {len(final_shapes)}장, "
-            f"오차 {final_error:.6f}")
+        log(msg("  후보 {name}: 원시 {raw} → 최종 {final}장, 오차 {error:.6f}",
+                name=candidate_path.name, raw=raw_count, final=len(final_shapes),
+                error=final_error))
 
     best_accuracy, _tolerant = select_candidate(results, efficiency_tolerance)
     # 승격은 **요청 장수 체크포인트**(최신)다. KFPS는 후보 전부를 늘어놓고
@@ -487,9 +505,11 @@ def generate(image: str | Path, out_dir: str | Path, *,
     # finals/*.v2.json에서 `kfpsimport`로 언제든 플랜이 된다.
     selected = max(results, key=lambda item: (item["raw_drawables"], item["candidate"]))
     if selected is not best_accuracy:
-        log(f"  참고: 오차 최소는 {best_accuracy['candidate']}"
-            f" ({best_accuracy['final_drawables']}장, {best_accuracy['error']:.1f})"
-            f" — finals/에서 kfpsimport로 바꿔 쓸 수 있다")
+        log(msg("  참고: 오차 최소는 {name} ({n}장, {error:.1f})"
+                " — finals/에서 kfpsimport로 바꿔 쓸 수 있다",
+                name=best_accuracy["candidate"],
+                n=best_accuracy["final_drawables"],
+                error=best_accuracy["error"]))
 
     # ── 승격: 요청 장수 후보 → 도안 + 프리뷰 + KFPS JSON ──
     full_w, full_h = selected["canvas_size"]
@@ -553,8 +573,9 @@ def generate(image: str | Path, out_dir: str | Path, *,
         "sec": round(time.time() - t0, 1),
     }
     save_json(reports_dir / f"{stem}.v2.report.json", report)
-    log(f"선택: {selected['candidate']} → {selected['final_drawables']}장, "
-        f"오차 {selected['error']:.6f} ({report['sec']}s)")
+    log(msg("선택: {name} → {n}장, 오차 {error:.6f} ({sec}s)",
+            name=selected["candidate"], n=selected["final_drawables"],
+            error=selected["error"], sec=report["sec"]))
     if stop_file.exists():
         try:
             stop_file.unlink()

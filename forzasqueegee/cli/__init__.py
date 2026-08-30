@@ -36,21 +36,36 @@ _COMMANDS = {
     "itasha": game.cmd_itasha,
     "gui": game.cmd_gui,
     "gamedir": info.cmd_gamedir,
+    "lang": info.cmd_lang,
     "cars": info.cmd_cars,
     "models": info.cmd_models,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
+    import sys
+
     from ..elevate import ensure_std_streams
+    from ..i18n import msg, set_language
 
     ensure_std_streams()     # argparse의 오류 출력보다 먼저다 (창 모드엔 stderr이 없다)
+
+    # 언어는 **파서를 짓기 전에** 선다 — --help의 도움말도 그 언어여야 한다.
+    # 기본은 저장값(`work/state/lang.json`, i18n이 뜰 때 읽는다)이고, 명령줄
+    # `--lang`이 있으면 이번 실행만 덮는다 (아래 parse가 다시 한 번 확정한다).
+    raw = list(sys.argv[1:] if argv is None else argv)
+    for i, a in enumerate(raw):
+        v = (raw[i + 1] if a == "--lang" and i + 1 < len(raw)
+             else a.split("=", 1)[1] if a.startswith("--lang=") else None)
+        if v in ("ko", "en"):
+            set_language(v)
+
     args = build_parser().parse_args(argv)
 
     from ..elevate import ensure_admin, need_admin
-    from ..i18n import set_language
 
-    set_language(args.lang)
+    if args.lang:
+        set_language(args.lang)
 
     # **인자가 먼저 선다** — 승격은 환경변수를 안 물려받으므로(`elevate.py`) UAC를
     # 타고 다시 뜬 프로세스에서도 살아 있는 것은 이 인자와 저장 파일뿐이다.
@@ -60,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             carfiles.use_dir(args.game_dir)
         except (OSError, ValueError) as e:
-            print(f"오류: {e}")
+            print(msg("오류: {e}", e=e))
             return 2
 
     # 주입이 걸린 명령은 **띄우자마자** 권한을 묻는다 — 다만 **정말 필요할 때만**

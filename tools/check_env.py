@@ -30,6 +30,14 @@ for _s in (sys.stdout, sys.stderr):
         except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
             pass
 
+# i18n은 stdlib뿐이라 실제로는 늘 서지만, 이 스크립트는 꾸러미가 아직 없는
+# 자리라 임포트가 무너져도 원문 그대로 말하고 계속 간다.
+try:
+    sys.path.insert(0, str(ROOT))
+    from forzasqueegee.i18n import msg
+except Exception:                       # noqa: BLE001
+    msg = lambda s, **kw: s.format(**kw) if kw else s   # noqa: E731
+
 
 def _pins() -> tuple[list[tuple[str, str]], tuple[int, int] | None, tuple[int, int] | None]:
     """(꾸러미 == 판) 목록과 파이썬 하한/상한."""
@@ -59,7 +67,8 @@ def check(quiet: bool = False) -> int:
     if (lo and cur < lo) or (hi and cur >= hi):
         want = ".".join(map(str, lo or ())) + " ~ " + (
             ".".join(map(str, (hi[0], hi[1] - 1))) if hi else "")
-        say(f"  파이썬 {'.'.join(map(str, cur))} (필요: {want})")
+        say(msg("  파이썬 {got} (필요: {want})",
+                got='.'.join(map(str, cur)), want=want))
         bad += 1
 
     import importlib.metadata as md
@@ -68,14 +77,15 @@ def check(quiet: bool = False) -> int:
         try:
             got = md.version(name)
         except md.PackageNotFoundError:
-            say(f"  {name}: 없음 (필요 {want})")
+            say(msg("  {name}: 없음 (필요 {want})", name=name, want=want))
             bad += 1
             continue
         if got != want:
-            say(f"  {name}: {got} (필요 {want})")
+            say(msg("  {name}: {got} (필요 {want})",
+                    name=name, got=got, want=want))
             bad += 1
     if bad and not quiet:
-        say(f"  맞지 않는 것 {bad}개")
+        say(msg("  맞지 않는 것 {n}개", n=bad))
     return 1 if bad else 0
 
 
@@ -98,9 +108,9 @@ def deep(quiet: bool = False) -> int:
             importlib.import_module(mod)
         except Exception as e:                     # noqa: BLE001 — 원인 불문 보고
             bad += 1
-            say(f"  {pkg}: 임포트 실패 - {e}")
+            say(msg("  {pkg}: 임포트 실패 - {err}", pkg=pkg, err=e))
             if "DLL" in str(e):
-                say("    Visual C++ 재배포 패키지가 없으면 이렇게 된다. 설치:")
+                say(msg("    Visual C++ 재배포 패키지가 없으면 이렇게 된다. 설치:"))
                 say("    https://aka.ms/vs/17/release/vc_redist.x64.exe")
     return 1 if bad else 0
 

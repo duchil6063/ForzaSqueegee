@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...engine.model import LayerPlan
+from ...i18n import msg
 from ...paths import run_label
 from ...game import body
 
@@ -186,7 +187,7 @@ def load_config(path: Path, preset: bool = True,
                  paint=tuple(float(v) for v in paint) if paint else None)
     items = raw.get("placements")
     if not items:
-        raise ValueError(f"{path.name}: placements가 비어 있다")
+        raise ValueError(msg("{name}: placements가 비어 있다", name=path.name))
     # **면 이름 검증은 그 차의 목록으로** 한다 — 실측표는 잰 차 한 대의 것이라
     # 스포일러·선루프가 있는 차의 면을 "모르는 이름"으로 죽인다 (실측: 인테그라
     # 23의 sunroof 배치가 읽는 자리에서 죽었다).
@@ -233,7 +234,8 @@ def _resolve_tabs(cfg: Config, names: list[str] | None = None) -> None:
         try:
             p.tab = body.surface_index(p.surface, names)
         except ValueError as e:
-            raise ValueError(f"{e} (구성을 그 차로 다시 지을 것)") from None
+            raise ValueError(msg("{err} (구성을 그 차로 다시 지을 것)",
+                                 err=e)) from None
 
 
 def _placement(cfg_path: Path, i: int, it: dict, preset: bool,
@@ -241,7 +243,7 @@ def _placement(cfg_path: Path, i: int, it: dict, preset: bool,
     where = f"placements[{i}]"
     surface = it.get("surface")
     if not surface:
-        raise ValueError(f"{where}: surface가 없다")
+        raise ValueError(msg("{where}: surface가 없다", where=where))
     body.surface_index(surface, names)          # 이 차에 없는 면이면 ValueError
     copy_from = it.get("copy_from")
     if copy_from:
@@ -261,17 +263,19 @@ def _placement(cfg_path: Path, i: int, it: dict, preset: bool,
                              groups=_groups(cfg_path, where, it, "groups"),
                              fit=bool(it.get("fit", True)),
                              post_shapes=list(it.get("post_shapes") or []))
-        raise ValueError(f"{where}: plan이 없다 (copy_from·text·shapes·groups도 없다)")
+        raise ValueError(msg("{where}: plan이 없다 (copy_from·text·shapes·groups도 없다)",
+                             where=where))
     plan_path = (cfg_path.parent / it["plan"]).resolve()
     if not plan_path.exists():
-        raise ValueError(f"{where}: 플랜이 없다 — {plan_path}")
+        raise ValueError(msg("{where}: 플랜이 없다 — {path}",
+                             where=where, path=plan_path))
     layers = len(LayerPlan.load(plan_path).layers)
     # 슬롯 이름은 **폴더 + 파일 이름**이다. 폴더만 쓰면 한 폴더에 도안이 여러 개인
     # 구성(측면 합성 + 리어 글자)에서 이름이 겹쳐 게임 슬롯이 부딪친다.
     group = it.get("group") or ascii_name(run_label(plan_path))
     if not NAME_OK.match(group):
-        raise ValueError(f"{where}: 저장 슬롯 이름은 ASCII 30자 이내여야 한다 "
-                         f"(받은 것: {group!r})")
+        raise ValueError(msg("{where}: 저장 슬롯 이름은 ASCII 30자 이내여야 한다 "
+                             "(받은 것: {got!r})", where=where, got=group))
     base = dict(DEFAULT_PLACE)
     if preset:
         base.update(PRESET.get(surface, {}))
@@ -297,12 +301,14 @@ def _groups(cfg_path: Path, where: str, it: dict, key: str) -> list[GroupLoad]:
     for j, g in enumerate(it.get(key) or []):
         gp = (cfg_path.parent / g["plan"]).resolve()
         if not gp.exists():
-            raise ValueError(f"{where}: {key}[{j}] 플랜이 없다 — {gp}")
+            raise ValueError(msg("{where}: {key}[{j}] 플랜이 없다 — {path}",
+                                 where=where, key=key, j=j, path=gp))
         gl = len(LayerPlan.load(gp).layers)
         name = g.get("group") or ascii_name(run_label(gp))
         if not NAME_OK.match(name):
-            raise ValueError(f"{where}: {key}[{j}] 저장 슬롯 이름은 ASCII 30자 "
-                             f"이내여야 한다 (받은 것: {name!r})")
+            raise ValueError(msg("{where}: {key}[{j}] 저장 슬롯 이름은 ASCII 30자 "
+                                 "이내여야 한다 (받은 것: {got!r})",
+                                 where=where, key=key, j=j, got=name))
         out.append(GroupLoad(
             plan=gp, group=name, layers=gl,
             x=float(g.get("x", 0.0)), y=float(g.get("y", 0.0)),
@@ -323,13 +329,15 @@ def _check(cfg: Config, names: list[str] | None = None) -> None:
     by_layers: dict[int, str] = {}
     for p in cfg.placements:
         if p.surface in used:
-            raise ValueError(f"면 {p.surface}에 배치가 둘이다 "
-                             f"(하나만 둔다 — 여러 도안은 도안 쪽에서 합칠 것)")
+            raise ValueError(msg("면 {surface}에 배치가 둘이다 "
+                                 "(하나만 둔다 — 여러 도안은 도안 쪽에서 합칠 것)",
+                                 surface=p.surface))
         used[p.surface] = p.group
         if p.copy_from is not None:
             if p.copy_from not in used:
-                raise ValueError(f"{p.surface}: copy_from={p.copy_from}이 "
-                                 f"아직 배치되지 않았다 (앞에 두어야 한다)")
+                raise ValueError(msg("{surface}: copy_from={copy_from}이 "
+                                     "아직 배치되지 않았다 (앞에 두어야 한다)",
+                                     surface=p.surface, copy_from=p.copy_from))
             continue
         if p.group_layers == 0:      # 글자 전용 배치 — 그룹 장수 검사 무관
             continue
@@ -337,20 +345,26 @@ def _check(cfg: Config, names: list[str] | None = None) -> None:
         total = p.group_layers + p.text_layers + len(p.shapes) + len(p.post_shapes)
         if cap is not None and total > cap:
             heavy = max(p.all_groups(), key=lambda g: g.layers)
-            raise ValueError(
-                f"{p.surface}: 이 면에 올릴 것이 {total:,}장인데 상한이 {cap:,}장이다 "
-                f"(그룹 {p.group_layers:,} + 글자 {p.text_layers} + 도형 "
-                f"{len(p.shapes) + len(p.post_shapes)}).\n"
-                f"  이 면의 도안을 줄이거나 한 장을 빼고 다시 걸 것 — 가장 무거운 것은 "
-                f"'{heavy.group}' {heavy.layers:,}장이다\n"
-                f"  (장수를 줄이려면: python -m forzasqueegee pruneplan "
-                f"{heavy.plan} --min-vis 1)")
+            raise ValueError(msg(
+                "{surface}: 이 면에 올릴 것이 {total:,}장인데 상한이 {cap:,}장이다 "
+                "(그룹 {group_layers:,} + 글자 {text_layers} + 도형 "
+                "{shape_count}).\n"
+                "  이 면의 도안을 줄이거나 한 장을 빼고 다시 걸 것 — 가장 무거운 것은 "
+                "'{heavy_group}' {heavy_layers:,}장이다\n"
+                "  (장수를 줄이려면: python -m forzasqueegee pruneplan "
+                "{heavy_plan} --min-vis 1)",
+                surface=p.surface, total=total, cap=cap,
+                group_layers=p.group_layers, text_layers=p.text_layers,
+                shape_count=len(p.shapes) + len(p.post_shapes),
+                heavy_group=heavy.group, heavy_layers=heavy.layers,
+                heavy_plan=heavy.plan))
         for name_, layers_ in [(g.group, g.layers) for g in p.all_groups()]:
             if layers_ in by_layers and by_layers[layers_] != name_:
-                raise ValueError(
-                    f"그룹 {name_}과 {by_layers[layers_]}의 장수가 {layers_:,}장으로 "
-                    f"같다 — 게임 그리드에서 이름을 못 읽어 **장수로** 고르므로 갈 수 없다.\n"
-                    f"  한 쪽을 `pruneplan --min-vis 1`로 한 장이라도 줄일 것")
+                raise ValueError(msg(
+                    "그룹 {a}과 {b}의 장수가 {layers:,}장으로 "
+                    "같다 — 게임 그리드에서 이름을 못 읽어 **장수로** 고르므로 갈 수 없다.\n"
+                    "  한 쪽을 `pruneplan --min-vis 1`로 한 장이라도 줄일 것",
+                    a=name_, b=by_layers[layers_], layers=layers_))
             by_layers[layers_] = name_
 
 
@@ -428,7 +442,8 @@ def compose_config(main_plan: Path, out: Path, *,
 
             _preview.render_config(out, media=media, log=log)
         except Exception as e:                    # noqa: BLE001 — 미리보기는 보조다
-            log(f"미리보기 생성 실패: {type(e).__name__}: {e}")
+            log(msg("미리보기 생성 실패: {kind}: {err}",
+                    kind=type(e).__name__, err=e))
     return load_config(out)
 
 

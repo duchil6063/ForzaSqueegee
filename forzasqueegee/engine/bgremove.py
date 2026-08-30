@@ -18,6 +18,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import modelstore
+from ..i18n import msg
 
 _NAME = "isnet_anime"
 _SIZE = 1024
@@ -95,9 +96,10 @@ def _keep_subject(alpha: np.ndarray, log=print) -> np.ndarray:
             and hull[lab == i].mean() >= _PART_HULL]
     if part:
         drop_ids = np.array([i for i in drop_ids.tolist() if i not in part])
-        log(f"  가림에 잘린 인물 {len(part)}개 되살림 "
-            f"({int(areas[np.array(part) - 1].sum()):,}px · 본체의 "
-            f"{areas[np.array(part) - 1].sum() / areas.max() * 100:.2f}%)")
+        log(msg("  가림에 잘린 인물 {n}개 되살림 "
+                "({px:,}px · 본체의 {pct:.2f}%)",
+                n=len(part), px=int(areas[np.array(part) - 1].sum()),
+                pct=areas[np.array(part) - 1].sum() / areas.max() * 100))
         if drop_ids.size == 0:
             return alpha
     drop = np.isin(lab, drop_ids)
@@ -107,20 +109,20 @@ def _keep_subject(alpha: np.ndarray, log=print) -> np.ndarray:
     d_drop = cv2.distanceTransform((~drop).astype(np.uint8), cv2.DIST_L2, 3)
     out = alpha.copy()
     out[d_drop < d_keep] = 0
-    log(f"  고립 알파 {drop_ids.size}개 제거 "
-        f"({int(areas[drop_ids - 1].sum()):,}px · 본체의 "
-        f"{areas[drop_ids - 1].sum() / areas.max() * 100:.2f}%)")
+    log(msg("  고립 알파 {n}개 제거 ({px:,}px · 본체의 {pct:.2f}%)",
+            n=drop_ids.size, px=int(areas[drop_ids - 1].sum()),
+            pct=areas[drop_ids - 1].sum() / areas.max() * 100))
     return out
 
 
 def matte(rgb: np.ndarray, log=print) -> np.ndarray | None:
     """RGB(uint8) → 인물 알파 (uint8, 255=인물·0=배경). 불가하면 None."""
     if not available():
-        log("  경고: 배경 제거를 못 쓴다(onnxruntime 없음) — 알파 없이 진행")
+        log(msg("  경고: 배경 제거를 못 쓴다(onnxruntime 없음) — 알파 없이 진행"))
         return None
     model = modelstore.ensure(_NAME, log=log)
     if model is None:
-        log("  경고: 배경 제거 모델을 못 받았다 — 알파 없이 진행")
+        log(msg("  경고: 배경 제거 모델을 못 받았다 — 알파 없이 진행"))
         return None
     import onnxruntime as ort
     from PIL import Image

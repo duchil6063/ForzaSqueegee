@@ -16,6 +16,7 @@ import json
 import re
 from pathlib import Path
 
+from ...i18n import msg
 from .base import ELLIPSE, RECTANGLE, ROTATED_ELLIPSE, ROTATED_RECTANGLE
 from .base import FINALS_DIR_NAME, PREVIEWS_DIR_NAME
 from .store import save_json
@@ -92,7 +93,8 @@ def collect_candidate_jsons(out_dir: Path, stem: str, max_checkpoint: int | None
             continue
         checkpoint = raw_checkpoint_number(path, stem)
         if max_checkpoint is not None and checkpoint is not None and checkpoint > max_checkpoint:
-            log(f"넘침 체크포인트 {name}: {checkpoint} > 요청 상한 {max_checkpoint} — 마무리가 검증 후 상한으로 자른다")
+            log(msg("넘침 체크포인트 {name}: {checkpoint} > 요청 상한 {cap} — 마무리가 검증 후 상한으로 자른다",
+                    name=name, checkpoint=checkpoint, cap=max_checkpoint))
         paths.append(path)
     paths = sorted(set(paths), key=lambda path: candidate_json_sort_key(path, stem))
     final_path = out_dir / f"{stem}.json"
@@ -128,7 +130,8 @@ def synthesize_missing_checkpoints(out_dir: Path, stem: str, requested_points: l
             payload = normalize_payload(path)
             count = drawable_count_from_payload(payload)
         except Exception as exc:
-            log(f"읽을 수 없는 체크포인트 건너뜀 {path.name}: {exc}")
+            log(msg("읽을 수 없는 체크포인트 건너뜀 {name}: {error}",
+                    name=path.name, error=exc))
             continue
         if count > 0:
             available.append((count, path, payload))
@@ -159,7 +162,9 @@ def synthesize_missing_checkpoints(out_dir: Path, stem: str, requested_points: l
         available.append((point, dest, synthesized))
         available.sort(key=lambda item: (item[0], item[1].name.lower()))
         existing_by_number[point] = dest
-        log(f"빠진 체크포인트 {point} 복원: {source_path.name}({source_count}장) 앞부분 절단 → {dest.name}")
+        log(msg("빠진 체크포인트 {point} 복원: {source}({count}장) 앞부분 절단 → {dest}",
+                point=point, source=source_path.name, count=source_count,
+                dest=dest.name))
 
 
 def candidate_json_sort_key(path: Path, stem: str) -> tuple[int, int, str]:

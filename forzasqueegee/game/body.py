@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import msg
+
 # 선택 밑줄 띠 (셀 아래 라임 3px)
 UNDERLINE_REL = (0.075, 0.095)
 UNDERLINE_FRAC = 0.08    # 밑줄 띠에서 라임 행 비율 문턱
@@ -63,13 +65,14 @@ def surface_index(surface: str | int, names: list[str] | None = None) -> int:
     if names:
         if surface in names:
             return names.index(surface)
-        raise ValueError(f"이 차에 없는 면이다: {surface} "
-                         f"(있는 면: {', '.join(names)})")
+        raise ValueError(msg("이 차에 없는 면이다: {surface} (있는 면: {names})",
+                             surface=surface, names=", ".join(names)))
     for t in surfaces():
         if t.get("name") == surface:
             return int(t["index"])
-    raise ValueError(f"모르는 차체 면 이름: {surface} "
-                     f"(아는 것: {', '.join(surface_names()) or '없음'})")
+    raise ValueError(msg("모르는 차체 면 이름: {surface} (아는 것: {names})",
+                         surface=surface,
+                         names=", ".join(surface_names()) or msg("없음")))
 
 
 def surface_cap(surface: str | int, names: list[str] | None = None) -> int | None:

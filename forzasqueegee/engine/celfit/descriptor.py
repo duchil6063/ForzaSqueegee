@@ -32,6 +32,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog, default_catalog_path
 from ..model import UNITS_PER_SCALE
 from .skeleton import _paths, _prune_spurs, _resample, _thin
@@ -436,7 +437,8 @@ def descriptors(cat: Catalog, log=None) -> dict[str, ShapeDesc]:
                 got[n] = d
         _save_cache(path, got)
         if log:
-            log(f"  도형 서술자 {len(got)}종 계측 (캐시 {path.name})")
+            log(msg("  도형 서술자 {n}종 계측 (캐시 {cache})",
+                    n=len(got), cache=path.name))
     _CACHE.clear()
     _CACHE.update(got)
     _CACHE_KEY = key

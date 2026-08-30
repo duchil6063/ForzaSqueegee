@@ -29,6 +29,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from .geodesic import propagate
 
 # 장벽 닫기 커널 — 선 지도의 1px 끊김을 잇는다. **장벽에만** 쓴다: 렌더 선을
@@ -87,6 +88,6 @@ def complete(src: np.ndarray, sel: np.ndarray, line_mask: np.ndarray | None,
                           lost.astype(np.uint8), 3, cv2.INPAINT_TELEA)[..., ::-1]
         out = np.ascontiguousarray(out)
     nf = int(full.max()) + 1 if full.max() >= 0 else 0
-    log(f"  선 제거: 면 {nf}개로 갈라 귀속 "
-        f"(선 {int(zone.sum()):,}px · 고립 {int(lost.sum()):,}px)")
+    log(msg("  선 제거: 면 {nf}개로 갈라 귀속 (선 {zone_px:,}px · 고립 {lost_px:,}px)",
+            nf=nf, zone_px=int(zone.sum()), lost_px=int(lost.sum())))
     return out, full

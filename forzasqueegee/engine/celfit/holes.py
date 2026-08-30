@@ -10,6 +10,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import Layer, LayerPlan
@@ -244,7 +245,8 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
         if not changed:
             break
     if grown:
-        log(f"  레이어 성장 {grown}회 (구멍 흡수, 추가 레이어 0장)")
+        log(msg("  레이어 성장 {grown}회 (구멍 흡수, 추가 레이어 0장)",
+                grown=grown))
     return grown
 
 
@@ -315,7 +317,7 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
     done = 0
     for gi in order:
         if n >= max_layers:
-            log(f"  경고: 구멍 메움 상한 — 군집 {todo - done}개 남음")
+            log(msg("  경고: 구멍 메움 상한 — 군집 {n}개 남음", n=todo - done))
             break
         if gsz[gi] < min_px:
             break
@@ -412,5 +414,6 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
         if not rem.any():
             done += 1
     if n:
-        log(f"  구멍 메움 {n}장 (군집 {done}/{todo})")
+        log(msg("  구멍 메움 {n}장 (군집 {done}/{todo})",
+                n=n, done=done, todo=todo))
     return n

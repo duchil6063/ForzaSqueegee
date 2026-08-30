@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
@@ -355,12 +356,15 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
                         if rec.strokes else 1.0),
     })
     if rec.fat_fills:
-        log(f"  덩어리 채움 {rec.fat_fills}장 (선으로 못 긋는 폭 — 모멘트 타원)")
+        log(msg("  덩어리 채움 {n}장 (선으로 못 긋는 폭 — 모멘트 타원)",
+                n=rec.fat_fills))
     if n_frag or n_tex:
-        log(f"  선 파편 {n_frag}개 생략"
-            + (f" · 무늬 {n_tex}개 단순화" if n_tex else "")
-            + f" (고립 특징 {rec.stats['iso_kept']}개 보호) — "
-              f"유의미 획 {len(rec.strokes)}개")
+        log(msg("  선 파편 {n_frag}개 생략{tex} (고립 특징 {iso_kept}개 보호) — "
+                "유의미 획 {n_strokes}개",
+                n_frag=n_frag,
+                tex=(msg(" · 무늬 {n_tex}개 단순화", n_tex=n_tex)
+                     if n_tex else ""),
+                iso_kept=rec.stats["iso_kept"], n_strokes=len(rec.strokes)))
     return rec
 
 
@@ -474,13 +478,13 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
     ink_so_far = _ink_map(plan.layers, cat, upp, w, h)
     for k, s in enumerate(rec.strokes):
         if progress and (k & 15) == 0:
-            progress(k / total, f"획 {k + 1}/{total}")
+            progress(k / total, msg("획 {cur}/{total}", cur=k + 1, total=total))
         if n >= budget:
             for rest in rec.strokes[k:]:
                 rest.dropped = "budget"
             rec.stats["skipped_strokes"] = len(rec.strokes) - k
-            log(f"  경고: 선 예산 소진 — 남은 획 {len(rec.strokes) - k}개 생략 "
-                f"(덜 보이는 순)")
+            log(msg("  경고: 선 예산 소진 — 남은 획 {n}개 생략 (덜 보이는 순)",
+                    n=len(rec.strokes) - k))
             break
         sc = s.sc
         # 가격 — 획 하나가 단위다. 사람은 획을 한 번에 긋거나 아예 안 긋는다.
@@ -550,8 +554,8 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
     rec.stats["cheap_strokes"] = n_cheap
     rec.stats["joint_moves"] = n_joint
     if n_cheap:
-        log(f"  가격 미달 획 {n_cheap}개 생략 (값 < λ) — "
-            f"그은 획 {len(placed)}개")
+        log(msg("  가격 미달 획 {n_cheap}개 생략 (값 < λ) — 그은 획 {n_placed}개",
+                n_cheap=n_cheap, n_placed=len(placed)))
     if pol.seam_repair and placed and n < budget:
         n += _patch_seams(plan, cat, upp, (w, h), placed, budget - n, log,
                           rec.stats, near_all & ~bg_all, forms=forms,

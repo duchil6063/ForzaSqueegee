@@ -34,6 +34,7 @@ import cv2
 import numpy as np
 
 from .. import modelstore
+from ..i18n import msg
 
 _TILE, _OVER = 240, 16
 _SCALE = 4
@@ -184,8 +185,8 @@ def upscale_rgba(rgba: np.ndarray, size: int, log=print,
     global _WARNED
     if not available():
         if not _WARNED and not os.environ.get("FS_NO_SR"):
-            log("  경고: SR 모델이 없다 — 큐빅 확대로 진행 "
-                "(models/realesrgan_anime6b.onnx)")
+            log(msg("  경고: SR 모델이 없다 — 큐빅 확대로 진행 "
+                    "(models/realesrgan_anime6b.onnx)"))
             _WARNED = True
         return None
     h, w = rgba.shape[:2]
@@ -194,8 +195,9 @@ def upscale_rgba(rgba: np.ndarray, size: int, log=print,
     # SR 입력 상한 — 비용이 입력 px에 비례한다(실측 21~24 s/Mpx). 어차피 ×4라
     # 상한까지 줄여 넣어도 작업 해상도를 넘는다
     pre = _sr_input(rgba)
-    log(f"  저해상 입력 {w}×{h} — 애니 SR로 확대"
-        + (f" ({pre.shape[1]}×{pre.shape[0]} 경유)" if pre.shape != rgba.shape else ""))
+    log(msg("  저해상 입력 {w}×{h} — 애니 SR로 확대", w=w, h=h)
+        + (msg(" ({w}×{h} 경유)", w=pre.shape[1], h=pre.shape[0])
+           if pre.shape != rgba.shape else ""))
     return fit(_sr_rgba(pre), size)
 
 
@@ -229,7 +231,7 @@ def _prepare(rgba: np.ndarray, size: int, log) -> np.ndarray:
         modelstore.ensure(_NAME, log=log)
     if not available():
         if m != "off":
-            log("  경고: SR 모델이 없다 — 원본 해상도로 진행")
+            log(msg("  경고: SR 모델이 없다 — 원본 해상도로 진행"))
         if min(h, w) >= size:
             return rgba
         sr = upscale_rgba(rgba, size, log=log)
@@ -249,8 +251,8 @@ def _prepare(rgba: np.ndarray, size: int, log) -> np.ndarray:
         # **판단은 ×4 출력 크기 하나로 한다**: 짧은 변을 같이 보면 그런 구도가
         # 가드를 비켜가 상한을 만든 그 할당 실패로 되돌아간다.
         if h * w * _SCALE * _SCALE > _SR_OUT_MAX_PX:
-            log(f"  원본 {w}×{h} — ×{_SCALE} SR 출력이 메모리 상한을 넘어 "
-                f"원본 해상도로 진행")
+            log(msg("  원본 {w}×{h} — ×{scale} SR 출력이 메모리 상한을 넘어 "
+                    "원본 해상도로 진행", w=w, h=h, scale=_SCALE))
             return rgba
         sr = upscale_rgba(rgba, size, log=log, force=True)
         return rgba if sr is None else sr

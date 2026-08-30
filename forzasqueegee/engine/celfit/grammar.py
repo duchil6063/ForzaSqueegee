@@ -16,6 +16,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import Layer, LayerPlan
@@ -347,6 +348,7 @@ def _patch_seams(plan: LayerPlan, cat: Catalog, upp: float,
     st["seam_curves"] = n_curve
     st["seam_grown"] = n_grow
     if n or n_grow:
-        log(f"  이음 보수 {n}장 (획 틈 메움 — 하나의 선으로, 곡선 {n_curve}장 · "
-            f"이웃 도형 늘려 메운 틈 {n_grow}개는 0장)")
+        log(msg("  이음 보수 {n}장 (획 틈 메움 — 하나의 선으로, 곡선 {n_curve}장 · "
+                "이웃 도형 늘려 메운 틈 {n_grow}개는 0장)",
+                n=n, n_curve=n_curve, n_grow=n_grow))
     return n

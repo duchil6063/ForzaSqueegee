@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ...i18n import msg
 from ..model import Layer
 from . import materials
 from .binfmt import (
@@ -226,9 +227,10 @@ def encode_livery(sections: dict[str, list[Layer]], *, car_id: int = 0,
             over.append(f"{SLOTS[slot][0]} {n:,}/{SLOT_CAPS[slot]:,}")
         bodies.append((body, n, mask))
     if over:
-        raise ValueError("면 레이어 상한을 넘는다 — " + " · ".join(over))
+        raise ValueError(msg("면 레이어 상한을 넘는다 — {over}",
+                             over=" · ".join(over)))
     if not any(n for _, n, _ in bodies):
-        raise ValueError("실을 수 있는 레이어가 하나도 없다")
+        raise ValueError(msg("실을 수 있는 레이어가 하나도 없다"))
 
     last_pop = max(i for i in range(N_SLOTS) if bodies[i][1] > 0)
     counts = [0] * N_SLOTS
@@ -313,7 +315,7 @@ def decode_livery(raw: bytes) -> tuple[dict[str, list[Layer]], dict, PaintState]
     """`C_livery` 페이로드 → (면 이름 → 레이어 목록, 통계, 도색)."""
     gy = _find(raw, b"gyvl")
     if gy < 0:
-        raise ValueError("C_livery 안에 gyvl 청크가 없다")
+        raise ValueError(msg("C_livery 안에 gyvl 청크가 없다"))
     car_id = 0
     vl = _find(raw, b"vlrc")
     if vl >= 0 and vl + 0x14 <= len(raw):
@@ -345,12 +347,14 @@ def decode_livery(raw: bytes) -> tuple[dict[str, list[Layer]], dict, PaintState]
             pos = min(len(body), pos + EMPTY_SLOT_SIZE)
             continue
         if pos + 6 > len(body):
-            raise ValueError(f"{SLOTS[slot][1]}: 구획 머리가 잘렸다")
+            raise ValueError(msg("{section}: 구획 머리가 잘렸다",
+                                 section=SLOTS[slot][1]))
         n = int.from_bytes(body[pos : pos + 2], "little")
         blocks = int.from_bytes(body[pos + 2 : pos + 4], "little")
         if n <= 0 or blocks != (n + 7) // 8:
-            raise ValueError(f"{SLOTS[slot][1]}: 구획 머리가 규격과 다르다 "
-                             f"(자식 {n} · 블록 {blocks})")
+            raise ValueError(msg("{section}: 구획 머리가 규격과 다르다 "
+                                 "(자식 {n} · 블록 {blocks})",
+                                 section=SLOTS[slot][1], n=n, blocks=blocks))
         bitmap = bytes(body[pos + 6 : pos + 6 + blocks])
         w = Walker(bytes(body), pos + 6 + blocks)
         w.read_children(n, bitmap, False, canvas_transform(slot))

@@ -18,6 +18,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE, Layer, LayerPlan
 from .geometry import _poly_px
@@ -227,5 +228,6 @@ def merge_costrokes(plan: LayerPlan, cat: Catalog, upp: float,
         gone += n_pass
     st["merged_bars"] = gone
     if gone:
-        log(f"  겹침 병합 {gone}장 감소 (같은 방향 막대 합침 — 덮임 손실 없음)")
+        log(msg("  겹침 병합 {gone}장 감소 (같은 방향 막대 합침 — 덮임 손실 없음)",
+                gone=gone))
     return gone

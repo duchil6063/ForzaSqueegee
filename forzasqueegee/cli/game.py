@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from ..i18n import msg
+
+
 def cmd_inject(args) -> int:
     from ..game.inject import apply_plan, probe
 
@@ -41,10 +44,10 @@ def cmd_itasha(args) -> int:
         try:
             media = carfiles.resolve_media(media)
         except (ValueError, OSError) as e:
-            print(f"오류: {e}")
+            print(msg("오류: {e}", e=e))
             return 1
         if media != args.media:
-            print(f"설치 차량: {media}")
+            print(msg("설치 차량: {media}", media=media))
     if args.plan:
         plans = [Path(p) for p in args.plan]
         out = Path(args.out or "itasha.json")
@@ -57,7 +60,8 @@ def cmd_itasha(args) -> int:
             if args.base:
                 s = args.base.lstrip("#")
                 if len(s) != 6:
-                    print(f"오류: --base는 #RRGGBB 꼴이어야 한다 ({args.base})")
+                    print(msg("오류: --base는 #RRGGBB 꼴이어야 한다 ({base})",
+                              base=args.base))
                     return 1
                 base = tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
             try:
@@ -68,11 +72,11 @@ def cmd_itasha(args) -> int:
                     base_rgb=base, flip=args.flip, deco=not args.no_deco,
                     motif=args.motif)
             except (ValueError, OSError) as e:
-                print(f"오류: {e}")
+                print(msg("오류: {e}", e=e))
                 return 1
         # `-o`에 폴더를 주면 구성 파일은 그 안에 선다 — 구성이 아는 경로를 쓴다
         out = cfg.path
-        print(f"구성 파일 → {out}")
+        print(msg("구성 파일 → {out}", out=out))
         if args.make_only:
             print(itasha.describe(cfg))
             return 0
@@ -80,7 +84,7 @@ def cmd_itasha(args) -> int:
     elif args.config:
         config = Path(args.config)
     else:
-        print("itasha.json 경로나 --plan 중 하나는 있어야 한다")
+        print(msg("itasha.json 경로나 --plan 중 하나는 있어야 한다"))
         return 2
     try:
         return itasha.run(config, restart=args.restart,
@@ -89,7 +93,7 @@ def cmd_itasha(args) -> int:
                           replace=not args.keep_existing,
                           fit=not args.no_autofit, media=media)
     except (ValueError, OSError) as e:
-        print(f"오류: {e}")
+        print(msg("오류: {e}", e=e))
         return 1
     return 0
 
@@ -98,4 +102,3 @@ def cmd_gui(args) -> int:
     from ..gui import run as run_gui
 
     return run_gui(args.image)
-

@@ -18,6 +18,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from ...i18n import msg
 from .base import GENERATOR_BIN, VENDOR_DIR
 
 # 원시 생성기 진행 줄 — "[123/2000] Added rotated ellipse ..." (실측)
@@ -130,7 +131,7 @@ def run_generator(image: Path, settings_path: Path, checkpoint_dir: Path, previe
             break
         if stop_file is not None and stop_file.exists():
             interrupted = True
-            log("중단 요청 — 마지막 저장 체크포인트까지로 내부 생성을 끝낸다…")
+            log(msg("중단 요청 — 마지막 저장 체크포인트까지로 내부 생성을 끝낸다…"))
             try:
                 proc.terminate()
             except Exception:

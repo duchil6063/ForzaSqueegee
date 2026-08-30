@@ -39,6 +39,7 @@ import os
 
 import numpy as np
 
+from ...i18n import msg
 from .marks import _MARK_DE, _MARK_RATIO
 
 # ── 비용의 저울 (전 이미지 공통 — 타깃별 손튜닝 금지) ────────────────────
@@ -392,8 +393,9 @@ class RegionGraph:
         out = self.labels.copy()
         pos = out >= 0
         out[pos] = lut[out[pos]]
-        log(f"  RAG 병합: 원자 {self.n0} → 영역 {live}개 "
-            f"(이득 {gained}장 · 상한 강제 {forced}장)")
+        log(msg("  RAG 병합: 원자 {atoms} → 영역 {live}개 "
+                "(이득 {gained}장 · 상한 강제 {forced}장)",
+                atoms=self.n0, live=live, gained=gained, forced=forced))
         self.stats = {"atoms": self.n0, "region_merges": self.merges,
                       "merge_gain": gained, "merge_forced": forced}
         return out

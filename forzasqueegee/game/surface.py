@@ -38,6 +38,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..i18n import msg
+
 # 차분에서 **빼 놓을 UI 자리** (클라 비율 x0,y0,x1,y1). 변형 편집의 값 박스와
 # 아래 키 안내는 프로브를 옮기면 같이 바뀌므로 도색으로 오인된다.
 UI_RECTS = (
@@ -131,7 +133,7 @@ class Warp:
         n = B.shape[0]
         deg = 6 if n >= 7 else (3 if n >= 3 else 0)
         if deg == 0:
-            raise ValueError("표본이 모자란다 (3점 이상)")
+            raise ValueError(msg("표본이 모자란다 (3점 이상)"))
         Bd = B[:, :deg]
         cx, *_ = np.linalg.lstsq(Bd, np.asarray(xs, np.float64), rcond=None)
         cy, *_ = np.linalg.lstsq(Bd, np.asarray(ys, np.float64), rcond=None)
@@ -371,7 +373,8 @@ def build(name: str, index: int, full: np.ndarray,
     """
     bb = bbox(full)
     if bb is None:
-        raise ValueError(f"{name}: 도색 마스크가 비었다 (프로브가 안 보였다)")
+        raise ValueError(msg("{name}: 도색 마스크가 비었다 (프로브가 안 보였다)",
+                             name=name))
     x0, y0, x1, y1 = bb
     ox, oy = origin_px
     kx, ky = px_per_unit

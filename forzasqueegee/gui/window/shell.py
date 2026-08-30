@@ -24,6 +24,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...engine.pipeline import MAX_SHAPES, make
-from ...i18n import tr
+from ...i18n import current_language, msg, save_language, tr
 from ...overlay.win import set_dpi_aware
 from ...paths import find_run_file
 from .parts import _ApplyJob, _Drop, _Job, _Pane
@@ -66,6 +67,7 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self._editor_seen_ns = 0           # 이미 문 편집기 Export 마커 시각
         self.t0 = 0.0
         self._stage_text = ""
+        self._restart = False              # 언어 변경 — `run`의 재시작 루프가 본다
 
         self.drop = _Drop()
         self.drop.picked.connect(self.set_image)
@@ -156,6 +158,20 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         left.addWidget(self.open)
         left.addWidget(self._apply_box())
         left.addStretch(1)
+
+        # 언어 — 바꾸면 이 창을 다시 세워 적용한다 (모든 문구가 생성 때 박힌다).
+        # 저장값이라 KFPS·FLS 편집기·CLI·하위 도구도 다음부터 이 언어로 말한다.
+        self.lang_combo = QComboBox()
+        self.lang_combo.addItem("한국어", "ko")      # 항목은 제 언어로 적는다
+        self.lang_combo.addItem("English", "en")
+        self.lang_combo.setCurrentIndex(1 if current_language() == "en" else 0)
+        self.lang_combo.setToolTip(tr("gui.lang.tip"))
+        self.lang_combo.currentIndexChanged.connect(self._on_lang)
+        lrow = QHBoxLayout()
+        lrow.addWidget(QLabel(tr("gui.lang")))
+        lrow.addWidget(self.lang_combo)
+        lrow.addStretch(1)
+        left.addLayout(lrow)
         lw = QWidget()
         lw.setLayout(left)
         lw.setFixedWidth(380)
@@ -236,6 +252,7 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self.drop.setEnabled(not on)
         self.bgcut.setEnabled(not on)
         self.shapes.setEnabled(not on)
+        self.lang_combo.setEnabled(not on)   # 재시작 적용이라 도는 중엔 못 바꾼다
         self._sync_go()
 
     @Slot(str)
@@ -243,8 +260,9 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self.log.appendPlainText(s.rstrip("\n"))
         # 이타샤 구성 미리보기가 나오면 그 자리에서 건다 — 배치 40분을 기다리기
         # 전에 사람이 결과 꼴을 본다 (`engine.preview`가 이 문구로 알린다)
-        if "미리보기: " in s:
-            p = Path(s.split("미리보기: ", 1)[1].strip())
+        mark = msg("미리보기: {path}", path="")
+        if mark in s:
+            p = Path(s.split(mark, 1)[1].strip())
             if p.exists() and p.suffix.lower() == ".png":
                 self.out_pane.load(p)
 
@@ -287,6 +305,25 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self._log(msg)
         self.show_log.setChecked(True)
 
+    def _on_lang(self) -> None:
+        """언어 콤보 — 저장하고 창을 다시 세운다 (`run`의 재시작 루프).
+
+        문구가 전부 생성 때 박히므로 산 채로는 못 바꾼다. 콤보는 일이 도는
+        동안 잠기니(`_busy`) 여기 올 때는 한가한 창이고, `close()`가 편집기·
+        오버레이 같은 딸린 창들을 정리한 뒤 재시작 코드로 나간다."""
+        lang = self.lang_combo.currentData()
+        if lang == current_language():
+            return
+        save_language(lang)
+        self._restart = True
+        self.close()
+        if self.isVisible():             # closeEvent가 막았다 — 다음 시작에 적용된다
+            self._restart = False
+        else:
+            # 마지막 창 닫힘의 quit(0)이 끼어들 수 있어 코드가 아니라 플래그로
+            # 판정한다 — exit()는 루프를 깨우는 용도다
+            QApplication.exit(RESTART)
+
     def closeEvent(self, event) -> None:
         """도는 중에 닫으면 **끝나기를 기다린다** — 스레드를 끊으면 산출물이 깨진다.
         창 조작은 게임에 키를 넣고 있으므로 STOP을 놓고 레이어 경계를 기다린다.
@@ -312,12 +349,24 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         super().closeEvent(event)
 
 
+# 언어를 바꾸면 창을 부수고 다시 세운다 — `app.exec()`이 이 코드로 나온다
+RESTART = 7301
+
+
 def run(image: str | Path | None = None) -> int:
     set_dpi_aware()          # QApplication보다 먼저 — 오버레이가 게임 rect와 맞아야 한다
     # 내장 편집기(QtWebEngine)가 나중에 뜰 수 있다 — 이 속성은 QApplication을
     # 만들기 **전**에만 켤 수 있고, 안 켜면 편집기 창에서 GPU 컨텍스트가 갈린다
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication.instance() or QApplication([])
-    win = MakeWindow(image)
-    win.show()
-    return app.exec()
+    plan: Path | None = None
+    while True:
+        win = MakeWindow(image)
+        if plan is not None and plan.exists():
+            win._set_plan(plan)
+        win.show()
+        code = app.exec()
+        if not win._restart:
+            return code
+        # 물고 있던 것은 새 창이 그대로 문다 — 언어만 바뀐다
+        image, plan = win.image, win.plan

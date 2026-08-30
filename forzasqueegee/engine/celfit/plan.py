@@ -13,6 +13,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt, mark_mask
 from ..model import Layer, LayerPlan
@@ -172,11 +173,11 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
 
     for oi, reg in enumerate(cel.regions):
         if progress:
-            progress(oi / total, f"영역 {oi + 1}/{total}")
+            progress(oi / total, msg("영역 {cur}/{total}", cur=oi + 1, total=total))
         left = budget - len(plan.layers)
         if left <= 0:
             stats["skipped"] = total - oi
-            log(f"  경고: 예산 소진 — 영역 {total - oi}개 못 그림")
+            log(msg("  경고: 예산 소진 — 영역 {n}개 못 그림", n=total - oi))
             break
         share = int(1.6 * left * reg.area / suffix_area[oi]) + 2
 
@@ -268,23 +269,28 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                 stats["share_hit"] += 1
 
     plan.layers.extend(line_layers)       # 선화는 모든 면 위 (마지막 선따기)
-    log(f"  큰 면 10개에 {stats['big10_layers']}장 "
-        f"(채움 {stats['fill_layers']}·막대 {stats['bar_layers']}"
-        f"·마무리 {stats['mop_layers']} 중) · 영역 예산이 물린 곳 "
-        f"{stats['cap_hit']}/{total} (그중 배분 몫 {stats['share_hit']})")
+    log(msg("  큰 면 10개에 {big10}장 (채움 {fill}·막대 {bar}·마무리 {mop} 중)"
+            " · 영역 예산이 물린 곳 {cap_hit}/{total} (그중 배분 몫 {share_hit})",
+            big10=stats["big10_layers"], fill=stats["fill_layers"],
+            bar=stats["bar_layers"], mop=stats["mop_layers"],
+            cap_hit=stats["cap_hit"], total=total,
+            share_hit=stats["share_hit"]))
     if len(_FILL_SHAPES) > 1:             # 채움 어휘 튜닝용 계측
         tot = max(1, sum(_FILL_WIN.values()))
         top = sorted(_FILL_WIN.items(), key=lambda kv: -kv[1])
         stats["fill_win"] = dict(top)
-        log("  채움 도형: " + " · ".join(f"{k} {v}({100 * v / tot:.0f}%)"
-                                      for k, v in top[:12]))
+        log(msg("  채움 도형: {items}",
+                items=" · ".join(f"{k} {v}({100 * v / tot:.0f}%)"
+                                 for k, v in top[:12])))
     if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측
-        log(f"  곡선 획 {_CURVE_STATS['ok']}/{_CURVE_STATS['paths']} "
-            f"(직선 {_CURVE_STATS['flat']}·짧음 {_CURVE_STATS['short']}"
-            f"·부적합 {_CURVE_STATS['nofit']}·저득점 {_CURVE_STATS['lowgain']}"
-            f"·획아님 {_CURVE_STATS['notline']})")
+        log(msg("  곡선 획 {ok}/{paths} (직선 {flat}·짧음 {short}·부적합 {nofit}"
+                "·저득점 {lowgain}·획아님 {notline})",
+                ok=_CURVE_STATS["ok"], paths=_CURVE_STATS["paths"],
+                flat=_CURVE_STATS["flat"], short=_CURVE_STATS["short"],
+                nofit=_CURVE_STATS["nofit"], lowgain=_CURVE_STATS["lowgain"],
+                notline=_CURVE_STATS["notline"]))
     if progress:
-        progress(1.0, "배치 완료")
+        progress(1.0, msg("배치 완료"))
     return plan, stats
 
 
@@ -336,10 +342,12 @@ def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     stats["line_layers"] = n
     stats["strokes"] = len({l.stroke for l in plan.layers if l.stroke >= 0})
     if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측 (fit_plan과 동일)
-        log(f"  곡선 획 {_CURVE_STATS['ok']}/{_CURVE_STATS['paths']} "
-            f"(직선 {_CURVE_STATS['flat']}·짧음 {_CURVE_STATS['short']}"
-            f"·부적합 {_CURVE_STATS['nofit']}·저득점 {_CURVE_STATS['lowgain']}"
-            f"·획아님 {_CURVE_STATS['notline']})")
+        log(msg("  곡선 획 {ok}/{paths} (직선 {flat}·짧음 {short}·부적합 {nofit}"
+                "·저득점 {lowgain}·획아님 {notline})",
+                ok=_CURVE_STATS["ok"], paths=_CURVE_STATS["paths"],
+                flat=_CURVE_STATS["flat"], short=_CURVE_STATS["short"],
+                nofit=_CURVE_STATS["nofit"], lowgain=_CURVE_STATS["lowgain"],
+                notline=_CURVE_STATS["notline"]))
     ink = _ink_cover(plan.layers, cat, upp, w, h)
     lm = cel.line_mask
     # "가깝다"의 자는 상수가 아니라 게임 격자 — 최소 도형(스케일 0.01)의 폭
@@ -371,5 +379,5 @@ def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         stats["outline_src"] = round(float((rim & near_line).sum())
                                      / max(1, int(rim.sum())), 4)
     if progress:
-        progress(1.0, "배치 완료")
+        progress(1.0, msg("배치 완료"))
     return plan, stats

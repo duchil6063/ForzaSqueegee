@@ -28,6 +28,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .i18n import msg
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "release.json"
 _TIMEOUT = 60
@@ -113,7 +115,8 @@ def _download(src: str, dst: Path, size: int, log) -> None:
                         + (f" / {size / 1e6:,.0f}MB" if size else ""))
     if size and got != size:
         tmp.unlink(missing_ok=True)
-        raise OSError(f"크기가 다르다 — 받은 {got:,} / 적힌 {int(size):,}")
+        raise OSError(msg("크기가 다르다 — 받은 {got:,} / 적힌 {want:,}",
+                          got=got, want=int(size)))
     shutil.move(str(tmp), str(dst))
 
 
@@ -133,28 +136,33 @@ def ensure(name: str, log=print) -> Path | None:
         return None
     src = url(name)
     if not src:
-        log(f"  경고: {ent['file']}을 받을 곳이 없다 (release.json)")
+        log(msg("  경고: {file}을 받을 곳이 없다 (release.json)",
+                file=ent['file']))
         _FAILED.add(name)
         return None
     if os.environ.get("FS_NO_MODEL_FETCH"):
-        log(f"  경고: {ent['file']}이 없다 (FS_NO_MODEL_FETCH — 받지 않는다)")
+        log(msg("  경고: {file}이 없다 (FS_NO_MODEL_FETCH — 받지 않는다)",
+                file=ent['file']))
         _FAILED.add(name)
         return None
     size = int(ent.get("size") or 0)
-    log(f"  모델을 받는다 — {ent['file']} ({size / 1e6:,.0f}MB, {ent.get('what', '')})")
+    log(msg("  모델을 받는다 — {file} ({mb:,.0f}MB, {what})",
+            file=ent['file'], mb=size / 1e6, what=ent.get('what', '')))
     try:
         _download(src, dst, size, log)
         digest = _sha256(dst)
         if ent.get("sha256") and digest != ent["sha256"]:
             dst.unlink(missing_ok=True)
-            raise OSError(f"해시가 다르다 — {digest[:16]}… ≠ {ent['sha256'][:16]}…")
+            raise OSError(msg("해시가 다르다 — {got}… ≠ {want}…",
+                              got=digest[:16], want=ent['sha256'][:16]))
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         dst.with_suffix(dst.suffix + ".part").unlink(missing_ok=True)
-        log(f"  경고: {ent['file']}을 못 받았다 — {e}")
-        log(f"    직접 받아 {model_dir()}에 두어도 된다: {src}")
+        log(msg("  경고: {file}을 못 받았다 — {err}", file=ent['file'], err=e))
+        log(msg("    직접 받아 {dir}에 두어도 된다: {url}",
+                dir=model_dir(), url=src))
         _FAILED.add(name)
         return None
-    log(f"  받았다 — {dst.name}")
+    log(msg("  받았다 — {name}", name=dst.name))
     return dst
 
 
@@ -162,10 +170,10 @@ def fetch_all(log=print) -> int:
     """목록의 모델을 다 받아 둔다. 못 받은 개수를 준다 (0이면 다 됐다)."""
     bad = 0
     todo = entries()
-    log(f"모델 {len(todo)}개를 확인한다 — {model_dir()}")
+    log(msg("모델 {n}개를 확인한다 — {dir}", n=len(todo), dir=model_dir()))
     for name, ent in todo.items():
         if have(name):
-            log(f"  있다 — {ent['file']}")
+            log(msg("  있다 — {file}", file=ent['file']))
             continue
         if ensure(name, log=log) is None:
             bad += 1
@@ -178,10 +186,12 @@ def verify(log=print) -> int:
     for name, ent in entries().items():
         p = path(name)
         if not p.is_file():
-            log(f"  없다 — {ent['file']}")
+            log(msg("  없다 — {file}", file=ent['file']))
             continue
         digest = _sha256(p)
         ok = digest == ent.get("sha256")
-        log(f"  {'맞다' if ok else '다르다'} — {ent['file']} {digest[:16]}…")
+        log(msg("  {status} — {file} {digest}…",
+                status=msg("맞다") if ok else msg("다르다"),
+                file=ent['file'], digest=digest[:16]))
         bad += 0 if ok else 1
     return bad

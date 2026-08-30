@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE
 
@@ -231,5 +232,6 @@ def _check_vocab(cat: Catalog, log) -> None:
     bad = [(n, cat[n].alpha_area) for n in shape_vocabulary(cat)
            if n in cat.shapes and not cat[n].opaque]
     if bad:
-        log("경고: 어휘에 반투명 도형이 있다 — 인게임이 도안보다 옅게 그린다: "
-            + " · ".join(f"{n}(잉크 {a:.0%})" for n, a in bad))
+        log(msg("경고: 어휘에 반투명 도형이 있다 — 인게임이 도안보다 옅게 그린다: {items}",
+                items=" · ".join(msg("{n}(잉크 {a:.0%})", n=n, a=a)
+                                 for n, a in bad)))

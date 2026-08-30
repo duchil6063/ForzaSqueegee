@@ -29,6 +29,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from .catalog import Catalog
 from .celart import CelArt
 from .celfit import _poly_px
@@ -106,7 +107,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     upp = plan.units_per_px
     for l in layers:
         if l.mask or l.alpha < 99.5 or cat[l.shape].gradient is not None:
-            log("  경고: 전역 미세 조정 생략 — 불투명 소유자 모델 밖 레이어 포함")
+            log(msg("  경고: 전역 미세 조정 생략 — 불투명 소유자 모델 밖 레이어 포함"))
             return {"moved_layers": 0, "accepts": 0, "skipped": True}
 
     tgt = cel.flat_render().astype(np.int32)          # 목표 (선화 px = 원화 색)
@@ -220,7 +221,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         for si, i in enumerate(todo):
             if progress and si % 250 == 0:
                 progress((p + si / len(todo)) / max_passes,
-                         f"미세 조정 {p + 1}/{max_passes}")
+                         msg("미세 조정 {p}/{total}", p=p + 1, total=max_passes))
             for combo in _AXES:
                 for sign in (1.0, -1.0):
                     for _ in range(_MAX_WALK):
@@ -246,15 +247,17 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         accepts += 1
                         pass_accepts += 1
                         moved[i] = True
-        log(f"  {tag} 미세 조정 패스 {p + 1}: 이동 {pass_accepts}회 수락")
+        log(msg("  {tag} 미세 조정 패스 {p}: 이동 {n}회 수락",
+                tag=msg(tag), p=p + 1, n=pass_accepts))
         if pass_accepts < max(8, len(todo) // 100):
             break
     if progress:
-        progress(1.0, "미세 조정 완료")
+        progress(1.0, msg("미세 조정 완료"))
     stats = {"moved_layers": int(moved.sum()), "accepts": accepts,
              "cost_gain": round(gain, 0)}
-    log(f"  {tag} 미세 조정: 레이어 {stats['moved_layers']}/{len(todo)}개 이동 "
-        f"(수락 {accepts}회)")
+    log(msg("  {tag} 미세 조정: 레이어 {moved}/{total}개 이동 (수락 {n}회)",
+            tag=msg(tag), moved=stats["moved_layers"], total=len(todo),
+            n=accepts))
     return stats
 
 
@@ -356,5 +359,5 @@ def reorder_fills(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             break
     if moves:
         plan.layers[:] = [layers[i] for i in order]
-        log(f"  그리기 순서 조정 {moves}회 (도형 0장)")
+        log(msg("  그리기 순서 조정 {n}회 (도형 0장)", n=moves))
     return {"reorder_moves": moves, "reorder_gain": round(gain, 0)}

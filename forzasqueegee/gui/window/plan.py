@@ -36,8 +36,7 @@ class _PlanOps:
         start = str(self.out or ROOT / "out")
         path, _ = QFileDialog.getOpenFileName(
             self, tr("gui.pick_plan"), start,
-            "도안 / KFPS JSON / FLS (*.json *.3so C_group C_livery);;"
-            "All files (*)")
+            tr("gui.pick_plan.filter"))
         if not path:
             return
         p = self._resolve_plan(Path(path))

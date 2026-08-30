@@ -61,6 +61,7 @@ import os
 from datetime import date
 from pathlib import Path
 
+from ..i18n import msg
 from . import carfiles
 
 _CACHE: dict | None = None
@@ -221,8 +222,8 @@ def sync(root: Path | None = None, log=None) -> dict:
     root = root or carfiles.install_dir()
     if root is None:
         raise FileNotFoundError(
-            "FH6 설치 폴더를 못 찾았다 — "
-            "`python -m forzasqueegee gamedir <경로>`로 못 박을 것")
+            msg("FH6 설치 폴더를 못 찾았다 — "
+                "`python -m forzasqueegee gamedir <경로>`로 못 박을 것"))
     names = carfiles.list_cars(root)
     got: dict[str, list[str]] = {}
     size: dict[str, list[int]] = {}
@@ -237,7 +238,7 @@ def sync(root: Path | None = None, log=None) -> dict:
         else:
             failed.append(media)
         if log and (i % 100 == 0 or i == len(names)):
-            log(f"  {i}/{len(names)}대")
+            log(msg("  {i}/{total}대", i=i, total=len(names)))
     out = {"synced": date.today().isoformat(), "root_id": _root_id(root),
            "cars": got, "size": size}
     _CACHE = out
@@ -251,7 +252,7 @@ def sync(root: Path | None = None, log=None) -> dict:
     except OSError as e:
         saved = False
         if log:
-            log(f"  색인을 저장하지 못했다 ({e}) — 이번 실행만 쓴다")
+            log(msg("  색인을 저장하지 못했다 ({err}) — 이번 실행만 쓴다", err=e))
     return {"cars": len(got), "faces": sum(len(v) for v in got.values()),
             "sized": len(size), "failed": failed, "probed": probed(),
             "path": p, "root": root, "saved": saved}
@@ -287,21 +288,24 @@ def summary() -> str:
     if not n:
         root, why = carfiles.resolve()
         if root is None:
-            return (f"차량 정보가 없다 — 설치 폴더를 {why} · "
-                    "`python -m forzasqueegee gamedir <경로>`로 지정할 것")
-        return "차량 정보가 아직 없다 — `python -m forzasqueegee cars --sync`"
+            return msg("차량 정보가 없다 — 설치 폴더를 {why} · "
+                       "`python -m forzasqueegee gamedir <경로>`로 지정할 것",
+                       why=why)
+        return msg("차량 정보가 아직 없다 — `python -m forzasqueegee cars --sync`")
     root = carfiles.install_dir()
     live = len(carfiles.list_cars())
     note = ""
     if (root is not None and raw.get("root_id")
             and _root_id(root) != raw["root_id"]):
-        note = " · 설치 폴더가 바뀌었다 (다시 뜰 것)"
+        note = msg(" · 설치 폴더가 바뀌었다 (다시 뜰 것)")
     elif live and live != n:
-        note = f" · 설치 폴더에는 {live}대 (다시 뜰 것)"
+        note = msg(" · 설치 폴더에는 {live}대 (다시 뜰 것)", live=live)
     elif not sizes():
-        note = " · 크기가 아직 없다 (다시 뜰 것)"
+        note = msg(" · 크기가 아직 없다 (다시 뜰 것)")
     # 크기가 636대 중 635대인 것은 흠이 아니다 — 옆면도 앞뒤면도 없는 차가 있다
     # (아리엘 노마드는 윗면·앞유리뿐이라 잴 높이가 없다).
-    return (f"차량 {n}대 · 크기 {len(sizes())}대 "
-            f"({raw.get('synced', '?')} 동기화){note} · "
-            f"인게임 프로브 {len(probed())}대")
+    return msg("차량 {n}대 · 크기 {sized}대 "
+               "({synced} 동기화){note} · "
+               "인게임 프로브 {n_probe}대",
+               n=n, sized=len(sizes()), synced=raw.get("synced", "?"),
+               note=note, n_probe=len(probed()))

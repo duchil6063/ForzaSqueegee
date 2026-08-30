@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog, default_catalog_path
 from ..model import UNITS_PER_SCALE, Layer, LayerPlan, rgb_to_hsb
 
@@ -102,7 +103,7 @@ def look(plan: LayerPlan, cat: Catalog | None = None,
             key = l.rgb()
             area[key] = area.get(key, 0.0) + a
     if hi[0] < lo[0]:
-        raise ValueError("빈 도안 (잉크 레이어가 없다)")
+        raise ValueError(msg("빈 도안 (잉크 레이어가 없다)"))
     ranked = sorted(area.items(), key=lambda kv: -kv[1])
     pal = [c for c, _a in ranked]
     total = sum(area.values()) or 1.0

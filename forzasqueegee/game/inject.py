@@ -79,6 +79,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..engine.model import Layer, LayerPlan
+from ..i18n import msg
 
 MEM_COMMIT = 0x1000
 MEM_PRIVATE = 0x20000
@@ -185,7 +186,7 @@ class Proc:
         self.pid = pid
         self.h = _k32.OpenProcess(PROCESS_ALL, False, pid)
         if not self.h:
-            raise OSError(f"프로세스 열기 실패 (관리자 권한 필요) pid={pid}")
+            raise OSError(msg("프로세스 열기 실패 (관리자 권한 필요) pid={pid}", pid=pid))
 
     def close(self) -> None:
         if self.h:
@@ -262,7 +263,7 @@ def find_groups(p: Proc, layout: Layout, expect_count: int | None = None,
     desc = [a - 0x10 for a in p.scan(RTTI_NAME, MEM_IMAGE, False, 1, limit=4)]
     if not desc:
         if verbose:
-            print("CLiveryGroup RTTI를 못 찾았다 (게임 빌드가 다르거나 미실행)")
+            print(msg("CLiveryGroup RTTI를 못 찾았다 (게임 빌드가 다르거나 미실행)"))
         return []
     base = _module_base(p)
     cols: list[int] = []
@@ -280,7 +281,8 @@ def find_groups(p: Proc, layout: Layout, expect_count: int | None = None,
             vtables.append(a + 8)
     vtables = sorted(set(vtables))
     if verbose:
-        print(f"RTTI {len(desc)}건 · COL {len(set(cols))}건 · vtable {len(vtables)}건")
+        print(msg("RTTI {n_rtti}건 · COL {n_col}건 · vtable {n_vt}건",
+                  n_rtti=len(desc), n_col=len(set(cols)), n_vt=len(vtables)))
     groups = []
     for vt in vtables:
         pat = struct.pack("<Q", vt)
@@ -334,7 +336,8 @@ def find_tables_by_run(p: Proc, count: int, tol: int = 0,
                          "stride": second - first if second else 0})
     hits.sort(key=lambda d: abs(d["run"] - count))
     if verbose:
-        print(f"포인터 연속 {count}개 이상인 표 후보 {len(hits)}건")
+        print(msg("포인터 연속 {count}개 이상인 표 후보 {n}건",
+                  count=count, n=len(hits)))
     return hits
 
 
@@ -405,10 +408,12 @@ def find_groups_by_record(p: Proc, layout: Layout, expect_count: int | None = No
         out.append({"group": g, "table": tbl, "count": cnt})
     out.sort(key=lambda d: -d["count"])
     if verbose:
-        print(f"레코드 서명으로 찾은 살아 있는 그룹 {len(out)}건"
-              + (f" (레이어 {expect_count}장)" if expect_count else "")
-              + "".join(f"\n  그룹 0x{d['group']:x} · 표 0x{d['table']:x} · "
-                        f"{d['count']}장" for d in out[:6]))
+        print(msg("레코드 서명으로 찾은 살아 있는 그룹 {n}건", n=len(out))
+              + (msg(" (레이어 {count}장)", count=expect_count)
+                 if expect_count else "")
+              + "".join(msg("\n  그룹 0x{group:x} · 표 0x{table:x} · {count}장",
+                            group=d["group"], table=d["table"], count=d["count"])
+                        for d in out[:6]))
     return out
 
 
@@ -536,8 +541,8 @@ def find_layer_table(p: Proc, count: int, layout: Layout,
             out.append(here)
             break
     if verbose:
-        print(f"레이어 표로 보이는 자리 {len(out)}건"
-              + (" (플랜 값까지 일치)" if expect is not None else ""))
+        print(msg("레이어 표로 보이는 자리 {n}건", n=len(out))
+              + (msg(" (플랜 값까지 일치)") if expect is not None else ""))
     if not out and expect is not None:      # 낡은 포인터가 섞인 배열 — 값으로 되짚는다
         out = find_table_by_anchor(p, expect, layout, verbose)
     return out
@@ -567,14 +572,14 @@ def find_table_by_anchor(p: Proc, plan: LayerPlan, layout: Layout,
                      for k in ("sx", "sy", "rot")):
             recs.append(addr)
     if verbose:
-        print(f"1번 레이어 레코드 후보 {len(recs)}건")
+        print(msg("1번 레이어 레코드 후보 {n}건", n=len(recs)))
     out = []
     for addr in recs:
         for t in p.scan(struct.pack("<Q", addr), MEM_PRIVATE, True, 8):
             if match_plan(p, t, plan, layout) == n:
                 out.append(t)
     if verbose:
-        print(f"표 {len(out)}건 (플랜 {n}장 전부 일치)")
+        print(msg("표 {n_table}건 (플랜 {n}장 전부 일치)", n_table=len(out), n=n))
     return sorted(set(out))
 
 
@@ -595,7 +600,7 @@ def find_table_by_sentinel(p: Proc, layout: Layout, xy: tuple[float, float],
         if _plausible_record(p, addr, layout):
             recs.append(addr)
     if verbose:
-        print(f"센티널 레코드 후보 {len(recs)}건")
+        print(msg("센티널 레코드 후보 {n}건", n=len(recs)))
     out = []
     for addr in recs:
         for ptr_at in p.scan(struct.pack("<Q", addr), MEM_PRIVATE, True, 8):
@@ -612,7 +617,7 @@ def find_table_by_sentinel(p: Proc, layout: Layout, xy: tuple[float, float],
                 out.append(t0)
     out = sorted(set(out))
     if verbose:
-        print(f"센티널 표 {len(out)}건 ({count}장)")
+        print(msg("센티널 표 {n}건 ({count}장)", n=len(out), count=count))
     return out
 
 
@@ -674,18 +679,20 @@ def find_folded_table(p: Proc, layout: Layout, xy: tuple[float, float],
                 continue
             if ecount == expect:
                 if verbose:
-                    print(f"접힌 그룹 내부 표 0x{etable:x} ({ecount}장, expect 일치)"
-                          f" — G_top 0x{gtop:x}")
+                    print(msg("접힌 그룹 내부 표 0x{etable:x} ({ecount}장, "
+                              "expect 일치) — G_top 0x{gtop:x}",
+                              etable=etable, ecount=ecount, gtop=gtop))
                 return etable, ecount
             if best is None or ecount > best[1]:
                 best = (etable, ecount)
         if best is not None:
             if verbose:
-                print(f"접힌 그룹 내부 표 0x{best[0]:x} ({best[1]}장, expect "
-                      f"{expect} 불일치 — 최대 그럴듯 그룹) — G_top 0x{gtop:x}")
+                print(msg("접힌 그룹 내부 표 0x{etable:x} ({ecount}장, expect "
+                          "{expect} 불일치 — 최대 그럴듯 그룹) — G_top 0x{gtop:x}",
+                          etable=best[0], ecount=best[1], expect=expect, gtop=gtop))
             return best
     if verbose:
-        print(f"접힌 그룹 내부 표를 못 찾았다 (expect {expect}장)")
+        print(msg("접힌 그룹 내부 표를 못 찾았다 (expect {expect}장)", expect=expect))
     return None
 
 
@@ -729,7 +736,7 @@ def probe(expect_count: int | None = None, dump: int = 8,
     같이 주면** 값까지 대 보므로 표가 맞는지 의심할 여지가 없다 (확정 절차)."""
     pid = find_pid()
     if not pid:
-        print("FH6 창을 못 찾았다")
+        print(msg("FH6 창을 못 찾았다"))
         return 1
     p = Proc(pid)
     layout = Layout.load()
@@ -738,15 +745,15 @@ def probe(expect_count: int | None = None, dump: int = 8,
     if plan is not None and not expect_count:
         expect_count = len(plan.layers)
     if not expect_count:
-        print("레이어 수를 줄 것: `inject --probe --count <장수>` "
-              "(또는 `--plan <올려 둔 plan.json>`)")
+        print(msg("레이어 수를 줄 것: `inject --probe --count <장수>` "
+                  "(또는 `--plan <올려 둔 plan.json>`)"))
         p.close()
         return 2
     tables = (find_layer_table(p, expect_count, layout, expect=plan)
               if layout.table_by_run
               else [g["table"] for g in find_groups(p, layout, expect_count)])
     for t in tables[:4]:
-        print(f"\n표 0x{t:x}")
+        print(msg("\n표 0x{t:x}", t=t))
         for r in read_layers(p, t, min(dump, expect_count), layout)[:dump]:
             print(f"  [{r['i']:4d}] @0x{r['addr']:x}  "
                   f"pos({r['x']:9.2f},{r['y']:9.2f}) "
@@ -807,47 +814,49 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
     자리를 지정할 것. 자리는 `inject --probe --plan <올려 둔 플랜>`이 낸다."""
     layout = Layout.load(layout_path)
     if not layout.validated and not force:
-        print("레이어 배치가 아직 FH6에서 검증되지 않았다.\n"
-              "  1) 인게임에서 아는 그룹을 열고  2) `inject --probe`로 오프셋 확인\n"
-              "  3) catalog/fh6_layout.json에 적고 validated=true\n"
-              "검증 없이 쓰면 그룹이 깨질 수 있다 (--force로 무시)")
+        print(msg("레이어 배치가 아직 FH6에서 검증되지 않았다.\n"
+                  "  1) 인게임에서 아는 그룹을 열고  2) `inject --probe`로 오프셋 확인\n"
+                  "  3) catalog/fh6_layout.json에 적고 validated=true\n"
+                  "검증 없이 쓰면 그룹이 깨질 수 있다 (--force로 무시)"))
         return 2
     plan = LayerPlan.load(plan_path)
     n_mask = sum(1 for l in plan.layers if l.mask)
     if n_mask and not force:
-        print(f"마스크 레이어가 {n_mask}장 들어 있다 — 레코드의 마스크 자리를 아직\n"
-              "  모른다. 주입하면 일반 레이어로 그려져 플랜과 인게임이 조용히 갈린다.\n"
-              "  창 조작(`run`)은 마스크 위저드를 쓰므로 그쪽으로 올릴 것 (--force로 무시)")
+        print(msg("마스크 레이어가 {n_mask}장 들어 있다 — 레코드의 마스크 자리를 아직\n"
+                  "  모른다. 주입하면 일반 레이어로 그려져 플랜과 인게임이 조용히 갈린다.\n"
+                  "  창 조작(`run`)은 마스크 위저드를 쓰므로 그쪽으로 올릴 것 (--force로 무시)",
+                  n_mask=n_mask))
         return 2
     n_skew = sum(1 for l in plan.layers if abs(l.skew) > 1e-9)
     if n_skew and not force:
-        print(f"기울기가 든 레이어가 {n_skew}/{len(plan.layers)}장 있다 — 레코드의 "
-              "기울기 자리를\n  모른다. 마스크와 같은 사정인데 이쪽은 오래 안 막혀"
-              " 있었다: 주입이 기울기만\n  빼고 나머지를 써서 **플랜 렌더와 인게임이"
-              " 조용히 갈렸다** (실측 7장에서 픽셀\n  0.70~1.89% · 셀 일치도 lpips"
-              " +0.0026~+0.0185). 창 조작(`run`)도 그 도구가 없어\n  멈춘다 — 기울기를"
-              " 안 내는 판으로 다시 구울 것 (--force로 무시)")
+        print(msg("기울기가 든 레이어가 {n_skew}/{total}장 있다 — 레코드의 "
+                  "기울기 자리를\n  모른다. 마스크와 같은 사정인데 이쪽은 오래 안 막혀"
+                  " 있었다: 주입이 기울기만\n  빼고 나머지를 써서 **플랜 렌더와 인게임이"
+                  " 조용히 갈렸다** (실측 7장에서 픽셀\n  0.70~1.89% · 셀 일치도 lpips"
+                  " +0.0026~+0.0185). 창 조작(`run`)도 그 도구가 없어\n  멈춘다 — 기울기를"
+                  " 안 내는 판으로 다시 구울 것 (--force로 무시)",
+                  n_skew=n_skew, total=len(plan.layers)))
         return 2
     ids = layout.shape_ids or {}
     unknown = sorted({l.shape for l in plan.layers} - set(ids))
     if unknown and not force:
-        print(f"게임 도형 id를 모르는 도형이 있다: {unknown}\n"
-              "  주입은 도형을 못 바꾸므로 그 레이어는 템플릿의 도형 그대로 그려진다.\n"
-              "  `painter`는 A_02 하나만 쓴다 — 다른 도형을 쓰는 플랜은 id 표가 먼저다"
-              " (--force로 무시)")
+        print(msg("게임 도형 id를 모르는 도형이 있다: {unknown}\n"
+                  "  주입은 도형을 못 바꾸므로 그 레이어는 템플릿의 도형 그대로 그려진다.\n"
+                  "  `painter`는 A_02 하나만 쓴다 — 다른 도형을 쓰는 플랜은 id 표가 먼저다"
+                  " (--force로 무시)", unknown=unknown))
         return 2
     n = len(plan.layers)
     if template and canvas is not None:
-        print("--template과 --canvas는 같이 못 쓴다 — 앞은 캔버스를 플랜 장수에"
-              " 맞추고 뒤는 큰 캔버스를 그대로 쓴다. 하나만 줄 것")
+        print(msg("--template과 --canvas는 같이 못 쓴다 — 앞은 캔버스를 플랜 장수에"
+                  " 맞추고 뒤는 큰 캔버스를 그대로 쓴다. 하나만 줄 것"))
         return 2
     # 표를 찾는 자가 곧 **캔버스 장수**다 (플랜 장수가 아니다). 남는 자리는
     # 아래에서 안 보이는 레코드로 덮으므로, 캔버스가 커도 그대로 쓴다
     n_slot = n
     if canvas is not None:
         if canvas < n:
-            print(f"캔버스 {canvas}장이 플랜 {n}장보다 적다 — 모자란 만큼은 "
-                  "못 올린다 (준비를 켜거나 큰 그룹을 열 것)")
+            print(msg("캔버스 {canvas}장이 플랜 {n}장보다 적다 — 모자란 만큼은 "
+                      "못 올린다 (준비를 켜거나 큰 그룹을 열 것)", canvas=canvas, n=n))
             return 1
         n_slot = canvas
     elif template or prepare:
@@ -864,10 +873,10 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
                    T.ensure_ready(n, tuple(sorted({l.shape for l in plan.layers})),
                                   stop=stop, reuse=reuse))
         except StopRequested as e:
-            print(f"{e} — 주입은 안 했다")
+            print(msg("{err} — 주입은 안 했다", err=e))
             return STOPPED
         except DriverError as e:
-            print(f"템플릿을 못 맞췄다: {e}")
+            print(msg("템플릿을 못 맞췄다: {err}", err=e))
             return 1
         if got and avoid:
             # **신원 충돌은 주입 전에 비켜 간다** (위 독스트링). 남는 자리는
@@ -882,12 +891,13 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
             for _ in range(12):
                 if got not in avoid and (got + 1) not in avoid:
                     break
-                print(f"캔버스 {got:,}장은 이미 쓰인 그룹 신원이다 (또는 센티널 "
-                      f"자리 {got + 1:,}장이) — 한 장 더 채워 비켜 간다")
+                print(msg("캔버스 {got:,}장은 이미 쓰인 그룹 신원이다 (또는 센티널 "
+                          "자리 {sentinel:,}장이) — 한 장 더 채워 비켜 간다",
+                          got=got, sentinel=got + 1))
                 try:
                     got = T.fill(Driver(), got + 1, stop=stop)
                 except (DriverError, StopRequested) as e:
-                    print(f"신원 비켜 가기 실패 ({e}) — 그대로 간다")
+                    print(msg("신원 비켜 가기 실패 ({err}) — 그대로 간다", err=e))
                     break
         if got:
             n_slot = max(n, got)
@@ -903,10 +913,11 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
             m = None
         if m and m > n:
             n_slot = m
-            print(f"캔버스가 {m}장이다 (플랜 {n}장) — 남는 {m - n}장은 밀어낸다")
+            print(msg("캔버스가 {m}장이다 (플랜 {n}장) — 남는 {extra}장은 밀어낸다",
+                      m=m, n=n, extra=m - n))
     pid = find_pid()
     if not pid:
-        print("FH6 창을 못 찾았다")
+        print(msg("FH6 창을 못 찾았다"))
         return 1
     p = Proc(pid)
     if table is not None:
@@ -923,13 +934,14 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
     if len(tables) != 1 and (prepare or template) and canvas is None:
         import time as _time
 
-        print(f"표 후보 {len(tables)}건 — 센티널 레이어로 못 박는다")
+        print(msg("표 후보 {n}건 — 센티널 레이어로 못 박는다", n=len(tables)))
         try:
             from ..auto.template import plant_sentinel
 
             xy = plant_sentinel()
         except Exception as e:                   # noqa: BLE001 — 폴백이 있다
-            print(f"센티널 경로 실패 ({type(e).__name__}: {e})")
+            print(msg("센티널 경로 실패 ({kind}: {err})",
+                      kind=type(e).__name__, err=e))
             xy = None
         if xy is not None:
             n_slot += 1
@@ -942,24 +954,27 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
             if got:
                 tables = got
             else:
-                print("센티널 레코드를 못 찾았다 — 새 장수로 다시 장수 검색")
+                print(msg("센티널 레코드를 못 찾았다 — 새 장수로 다시 장수 검색"))
                 tables = find_layer_table(p, n_slot, layout)
     if not tables:
-        print(f"레이어 {n_slot}장짜리 비닐 그룹을 못 찾았다 — 그 장수만큼 도형이 든 "
-              "템플릿을 열 것 (`--template`을 주면 모자란 만큼 채우고 주입한다)")
+        print(msg("레이어 {n_slot}장짜리 비닐 그룹을 못 찾았다 — 그 장수만큼 도형이 든 "
+                  "템플릿을 열 것 (`--template`을 주면 모자란 만큼 채우고 주입한다)",
+                  n_slot=n_slot))
         p.close()
         return 1
     if len(tables) > 1:
-        print(f"경고: 표 후보가 {len(tables)}건이다 — 첫 번째에 쓴다"
-              f" ({', '.join(hex(t) for t in tables[:6])}). 지운 그룹의 잔재가"
-              " 섞였을 수 있다 — 화면이 안 바뀌면 --table로 지정할 것")
+        print(msg("경고: 표 후보가 {n}건이다 — 첫 번째에 쓴다"
+                  " ({tables}). 지운 그룹의 잔재가"
+                  " 섞였을 수 있다 — 화면이 안 바뀌면 --table로 지정할 것",
+                  n=len(tables), tables=", ".join(hex(t) for t in tables[:6])))
     table = tables[0]
     wrote = write_plan_to_table(p, table, plan, layout, n_slot)
     p.close()
     pad = n_slot - n
-    print(f"레이어 {wrote}/{n_slot}장 기록 (표 0x{table:x})"
-          + (f" — 그중 {pad}장은 안 보이는 덮개(알파 0)" if pad else "")
-          + " → 게임 화면에서 확인할 것")
+    print(msg("레이어 {wrote}/{n_slot}장 기록 (표 0x{table:x})",
+              wrote=wrote, n_slot=n_slot, table=table)
+          + (msg(" — 그중 {pad}장은 안 보이는 덮개(알파 0)", pad=pad) if pad else "")
+          + msg(" → 게임 화면에서 확인할 것"))
     return 0
 
 

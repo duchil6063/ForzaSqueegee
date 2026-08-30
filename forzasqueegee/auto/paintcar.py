@@ -29,6 +29,7 @@ import time
 import numpy as np
 
 from ..game import io as gio
+from ..i18n import msg
 from .driver import Driver, DriverError
 
 # 판별식 상자 (상대 좌표, 2026-08-18 실측·문턱은 정찰 캡처 11장으로 캘리브레이션)
@@ -149,7 +150,7 @@ def goto_cell(d: Driver, cell: tuple[int, int]) -> None:
     for _ in range(16):
         sel = sel_cell(d.cap())
         if sel is None:
-            raise DriverError("도색 그리드 선택 셀 미검출")
+            raise DriverError(msg("도색 그리드 선택 셀 미검출"))
         if sel == (row, col):
             return
         # **한 번 같다고 멈춘 게 아니다** — 부품을 고르면 카메라가 그 부품으로
@@ -157,15 +158,16 @@ def goto_cell(d: Driver, cell: tuple[int, int]) -> None:
         # 다시 잡힌다). 세 번 연속 같아야 "그 방향에 셀이 없다"로 본다.
         stuck = stuck + 1 if sel == last else 0
         if stuck >= 3:
-            raise DriverError(f"도색 부품 셀 {cell}로 못 간다 (선택이 {sel}에서 "
-                              f"멈춘다 — 그 차에 없는 부품이다)")
+            raise DriverError(msg("도색 부품 셀 {cell}로 못 간다 (선택이 {sel}에서 "
+                                  "멈춘다 — 그 차에 없는 부품이다)",
+                                  cell=cell, sel=sel))
         last = sel
         if sel[0] != row:
             gio.press("up" if sel[0] > row else "down")
         else:
             gio.press("left" if sel[1] > col else "right")
         time.sleep(0.55)
-    raise DriverError(f"도색 부품 셀 {cell}을 못 잡았다")
+    raise DriverError(msg("도색 부품 셀 {cell}을 못 잡았다", cell=cell))
 
 
 def open_general_tab(d: Driver) -> None:
@@ -187,9 +189,9 @@ def open_general_tab(d: Driver) -> None:
         gio.press("down")
         time.sleep(0.5)
     else:
-        raise DriverError("`일반 색상` 탭이 아니다 (도색 마감 배지 미검출) — "
-                          "여기서 X를 누르면 다른 편집기가 열려 멈춘다")
-    d._step("x", d.in_hsb_edit, "도색 HSB 미세 조정 진입")
+        raise DriverError(msg("`일반 색상` 탭이 아니다 (도색 마감 배지 미검출) — "
+                              "여기서 X를 누르면 다른 편집기가 열려 멈춘다"))
+    d._step("x", d.in_hsb_edit, msg("도색 HSB 미세 조정 진입"))
 
 
 def set_paint(d: Driver, hsb: tuple[float, float, float],
@@ -208,16 +210,16 @@ def set_paint(d: Driver, hsb: tuple[float, float, float],
 
     design.back_to_menu(d)
     design.goto_row(d, design.ROW_PAINT)
-    d._step("enter", lambda: in_part_grid(d.cap()), "도색 부품 그리드 진입",
+    d._step("enter", lambda: in_part_grid(d.cap()), msg("도색 부품 그리드 진입"),
             tries=3, wait=4.0)
     goto_cell(d, part)
-    d._step("enter", lambda: in_color_screen(d.cap()), "도색 색 선택 진입",
+    d._step("enter", lambda: in_color_screen(d.cap()), msg("도색 색 선택 진입"),
             tries=3, wait=4.0)
     open_general_tab(d)
     got = d.set_hsb(*hsb)
-    log(f"  도색 HSB {got} (판독값)")
+    log(msg("  도색 HSB {got} (판독값)", got=got))
     # 미세 조정의 Enter는 즉시 커밋하고 **부품 그리드로** 돌아온다 (실측)
-    d._step("enter", lambda: in_part_grid(d.cap()), "도색 커밋 → 부품 그리드",
+    d._step("enter", lambda: in_part_grid(d.cap()), msg("도색 커밋 → 부품 그리드"),
             tries=3, wait=4.0)
     # 나가기 — 대화상자에서 `현재 자동차에 적용` (0행). 도색을 바꿨으므로 반드시 뜬다.
     b = BodyEditor(d)
@@ -233,4 +235,4 @@ def set_paint(d: Driver, hsb: tuple[float, float, float],
             return got
         if design.menu_open(img):
             return got            # 대화상자 없이 나왔다 — 같은 색이었던 경우
-    raise DriverError("도색 나가기 실패 (대화상자·메뉴 둘 다 안 왔다)")
+    raise DriverError(msg("도색 나가기 실패 (대화상자·메뉴 둘 다 안 왔다)"))

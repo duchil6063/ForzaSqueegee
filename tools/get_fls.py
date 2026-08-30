@@ -45,6 +45,9 @@ for _s in (sys.stdout, sys.stderr):
         except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
             pass
 
+sys.path.insert(0, str(ROOT))
+from forzasqueegee.i18n import msg     # noqa: E402 — stdlib뿐이라 의존성 없이 선다
+
 DEST = ROOT / "vendor" / "fls-editor"
 REPO = "Arstz/ForzaLiveryStudio"
 API = f"https://api.github.com/repos/{REPO}/releases"
@@ -80,7 +83,7 @@ def _asset(rel: dict) -> dict:
         name = str(a.get("name", "")).lower()
         if name.endswith(".zip") and ("win" in name or "x64" in name):
             return a
-    raise RuntimeError("릴리스에 윈도우 zip이 없다")
+    raise RuntimeError(msg("릴리스에 윈도우 zip이 없다"))
 
 
 def _clear() -> None:
@@ -96,7 +99,7 @@ def _clear() -> None:
 def check() -> int:
     exe = DEST / EXE
     if not exe.is_file():
-        print(f"없다 — {exe}")
+        print(msg("없다 — {path}", path=exe))
         return 1
     stamp = DEST / "VERSION.json"
     ver = ""
@@ -105,8 +108,9 @@ def check() -> int:
             ver = json.loads(stamp.read_text(encoding="utf-8")).get("tag", "")
         except ValueError:
             pass
-    print(f"있다 — {exe} ({exe.stat().st_size:,}바이트"
-          + (f" · 판 {ver}" if ver else "") + ")")
+    print(msg("있다 — {path} ({size:,}바이트{ver})", path=exe,
+              size=exe.stat().st_size,
+              ver=msg(" · 판 {tag}", tag=ver) if ver else ""))
     return 0
 
 
@@ -137,18 +141,20 @@ def get_ours() -> int:
     """우리 빌드를 받는다 ([Itasha] 메뉴). 자리가 없거나 못 받으면 1."""
     got = _ours()
     if got is None:
-        print("  release.json에 우리 빌드가 안 적혀 있다")
+        print(msg("  release.json에 우리 빌드가 안 적혀 있다"))
         return 1
     url, fls = got
-    print(f"  우리 빌드 — {fls['file']} ({int(fls.get('size', 0)):,}바이트)")
+    print(msg("  우리 빌드 — {file} ({size:,}바이트)",
+              file=fls['file'], size=int(fls.get('size', 0))))
     try:
         blob = _get(url)
     except Exception as e:                      # noqa: BLE001 — 없으면 물러난다
-        print(f"  못 받았다 — {e}")
+        print(msg("  못 받았다 — {err}", err=e))
         return 1
     sha = hashlib.sha256(blob).hexdigest()
     if fls.get("sha256") and sha != fls["sha256"]:
-        print(f"  해시가 다르다 — {sha[:16]}… != {fls['sha256'][:16]}…")
+        print(msg("  해시가 다르다 — {got}… != {want}…",
+                  got=sha[:16], want=fls['sha256'][:16]))
         return 1
     print(f"  SHA-256 {sha}")
     return _unpack(blob, {"source": "fork", "asset": fls["file"], "sha256": sha,
@@ -168,18 +174,19 @@ def main() -> int:
     if a.check:
         return check()
     if (DEST / EXE).is_file() and not a.force:
-        print("이미 있다 (다시 받으려면 --force)")
+        print(msg("이미 있다 (다시 받으려면 --force)"))
         return check()
     if not a.official and not a.tag:
-        print("릴리스 확인 — 우리 빌드 ([Itasha] 메뉴)")
+        print(msg("릴리스 확인 — 우리 빌드 ([Itasha] 메뉴)"))
         if get_ours() == 0:
             return 0
-        print("  → 업스트림 공식 릴리스로 물러난다 ([Itasha] 메뉴는 없다)")
-    print(f"릴리스 확인 — {REPO}")
+        print(msg("  → 업스트림 공식 릴리스로 물러난다 ([Itasha] 메뉴는 없다)"))
+    print(msg("릴리스 확인 — {repo}", repo=REPO))
     rel = _release(a.tag)
     asset = _asset(rel)
     tag = str(rel.get("tag_name") or a.tag or "?")
-    print(f"  판 {tag} · {asset['name']} ({int(asset['size']):,}바이트) 받는 중…")
+    print(msg("  판 {tag} · {name} ({size:,}바이트) 받는 중…",
+              tag=tag, name=asset['name'], size=int(asset['size'])))
     blob = _get(asset["browser_download_url"])
     sha = hashlib.sha256(blob).hexdigest()
     print(f"  SHA-256 {sha}")

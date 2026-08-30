@@ -43,6 +43,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
@@ -385,7 +386,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         _make_room(plan, cel, cat, budget, ss, st, want, weight)
         room = 10 ** 9 if budget is None else max(0, budget - len(plan.layers))
         if room <= 0:
-            log("  경고: 봉인할 자리가 없다 — 예산이 꽉 찼다")
+            log(msg("  경고: 봉인할 자리가 없다 — 예산이 꽉 찼다"))
             break
         # 조각을 **멀리까지 묶는다**. 봉인 잔여는 1,500px 남짓이 150군집
         # 안팎으로 흩어져 있어 값은 군집 수가 정한다 (실측 W3-11: 자리
@@ -420,8 +421,11 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             st["seal_dots"] += _seal_dots(plan, cel, cat, hard, ss, log, at=0)
     hard = hard_holes(plan, cel, cat, ss)
     st["seal_after"] = int(hard.sum())
-    log(f"  봉인: 표본 {st['seal_before']:,} → {st['seal_after']:,}"
-        f" (성장 {st['seal_grow']}회 · 도형 {st['seal_layers']}장"
-        + (f" · 점 {st['seal_dots']}장" if st["seal_dots"] else "")
-        + (f" · 되팜 {st['seal_sold']}장" if st["seal_sold"] else "") + ")")
+    log(msg("  봉인: 표본 {before:,} → {after:,} (성장 {grow}회 · 도형 {layers}장{dots}{sold})",
+            before=st["seal_before"], after=st["seal_after"],
+            grow=st["seal_grow"], layers=st["seal_layers"],
+            dots=(msg(" · 점 {n}장", n=st["seal_dots"])
+                  if st["seal_dots"] else ""),
+            sold=(msg(" · 되팜 {n}장", n=st["seal_sold"])
+                  if st["seal_sold"] else "")))
     return st

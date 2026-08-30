@@ -12,6 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from ..paths import run_file
 from .pipeline import (_one_region, _reach_check, _source_bundle, read_rgba,
                        write_png)
@@ -71,13 +72,15 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
         n_ex = int(extra.sum())
         if n_ex:
             lm_paths = lm0 | extra
-            log(f"  detail 전용 선 {n_ex:,}px 합류 (basic 대비 "
-                f"+{100.0 * n_ex / max(1, int(lm0.sum())):.0f}%) — 낮은 우선순위")
+            log(msg("  detail 전용 선 {n:,}px 합류 (basic 대비 "
+                    "+{pct:.0f}%) — 낮은 우선순위",
+                    n=n_ex, pct=100.0 * n_ex / max(1, int(lm0.sum()))))
     # 끊긴 획 잇기 — 신경망 선화의 점선(옅은 구간)을 사람처럼 한 획으로 잇는다.
     # 배치 전에 이어야 곡선 맞춤·파편 필터가 이어진 경로 기준으로 돈다
     line_mask, bridge, n_bridge = bridge_line_gaps(lm_paths, sel, log)
     if n_bridge:
-        log(f"  끊긴 획 {n_bridge}쌍 이음 (마주보는 자유 끝, 굵기 비례 틈)")
+        log(msg("  끊긴 획 {n}쌍 이음 (마주보는 자유 끝, 굵기 비례 틈)",
+                n=n_bridge))
         # 다리 px의 색은 **가장 가까운 원래 선 px의 색** — 색 표본과 선화
         # 목표가 다리를 바탕색이 아니라 제 선 색으로 보게 한다
         src_rgb = np.where(bridge[..., None], _fill_bg_nearest(src_rgb, lm_paths),
@@ -105,7 +108,7 @@ def _line_design(rgba: np.ndarray, sel: np.ndarray, lm0: np.ndarray,
         line_mask, lm0, src_rgb, sel, val, bridge,
         native_gray=lineart.to_conf(native_gray, w, h)
         if native_gray is not None else None)
-    log("획 배치 중…")
+    log(msg("획 배치 중…"))
     plan, stats = fit_line_plan(cel, cat, budget=shapes,
                                 source_image=source_image, log=log,
                                 progress=progress, value=value, price=price,
@@ -138,24 +141,24 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     big, line_gray, detail_gray, native_gray = _source_bundle(
         read_rgba(image), size, log)
     if line_gray is None:
-        raise SystemExit(
+        raise SystemExit(msg(
             "line 노선은 선화 모델이 필수다 — models/anilines_basic.onnx와 "
             "onnxruntime이 있어야 한다 "
-            "(`python -m forzasqueegee models`로 받는다)")
+            "(`python -m forzasqueegee models`로 받는다)"))
     rgba = upscale.fit(big, size)
     h, w = rgba.shape[:2]
     opaque = bool(rgba[..., 3].min() >= 250)
     if opaque:
-        log("  경고: 알파가 없다 — 이미지 전체에서 선을 딴다 (배경 제거 권장)")
+        log(msg("  경고: 알파가 없다 — 이미지 전체에서 선을 딴다 (배경 제거 권장)"))
     sel = rgba[..., 3] >= _ALPHA_OPAQUE
     lm0 = lineart.to_mask(line_gray, w, h) & sel
     if not lm0.any():
-        raise SystemExit("선을 하나도 못 찾았다 — 선화가 없는 그림이다 "
-                         "(cel 노선을 쓸 것)")
-    log(f"  선화: 선 픽셀 {int(lm0.sum()):,}개")
+        raise SystemExit(msg("선을 하나도 못 찾았다 — 선화가 없는 그림이다 "
+                             "(cel 노선을 쓸 것)"))
+    log(msg("  선화: 선 픽셀 {n:,}개", n=int(lm0.sum())))
     cat = Catalog(default_catalog_path())
     if progress:
-        progress(0.02, "획 배치")
+        progress(0.02, msg("획 배치"))
     plan, stats, line_mask, src_rgb = _line_design(
         rgba, sel, lm0, shapes, cat, str(image), log,
         progress=(lambda f, t: progress(0.02 + f * 0.88, t)) if progress else None,
@@ -186,7 +189,7 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
 
     from .finetune import refine_plan
 
-    log("전역 미세 조정 중…")
+    log(msg("전역 미세 조정 중…"))
     stats["finetune"] = refine_plan(
         plan, tgt, cat, log=log,
         progress=(lambda f, t: progress(0.92 + f * 0.07, t))
@@ -204,17 +207,20 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     outline = stats.get("outline_cover")
     checks = [
         {"id": "alpha", "ok": not opaque,
-         "text": "투명 배경 있음" if not opaque else "알파 없음 — 전체에서 선을 딴다"},
+         "text": msg("투명 배경 있음") if not opaque
+                 else msg("알파 없음 — 전체에서 선을 딴다")},
         {"id": "budget", "ok": stats.get("skipped_strokes", 0) == 0,
-         "text": "예산 안에 전 획 배치" if stats.get("skipped_strokes", 0) == 0
-                 else f"예산 소진 — 획 {stats['skipped_strokes']}개 못 그림"},
+         "text": msg("예산 안에 전 획 배치")
+                 if stats.get("skipped_strokes", 0) == 0
+                 else msg("예산 소진 — 획 {n}개 못 그림",
+                          n=stats["skipped_strokes"])},
         # 문턱 0.88은 병리 감지용이다 — 건강한 결과의 실측 분포(표준 10장)가
         # ±1px 90~96%이고 그 꼬리는 최소 도형보다 작아 못 그리는 반점·파편이라,
         # 그 위에 문턱을 세우면 매번 운다. 예산 컷·획 대량 실패만 잡는다.
         # 옅은 선이 덜 선 것은 아래 실루엣 검사가 따로 말한다
         {"id": "ink", "ok": stats["ink_near"] >= 0.88,
-         "text": f"선 커버리지 {stats['ink_near']:.1%} (±1px · 정밀 "
-                 f"{stats['ink_cover']:.1%})"},
+         "text": msg("선 커버리지 {near:.1%} (±1px · 정밀 {cover:.1%})",
+                     near=stats["ink_near"], cover=stats["ink_cover"])},
         _reach_check(plan, cat),
     ]
     if outline is not None:
@@ -226,12 +232,15 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
         followed = outline >= src_lim - 0.12
         checks.insert(3, {
             "id": "outline", "ok": outline >= 0.90 or followed,
-            "text": (f"실루엣 윤곽선 {outline:.1%}" if outline >= 0.90
-                     else (f"실루엣의 {1 - src_lim:.0%}에 원화 선이 없다 — "
-                           f"도안은 원화를 따른다 (윤곽선 {outline:.1%})")
+            "text": (msg("실루엣 윤곽선 {outline:.1%}", outline=outline)
+                     if outline >= 0.90
+                     else msg("실루엣의 {miss:.0%}에 원화 선이 없다 — "
+                              "도안은 원화를 따른다 (윤곽선 {outline:.1%})",
+                              miss=1 - src_lim, outline=outline)
                      if followed
-                     else (f"실루엣 윤곽선 {outline:.1%} (원화에는 "
-                           f"{src_lim:.0%} 있음) — 옅은 윤곽 획이 덜 섰다"))})
+                     else msg("실루엣 윤곽선 {outline:.1%} (원화에는 "
+                              "{src:.0%} 있음) — 옅은 윤곽 획이 덜 섰다",
+                              outline=outline, src=src_lim))})
     bad = [c for c in checks if not c["ok"]]
     return {"input": {"size": [w, h], "alpha": not opaque},
             "plan": {"layers": len(plan.layers), **stats},
@@ -243,5 +252,6 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
                         "outline_cover": outline,
                         "outline_src": stats.get("outline_src")},
             "checks": checks,
-            "verdict": ("판정: 걸린 것 없음" if not bad else
-                        "판정: " + " · ".join(c["text"] for c in bad))}
+            "verdict": (msg("판정: 걸린 것 없음") if not bad else
+                        msg("판정: {items}",
+                            items=" · ".join(c["text"] for c in bad)))}

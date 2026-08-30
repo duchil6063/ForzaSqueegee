@@ -13,8 +13,10 @@
  *   도움말 산문 블록(innerHTML 통치환 — 어순 때문)뿐이다.
  *
  * 언어 선택은 하단 상태줄 오른쪽에 끼운 셀렉트로, 선택은 localStorage에 남는다
- * (서버가 포트를 고정해 origin이 안 흔들린다). 최초 기본값은 서버가 주입한
- * window.FS_EDITOR_LANG(GUI/CLI --lang) → 브라우저 언어 → en 순서다.
+ * (서버가 포트를 고정해 origin이 안 흔들린다). 열릴 때의 언어는 서버가 주입한
+ * window.FS_EDITOR_LANG(앱의 언어 설정)이 **이긴다** — 앱에서 고른 언어로
+ * 편집기가 뜨는 것이 계약이다. 주입이 없을 때만 localStorage → 브라우저 언어
+ * → en 순서로 물러난다; 편집기 안에서 바꾼 선택은 그 세션 동안 유지된다.
  */
 (function () {
   "use strict";
@@ -47,6 +49,9 @@
   }
 
   let lang = (function () {
+    // 서버 주입(앱의 언어 설정)이 이긴다 — 앱에서 고른 언어로 뜨는 계약.
+    const injected = String(window.FS_EDITOR_LANG || "");
+    if (DICTS[injected] || injected === "en") return injected;
     const s = storedLang();
     return (DICTS[s] || s === "en") ? s : defaultLang();
   })();

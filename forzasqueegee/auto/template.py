@@ -39,6 +39,7 @@ import time
 from collections.abc import Callable
 
 from ..game import io as gio, ocr
+from ..i18n import msg
 from .driver import Driver, DriverError
 from .run_plan import StopRequested
 
@@ -66,7 +67,7 @@ def canvas_count(hwnd: int | None = None) -> int | None:
 def count(d: Driver) -> int:
     n = ocr.read_layer_count_stable(d.hwnd)
     if n is None:
-        raise DriverError("레이어 수를 못 읽었다 — 레이어 리스트 화면이 맞나")
+        raise DriverError(msg("레이어 수를 못 읽었다 — 레이어 리스트 화면이 맞나"))
     return n
 
 
@@ -109,12 +110,13 @@ def seed(d: Driver, shapes: tuple[str, ...],
     from .run_plan import _recover_to_list
 
     n0 = count(d)
-    print(f"씨앗 {len(shapes)}종을 심는다 (다시 연 템플릿에서 이 도형들이 선다)",
-          flush=True)
+    print(msg("씨앗 {n}종을 심는다 (다시 연 템플릿에서 이 도형들이 선다)",
+              n=len(shapes)), flush=True)
     bad = []
     for k, s in enumerate(shapes):
         if stop is not None and stop():
-            raise StopRequested(f"STOP 감지 — 씨앗 {k}/{len(shapes)}종에서 중단")
+            raise StopRequested(msg("STOP 감지 — 씨앗 {k}/{total}종에서 중단",
+                                    k=k, total=len(shapes)))
         try:
             d.open_wizard()
             d.select_shape(s)
@@ -122,12 +124,14 @@ def seed(d: Driver, shapes: tuple[str, ...],
             d.commit()
         except DriverError as e:
             bad.append(s)
-            print(f"  씨앗 {s} 실패({e}) — 건너뛴다", flush=True)
+            print(msg("  씨앗 {shape} 실패({err}) — 건너뛴다", shape=s, err=e),
+                  flush=True)
             _recover_to_list(d)
             time.sleep(1.0)
     n = count(d)
-    print(f"  씨앗 {n - n0}장 (요청 {len(shapes)})"
-          + (f" · 못 심은 것 {bad}" if bad else "") + f" → {n}장", flush=True)
+    print(msg("  씨앗 {delta}장 (요청 {want})", delta=n - n0, want=len(shapes))
+          + (msg(" · 못 심은 것 {bad}", bad=bad) if bad else "")
+          + msg(" → {n}장", n=n), flush=True)
     return n
 
 
@@ -138,12 +142,14 @@ def fill(d: Driver, target: int, shape: str = SHAPE, chunk: int = CHUNK,
     `stop`은 **스탬프마다** 불린다. 참이면 지금까지 찍은 것을 커밋하고(위저드를
     연 채로 두면 다음 실행이 리스트에서 시작 못 한다) `StopRequested`를 올린다."""
     n = count(d)
-    print(f"템플릿: 현재 {n}장 → 목표 {target}장 "
-          f"(예상 {(target - n) * SEC_PER_LAYER / 60:.0f}분)", flush=True)
+    print(msg("템플릿: 현재 {n}장 → 목표 {target}장 (예상 {mins:.0f}분)",
+              n=n, target=target, mins=(target - n) * SEC_PER_LAYER / 60),
+          flush=True)
     wait = STAMP_WAIT
     while n < target:
         if stop is not None and stop():
-            raise StopRequested(f"STOP 감지 — 템플릿 {n}/{target}장에서 중단")
+            raise StopRequested(msg("STOP 감지 — 템플릿 {n}/{target}장에서 중단",
+                                    n=n, target=target))
         want = min(chunk, target - n)
         t0 = time.time()
         d.open_wizard()
@@ -160,16 +166,20 @@ def fill(d: Driver, target: int, shape: str = SHAPE, chunk: int = CHUNK,
         time.sleep(0.6)
         got = count(d)
         dt = time.time() - t0
-        print(f"  +{got - n:4d}장 (요청 {want}) → {got}/{target}  "
-              f"{dt:.0f}초 · 장당 {dt / max(1, got - n):.2f}초"
-              + (f" · 대기 {wait:.2f}s" if wait != STAMP_WAIT else ""), flush=True)
+        print(msg("  +{delta:4d}장 (요청 {want}) → {got}/{target}  "
+                  "{dt:.0f}초 · 장당 {per:.2f}초",
+                  delta=got - n, want=want, got=got, target=target,
+                  dt=dt, per=dt / max(1, got - n))
+              + (msg(" · 대기 {wait:.2f}s", wait=wait)
+                 if wait != STAMP_WAIT else ""), flush=True)
         if got <= n:
             if wait < STAMP_WAIT:            # 너무 줄인 대기가 원인일 수 있다
-                print(f"  스탬프가 안 늘었다 — 대기를 {STAMP_WAIT}s로 되돌려 재시도",
-                      flush=True)
+                print(msg("  스탬프가 안 늘었다 — 대기를 {wait}s로 되돌려 재시도",
+                          wait=STAMP_WAIT), flush=True)
                 wait = STAMP_WAIT
                 continue
-            raise DriverError(f"스탬프가 한 장도 안 늘었다 ({got}장) — 중단")
+            raise DriverError(msg("스탬프가 한 장도 안 늘었다 ({got}장) — 중단",
+                                  got=got))
         # 수확 기반 적응 — 온전히 들어오면 줄이고, 떨어지기 시작하면 물러선다.
         # 다시 채우는 값이 있으므로 공격적으로 줄여도 손해가 작다. 중단으로
         # 일찍 끊긴 청크는 수확 근거가 아니다.
@@ -180,7 +190,8 @@ def fill(d: Driver, target: int, shape: str = SHAPE, chunk: int = CHUNK,
                 wait = min(STAMP_WAIT, round(wait * 1.3, 3))
         n = got
         if stopped:
-            raise StopRequested(f"STOP 감지 — 템플릿 {n}/{target}장에서 중단")
+            raise StopRequested(msg("STOP 감지 — 템플릿 {n}/{target}장에서 중단",
+                                    n=n, target=target))
     return n
 
 
@@ -207,10 +218,10 @@ def plant_sentinel(log=print) -> tuple[float, float] | None:
         y = d.set_axis("y", SENT_Y, press_tool=False)
         d.commit()
         time.sleep(0.5)
-        log(f"센티널 레이어를 심었다 (x {x} · y {y}) — 표 식별용")
+        log(msg("센티널 레이어를 심었다 (x {x} · y {y}) — 표 식별용", x=x, y=y))
         return (float(x), float(y))
     except DriverError as e:
-        log(f"센티널 실패 ({e}) — 장수 검색으로 물러난다")
+        log(msg("센티널 실패 ({err}) — 장수 검색으로 물러난다", err=e))
         return None
 
 
@@ -265,32 +276,35 @@ def ensure_ready(need: int, shapes: tuple[str, ...] | None = None,
              if reuse else want)
     have = canvas_count()
     if have is None:
-        log("레이어 수를 못 읽었다 (레이어 리스트 화면이 아닌 듯) — 준비를 건너뛴다")
+        log(msg("레이어 수를 못 읽었다 (레이어 리스트 화면이 아닌 듯) — 준비를 건너뛴다"))
         return None
     if have > 0:
         miss = seed_missing(list(want), have, log=log)
         if not miss:
             if have >= need:                       # 2) 그대로 간다
-                log(f"템플릿 {have}장 · 도형 {len(want)}종 전부 그린다 — 바로 주입한다"
-                    + (f" (남는 {have - need}장은 밀어낸다)" if have > need else ""))
+                log(msg("템플릿 {have}장 · 도형 {n}종 전부 그린다 — 바로 주입한다",
+                        have=have, n=len(want))
+                    + (msg(" (남는 {extra}장은 밀어낸다)", extra=have - need)
+                       if have > need else ""))
                 return have
             d = Driver()                           # 1') 모자란 만큼만 채운다
             return fill(d, need, stop=stop)
         raise DriverError(
-            f"이 비닐 그룹은 도형 {len(miss)}종을 못 그린다 ({' '.join(miss[:8])}"
-            + (" …" if len(miss) > 8 else "")
-            + ") — 주입해도 다른 도형으로 그려진다.\n"
-            "  이 그룹으로는 못 고친다: 그룹을 풀고 통째로 지우고 다시 심어도\n"
-            "  **에셋이 안 들어온다** (실측: 그러고 나서 위저드로 놓은 U_23이\n"
-            "  그대로 타원으로 그려졌다).\n"
-            "  **새 비닐 그룹을 만들고**(디자인 및 도색 → 비닐 그룹 만들기) 다시\n"
-            "  실행할 것 — 빈 캔버스면 씨앗을 심어 템플릿을 지어 준다.")
+            msg("이 비닐 그룹은 도형 {n}종을 못 그린다 ({names}{more}"
+                ") — 주입해도 다른 도형으로 그려진다.\n"
+                "  이 그룹으로는 못 고친다: 그룹을 풀고 통째로 지우고 다시 심어도\n"
+                "  **에셋이 안 들어온다** (실측: 그러고 나서 위저드로 놓은 U_23이\n"
+                "  그대로 타원으로 그려졌다).\n"
+                "  **새 비닐 그룹을 만들고**(디자인 및 도색 → 비닐 그룹 만들기) 다시\n"
+                "  실행할 것 — 빈 캔버스면 씨앗을 심어 템플릿을 지어 준다.",
+                n=len(miss), names=" ".join(miss[:8]),
+                more=" …" if len(miss) > 8 else ""))
     else:
         d = Driver()
     if not reuse:
-        log(f"씨앗을 이 플랜의 도형 {len(want)}종으로 좁힌다 "
-            f"(어휘 전체는 {len(vocabulary())}종 — 다시 안 여는 그룹이라 "
-            f"합집합이 필요 없다)")
+        log(msg("씨앗을 이 플랜의 도형 {n}종으로 좁힌다 "
+                "(어휘 전체는 {vocab}종 — 다시 안 여는 그룹이라 "
+                "합집합이 필요 없다)", n=len(want), vocab=len(vocabulary())))
     seed(d, plant[:need], stop)                    # 1)·3) 새로 짓는다
     return fill(d, need, stop=stop)
 
@@ -308,12 +322,13 @@ def ensure(target: int, shape: str = SHAPE, chunk: int = CHUNK,
     d = Driver()
     n = count(d)
     if n == target:
-        print(f"템플릿 {n}장 — 이미 맞다")
+        print(msg("템플릿 {n}장 — 이미 맞다", n=n))
         return n
     if n > target:
         # 남는 장은 **주입이 밀어낸다** — 여기서 할 일이 없다 (`game/inject`)
-        print(f"템플릿 {n}장 — 플랜 {target}장보다 많다. 남는 {n - target}장은 "
-              "주입이 캔버스 밖으로 민다 (창 조작 없음)")
+        print(msg("템플릿 {n}장 — 플랜 {target}장보다 많다. 남는 {extra}장은 "
+                  "주입이 캔버스 밖으로 민다 (창 조작 없음)",
+                  n=n, target=target, extra=n - target))
         return n
     if n == 0:
         want = vocabulary() if seeds is None else seeds

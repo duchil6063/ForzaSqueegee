@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..engine.model import LayerPlan
 from ..game import io as gio
+from ..i18n import msg
 from .driver import Driver, DriverError, TransformTarget, alpha8
 from .fav import FavStack
 
@@ -56,7 +57,7 @@ def _check_stop(plan_path: Path) -> None:
     stop = plan_path.parent / "STOP"
     if stop.exists():
         stop.unlink()  # 다음 실행을 위해 제거
-        raise StopRequested("STOP 파일 감지 — 레이어 경계에서 중단")
+        raise StopRequested(msg("STOP 파일 감지 — 레이어 경계에서 중단"))
 
 
 def _hsb_key(layer) -> tuple[float, float, float]:
@@ -100,7 +101,8 @@ def _set_transforms(d: Driver, layer, prev: dict[str, float]) -> dict[str, float
     """
     if abs(getattr(layer, "skew", 0.0)) > 1e-9:
         raise DriverError(
-            f"기울기가 든 레이어는 못 그린다 (skew={layer.skew}) — driver에 축이 없다")
+            msg("기울기가 든 레이어는 못 그린다 (skew={skew}) — driver에 축이 없다",
+                skew=layer.skew))
     t = TransformTarget(x=layer.x, y=layer.y, sx=layer.sx, sy=layer.sy,
                         rot=layer.rot % 360.0, alpha=layer.alpha)
     cur = dict(prev)
@@ -159,7 +161,7 @@ def draw_group(d: Driver, plan_path: Path, layers: list, start: int, total: int,
             d.commit()
         committed += 1
         _save_done(plan_path, start + committed, total)
-        tag = "스탬프" if k < len(group) - 1 else "커밋"
+        tag = msg("스탬프") if k < len(group) - 1 else msg("커밋")
         print(f"  [{start + committed}/{total}] {layer.shape} ({layer.label}) "
               f"{tag} {time.time() - t0:.1f}s")
     return committed
@@ -177,26 +179,28 @@ def run(plan_path: str | Path, start: int | None = None,
     total = len(layers)
     done = _load_done(plan_path) if start is None else start
     if done >= total:
-        print(f"이미 완료됨 ({done}/{total})")
+        print(msg("이미 완료됨 ({done}/{total})", done=done, total=total))
         return 0
 
     d = Driver()
     fav = FavStack()
     end = total if limit is None else min(total, done + limit)
     committed = 0
-    print(f"run_plan: {plan_path} — {done}/{total}부터 {end}까지 (그룹 스탬프 모드)")
+    print(msg("run_plan: {plan_path} — {done}/{total}부터 {end}까지 (그룹 스탬프 모드)",
+              plan_path=plan_path, done=done, total=total, end=end))
     while done < end:
         _check_stop(plan_path)
         bounded = layers[:end]  # limit는 그룹 경계 기준으로 잘라 초과 방지
         try:
             n = draw_group(d, plan_path, bounded, done, total, fav)
         except DriverError as e:
-            print(f"  [{done}] 실패({e}) — 복구 후 재시도")
+            print(msg("  [{done}] 실패({err}) — 복구 후 재시도", done=done, err=e))
             _recover_to_list(d)
             time.sleep(1.0)
             done = _load_done(plan_path)  # 그룹 중간 스탬프까지는 커밋됨
             n = draw_group(d, plan_path, bounded, done, total, fav)  # 재시도 실패는 전파
         done += n
         committed += n
-    print(f"완료: 이번 실행 {committed}개 커밋, 진행 {done}/{total}")
+    print(msg("완료: 이번 실행 {committed}개 커밋, 진행 {done}/{total}",
+              committed=committed, done=done, total=total))
     return committed

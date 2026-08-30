@@ -38,6 +38,14 @@ for _s in (sys.stdout, sys.stderr):
         except Exception:               # noqa: BLE001 — 못 바꿔도 그냥 간다
             pass
 
+# i18n은 stdlib뿐이라 실제로는 늘 서지만, 부트스트랩은 마지막 문지기라
+# 임포트가 무너져도 원문 그대로 말하고 계속 간다.
+try:
+    sys.path.insert(0, str(ROOT))
+    from forzasqueegee.i18n import msg
+except Exception:                       # noqa: BLE001
+    msg = lambda s, **kw: s.format(**kw) if kw else s   # noqa: E731
+
 # pip 부트스트랩 휠 — 임베더블에는 pip이 없어 이것부터 앉힌다. 휠은 zip이라
 # sys.path에 얹으면 그 안의 pip이 그대로 돌고, 그 pip으로 자신을 설치한다.
 _PIP_FILE = "pip-26.2.1-py3-none-any.whl"
@@ -76,12 +84,13 @@ def _download(url: str, dst: Path, sha: str) -> bool:
         with urllib.request.urlopen(req, timeout=120) as r:      # noqa: S310
             blob = r.read()
     except OSError as e:
-        _say(f"  못 받았다 - {e}")
+        _say(msg("  못 받았다 - {err}", err=e))
         return False
     got = hashlib.sha256(blob).hexdigest()
     if got != sha:
-        _say(f"  SHA-256이 다르다 - {got[:16]}... != {sha[:16]}...")
-        _say("  (프록시가 내용을 바꿔치기하는 회선에서 이렇게 된다)")
+        _say(msg("  SHA-256이 다르다 - {got}... != {want}...",
+                 got=got[:16], want=sha[:16]))
+        _say(msg("  (프록시가 내용을 바꿔치기하는 회선에서 이렇게 된다)"))
         return False
     dst.write_bytes(blob)
     return True
@@ -92,7 +101,7 @@ def _ensure_pip(rt: Path) -> bool:
     py = str(rt / "python.exe")
     if subprocess.run([py, "-c", "import pip"], capture_output=True).returncode == 0:
         return True
-    _say(f"  pip을 받는다 - {_PIP_FILE} (약 2MB)")
+    _say(msg("  pip을 받는다 - {file} (약 2MB)", file=_PIP_FILE))
     whl = rt / _PIP_FILE
     if not _download(_PIP_URL, whl, _PIP_SHA):
         return False
@@ -108,7 +117,7 @@ def _ensure_pip(rt: Path) -> bool:
 def main() -> int:
     rt = _runtime_dir()
     if rt is None:
-        _say("이 스크립트는 runtime\\python.exe로 부르는 자리다 - ForzaSqueegee.bat이 부른다.")
+        _say(msg("이 스크립트는 runtime\\python.exe로 부르는 자리다 - ForzaSqueegee.bat이 부른다."))
         return 2
     _fix_pth(rt)
 
@@ -116,26 +125,27 @@ def main() -> int:
     import check_env
 
     pins, _, _ = check_env._pins()
-    _say("꾸러미를 앉힌다 - " + " ".join(f"{n} {v}" for n, v in pins))
-    _say("  내려받기 약 310MB, 앉히면 약 890MB - 전부 이 폴더의 runtime/ 안이다.")
+    _say(msg("꾸러미를 앉힌다 - {pins}",
+             pins=" ".join(f"{n} {v}" for n, v in pins)))
+    _say(msg("  내려받기 약 310MB, 앉히면 약 890MB - 전부 이 폴더의 runtime/ 안이다."))
 
     py = str(rt / "python.exe")
     if not _ensure_pip(rt):
-        _say("pip을 못 세웠다 - 인터넷 연결을 확인하고 다시 실행할 것.")
+        _say(msg("pip을 못 세웠다 - 인터넷 연결을 확인하고 다시 실행할 것."))
         return 1
     r = subprocess.run([py, "-m", "pip", "install", "--no-warn-script-location",
                         "--disable-pip-version-check",
                         *[f"{n}=={v}" for n, v in pins]])
     if r.returncode != 0:
-        _say("꾸러미를 못 앉혔다 - 위 pip 메시지를 볼 것 (회선·디스크·프록시).")
+        _say(msg("꾸러미를 못 앉혔다 - 위 pip 메시지를 볼 것 (회선·디스크·프록시)."))
         return 1
 
     # 판 대조 + 실제 임포트 — 새 ._pth로 뜬 서브프로세스가 잰다.
     r = subprocess.run([py, str(ROOT / "tools" / "check_env.py"), "--deep"])
     if r.returncode != 0:
-        _say("앉히긴 했는데 검사에 걸렸다 - 위 메시지를 볼 것.")
+        _say(msg("앉히긴 했는데 검사에 걸렸다 - 위 메시지를 볼 것."))
         return 1
-    _say("다 됐다 - 다음 실행부터는 이 과정을 건너뛴다.")
+    _say(msg("다 됐다 - 다음 실행부터는 이 과정을 건너뛴다."))
     return 0
 
 

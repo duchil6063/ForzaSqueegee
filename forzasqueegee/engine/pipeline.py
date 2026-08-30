@@ -47,6 +47,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from ..paths import find_run_file, run_file
 
 # 작업 해상도 — **짧은 변** 기준. 긴 변 기준이면 세로로 긴 구도에서 인물의 폭이
@@ -74,7 +75,7 @@ def read_rgba(path: str | Path) -> np.ndarray:
     buf = np.fromfile(str(path), np.uint8)
     im = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
     if im is None:
-        raise SystemExit(f"읽기 실패: {path}")
+        raise SystemExit(msg("읽기 실패: {path}", path=path))
     if im.ndim == 2:
         im = cv2.cvtColor(im, cv2.COLOR_GRAY2BGRA)
     elif im.shape[2] == 3:
@@ -92,7 +93,7 @@ def write_png(path: Path, img: np.ndarray) -> None:
     파일은 파이썬이 쓴다."""
     ok, buf = cv2.imencode(".png", img)
     if not ok:
-        raise SystemExit(f"인코딩 실패: {path}")
+        raise SystemExit(msg("인코딩 실패: {path}", path=path))
     path.write_bytes(buf.tobytes())
 
 
@@ -127,7 +128,8 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     올리면 그대로 밖으로 나간다 — 엔진에 중단 플래그를 따로 두지 않는다.
     """
     if route not in ROUTES:
-        raise SystemExit(f"모르는 노선: {route} ({'|'.join(ROUTES)})")
+        raise SystemExit(msg("모르는 노선: {route} ({routes})",
+                             route=route, routes="|".join(ROUTES)))
     shapes = max(1, min(int(shapes), MAX_SHAPES))
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -141,14 +143,14 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     if not keep_bg and bool(rgba[..., 3].min() >= 250):
         from .bgremove import matte
 
-        log("배경 제거 중… (신경망 알파)")
+        log(msg("배경 제거 중… (신경망 알파)"))
         if progress:
-            progress(0.0, "배경 제거")
+            progress(0.0, msg("배경 제거"))
         a = matte(rgba[..., :3], log=log)
         if a is not None:
             rgba[..., 3] = a
             bgcut = True
-            log("  인물 알파 생성")
+            log(msg("  인물 알파 생성"))
     # ② 크롭: 인물 bbox + 여백으로 잘라 작업 해상도를 인물에 몰아준다 —
     #    프레임 구석의 인물이 작게 뭉개지는 것을 막는다. 알파가 프레임을 다
     #    채우면(표준 검증 이미지 포함) 미발동이라 기존 도안과 같다
@@ -157,12 +159,13 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
         oh, ow = rgba.shape[:2]
         rgba, crop = _crop_to_subject(rgba)
         if crop is not None:
-            log(f"  크롭: {ow}×{oh} → {crop[2]}×{crop[3]} (인물 bbox + 여백 2%)")
+            log(msg("  크롭: {ow}×{oh} → {cw}×{ch} (인물 bbox + 여백 2%)",
+                    ow=ow, oh=oh, cw=crop[2], ch=crop[3]))
     if bgcut or crop is not None:
         src = run_file(out, "cutout.png")
         write_png(src, np.dstack(
             [cv2.cvtColor(rgba[..., :3], cv2.COLOR_RGB2BGR), rgba[..., 3]]))
-        log(f"  전처리 결과 → {src.name}")
+        log(msg("  전처리 결과 → {name}", name=src.name))
     # 노선 본체는 여기서 부른다 — 노선 모듈이 이 파일의 공용 헬퍼를 쓰므로
     # 임포트를 함수 안에 둔다 (모듈 수준이면 서로 물린다)
     from .route_cel import _make_cel
@@ -183,10 +186,10 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     run_file(out, "report.json").write_text(
         json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    log(f"\n총 {rep['sec']:.0f}s → {out}")
+    log(msg("\n총 {sec:.0f}s → {out}", sec=rep["sec"], out=out))
     log(rep["verdict"])
     if progress:
-        progress(1.0, "완료")
+        progress(1.0, msg("완료"))
     return rep
 
 
@@ -205,11 +208,12 @@ def _write_kfps_json(out: Path, log) -> dict:
         data, st = export_typecode(plan, Catalog(default_catalog_path()))
         kfps = run_file(out, "kfps.json")
         kfps.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        log(f"KFPS 편집기 JSON → {kfps.name} (도형 {len(data['shapes'])}장"
-            + (f" · 근사 {st['approx']}" if st["approx"] else "") + ")")
+        log(msg("KFPS 편집기 JSON → {name} (도형 {n}장",
+                name=kfps.name, n=len(data["shapes"]))
+            + (msg(" · 근사 {n}", n=st["approx"]) if st["approx"] else "") + ")")
         return st
     except Exception as e:                       # noqa: BLE001
-        log(f"경고: KFPS JSON 생성 실패 — {e}")
+        log(msg("경고: KFPS JSON 생성 실패 — {err}", err=e))
         return {"error": str(e)}
 
 
@@ -235,15 +239,17 @@ def _write_fls(out: Path, log) -> dict:
         folder, st = bridge.plan_folder(plan_path, dest)
         proj, _ = bridge.plan_project(plan_path, run_file(out, "3so"))
         st["project"] = str(proj)
-        log(f"FLS·게임 파일 → {folder.name}/ · {proj.name} "
-            f"(레이어 {st['layers']:,}장, 마스크 {st['masks']:,})")
+        log(msg("FLS·게임 파일 → {folder}/ · {proj} "
+                "(레이어 {layers:,}장, 마스크 {masks:,})",
+                folder=folder.name, proj=proj.name,
+                layers=st["layers"], masks=st["masks"]))
         if st.get("skipped"):
             n = sum(st["skipped"].values())
-            log(f"  경고: 카탈로그 도형 id를 모르는 {n}장을 뺐다 "
-                f"({', '.join(sorted(st['skipped']))})")
+            log(msg("  경고: 카탈로그 도형 id를 모르는 {n}장을 뺐다 ({kinds})",
+                    n=n, kinds=", ".join(sorted(st["skipped"]))))
         return st
     except Exception as e:                       # noqa: BLE001
-        log(f"경고: FLS·게임 파일 생성 실패 — {e}")
+        log(msg("경고: FLS·게임 파일 생성 실패 — {err}", err=e))
         return {"error": str(e)}
 
 
@@ -307,7 +313,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
     cache = _bundle_cache_path(rgba, size)
     if cache is not None and cache.is_file():
         z = np.load(cache)
-        log("  앞단 캐시 재사용 (FS_BUNDLE_CACHE)")
+        log(msg("  앞단 캐시 재사용 (FS_BUNDLE_CACHE)"))
         return (z["big"], z["line"] if "line" in z else None,
                 z["detail"] if "detail" in z else None,
                 z["native"] if "native" in z else None)
@@ -319,7 +325,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
     if line is not None and lineart.available("detail"):
         detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
         if detail is not None:
-            log("  선화 detail 판도 증거로 얹는다")
+            log(msg("  선화 detail 판도 증거로 얹는다"))
     if line is not None and big.shape[:2] != rgba.shape[:2]:
         # §25 — SR을 태웠으면 **원화 해상도에서도** 같은 basic 모델을 건다.
         # 지도를 중간본 크기로 늘려 나란히 둘 뿐, 경로 원천으로는 안 쓴다
@@ -331,7 +337,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         if nat is not None:
             native = cv2.resize(nat, (big.shape[1], big.shape[0]),
                                 interpolation=cv2.INTER_LINEAR)
-            log("  원화 해상도 선화도 증거로 얹는다 (SR 전용 선을 가른다)")
+            log(msg("  원화 해상도 선화도 증거로 얹는다 (SR 전용 선을 가른다)"))
     if cache is not None:
         got = {"big": big}
         if line is not None:
@@ -362,14 +368,15 @@ def _reach_check(plan, cat) -> dict:
     n_mask = sum(1 for l in plan.layers if l.mask)
     bad = []
     if trans:
-        bad.append("반투명 도형 " + "·".join(trans))
+        bad.append(msg("반투명 도형 {kinds}", kinds="·".join(trans)))
     if n_skew:
-        bad.append(f"기울기 {n_skew}장")
+        bad.append(msg("기울기 {n}장", n=n_skew))
     if n_mask:
-        bad.append(f"마스크 {n_mask}장")
+        bad.append(msg("마스크 {n}장", n=n_mask))
     return {"id": "reach", "ok": not bad,
-            "text": "게임에 그대로 감" if not bad
-                    else "게임에 그대로 못 감 — " + " · ".join(bad)}
+            "text": msg("게임에 그대로 감") if not bad
+                    else msg("게임에 그대로 못 감 — {reasons}",
+                             reasons=" · ".join(bad))}
 
 
 def _one_region(mask: np.ndarray, color) -> list:

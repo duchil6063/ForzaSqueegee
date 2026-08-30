@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from ...game import fold as gfold, hull as ghull, surface as gsurf
+from ...i18n import msg
 
 
 def seam_fold(name: str, wname: str, rig: "SideRig") -> gfold.Fold | None:
@@ -30,7 +31,7 @@ def seam_fold(name: str, wname: str, rig: "SideRig") -> gfold.Fold | None:
         src=name, dst=wname, axis="v", sign=1.0, edge=rig.geom.belt,
         A=np.diag([s.su, s.sv]),
         b=np.array([s.gu - s.cu * s.su, s.gv0 - s.belt * s.sv]),
-        why=f"유리 이음새 su {s.su:.2f} · 겹침 {s.iou:.2f}")
+        why=msg("유리 이음새 su {su:.2f} · 겹침 {iou:.2f}", su=s.su, iou=s.iou))
 
 
 def _pillar_hints(rigs: dict[str, "SideRig"]

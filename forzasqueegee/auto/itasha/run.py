@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from ...game import body
+from ...i18n import msg
 from ..bodyedit import BodyEditor
 from ..driver import Driver
 from .config import Config, load_config
@@ -17,59 +18,71 @@ from .place import place_all
 
 def finish(b: BodyEditor, apply: bool, log=print) -> None:
     if not apply:
-        log("적용하지 않고 나간다 (설정 apply=false)")
+        log(msg("적용하지 않고 나간다 (설정 apply=false)"))
         b.exit_editor(apply=False)
         return
-    log("에디터를 나가 '현재 자동차에 적용'을 고른다")
+    log(msg("에디터를 나가 '현재 자동차에 적용'을 고른다"))
     if not b.exit_editor(apply=True):
-        log("바뀐 게 없어 저장 대화상자가 안 떴다 — 적용할 것이 없다")
+        log(msg("바뀐 게 없어 저장 대화상자가 안 떴다 — 적용할 것이 없다"))
         return
-    log("적용 완료")
+    log(msg("적용 완료"))
 
 
 def describe(cfg: Config, finish: bool = True) -> str:
     """구성을 사람이 읽는 표로. `finish=False`면 마무리 줄을 뺀다 —
     파일로 내보내는 길(`engine.fls.studio`)은 게임을 안 건드리므로 '현재
     자동차에 적용'이 거짓말이 된다."""
-    lines = [f"이타샤 구성: {cfg.path}"]
+    lines = [msg("이타샤 구성: {path}", path=cfg.path)]
     if cfg.car:
-        lines.append(f"  기준 차량 메모: {cfg.car}"
-                     + (f"  (면 지도는 설치 파일 {cfg.media})" if cfg.media else ""))
+        media = (msg("  (면 지도는 설치 파일 {media})", media=cfg.media)
+                 if cfg.media else "")
+        lines.append(msg("  기준 차량 메모: {car}{media}",
+                         car=cfg.car, media=media))
     if cfg.paint is not None:
-        lines.append(f"  베이스 도색: HSB {cfg.paint} (자동차 도색 메뉴)")
+        lines.append(msg("  베이스 도색: HSB {paint} (자동차 도색 메뉴)",
+                         paint=cfg.paint))
     for p in cfg.placements:
         cap = body.surface_cap(p.surface, cfg.tabs)
         if p.copy_from is not None:
-            lines.append(f"  {p.surface:<13} ← 반대편({p.copy_from}) 복사")
+            lines.append(msg("  {surface:<13} ← 반대편({copy_from}) 복사",
+                             surface=p.surface, copy_from=p.copy_from))
             continue
-        deco = "".join(
-            f"  {tag} '{txt}'" for tag, txt in
-            (("글자", " / ".join(t["text"] for t in p.texts)),) if txt)
+        txt = " / ".join(t["text"] for t in p.texts)
+        deco = msg("  {tag} '{txt}'", tag=msg("글자"), txt=txt) if txt else ""
         if p.shapes:
-            deco += f"  면 도형 {len(p.shapes)}"
+            deco += msg("  면 도형 {n}", n=len(p.shapes))
         if p.post_shapes:
-            deco += f"  덮개 도형 {len(p.post_shapes)}"
+            deco += msg("  덮개 도형 {n}", n=len(p.post_shapes))
         if p.pre_groups:
-            deco += "  보조그룹 " + " ".join(
-                f"{g.group}({g.layers:,})" for g in p.pre_groups)
+            deco += msg("  보조그룹 {groups}", groups=" ".join(
+                f"{g.group}({g.layers:,})" for g in p.pre_groups))
         if p.layers == 0 and p.groups:
             tot = sum(g.layers for g in p.groups)
-            lines.append(f"  {p.surface:<13} 손 배치 도안 {len(p.groups)}개 "
-                         f"{tot:,}장/{f'{cap:,}' if cap else '?'}{deco}")
+            lines.append(msg("  {surface:<13} 손 배치 도안 {n}개 "
+                             "{total:,}장/{cap}{deco}",
+                             surface=p.surface, n=len(p.groups), total=tot,
+                             cap=f'{cap:,}' if cap else '?', deco=deco))
             for g in p.groups:
-                lines.append(f"      {g.group:<14} {g.layers:>6,}장 x={g.x:g} "
-                             f"y={g.y:g} scale={g.scale:g} rot={g.rot:g}"
-                             + ("  좌우반전" if g.mirror else ""))
+                lines.append(msg("      {group:<14} {layers:>6,}장 x={x:g} "
+                                 "y={y:g} scale={scale:g} rot={rot:g}{mirror}",
+                                 group=g.group, layers=g.layers, x=g.x, y=g.y,
+                                 scale=g.scale, rot=g.rot,
+                                 mirror=msg("  좌우반전") if g.mirror else ""))
             continue
         if p.layers == 0:
-            lines.append(f"  {p.surface:<13} (그룹 없음){deco}")
+            lines.append(msg("  {surface:<13} (그룹 없음){deco}",
+                             surface=p.surface, deco=deco))
             continue
-        lines.append(
-            f"  {p.surface:<13} {p.group:<14} {p.layers:>6,}장/{cap or '?':>5} "
-            f"x={p.x:g} y={p.y:g} scale={p.scale:g} rot={p.rot:g}"
-            + ("  미러" if p.mirror else "") + deco)
+        lines.append(msg(
+            "  {surface:<13} {group:<14} {layers:>6,}장/{cap:>5} "
+            "x={x:g} y={y:g} scale={scale:g} rot={rot:g}{mirror}{deco}",
+            surface=p.surface, group=p.group, layers=p.layers,
+            cap=cap or '?', x=p.x, y=p.y, scale=p.scale, rot=p.rot,
+            mirror=msg("  미러") if p.mirror else "", deco=deco))
     if finish:
-        lines.append(f"  마무리: {'현재 자동차에 적용' if cfg.apply else '적용 안 함'}")
+        lines.append(msg("  마무리: {status}",
+                         status=msg("현재 자동차에 적용") if cfg.apply
+                         else msg("적용 안 함")))
     return "\n".join(lines)
 
 
@@ -85,14 +98,15 @@ def run(config: Path, restart: bool = False, prepare: bool = True,
         past = timing_summary(load_progress(cfg))
         if past:
             log("\n" + past)
-        log("\n--dry-run — 게임을 건드리지 않았다")
+        log("\n" + msg("--dry-run — 게임을 건드리지 않았다"))
         return 0
     # 동의는 **아무것도 하기 전에** 받는다 — 그룹 준비가 20분짜리라 그걸 다
     # 돌려 놓고 "동의가 없다"로 멈추면 사람 시간을 버린다
     if cfg.apply and not yes:
-        log("\n마지막에 **현재 자동차의 디자인을 덮는다**. 계속하려면 --yes를 주거나\n"
+        log("\n" + msg(
+            "마지막에 **현재 자동차의 디자인을 덮는다**. 계속하려면 --yes를 주거나\n"
             "  구성 파일에 \"apply\": false 를 두고 배치만 확인할 것.\n"
-            "  (되돌리기: 게임 [디자인 및 도색]에서 X = 도색/비닐 기본으로 되돌리기)")
+            "  (되돌리기: 게임 [디자인 및 도색]에서 X = 도색/비닐 기본으로 되돌리기)"))
         return 2
     prog = {"groups": {}, "placed": []} if restart else load_progress(cfg)
     if restart and cfg.progress_path.exists():
@@ -103,7 +117,7 @@ def run(config: Path, restart: bool = False, prepare: bool = True,
     # 준비 단계가 장수로 다시 맞춰 본다.
     elif prog["placed"] and cfg.progress_path.exists() \
             and cfg.path.stat().st_mtime > cfg.progress_path.stat().st_mtime:
-        log("구성이 진행 파일보다 새롭다 — 배치 기록을 버리고 전 면을 다시 올린다")
+        log(msg("구성이 진행 파일보다 새롭다 — 배치 기록을 버리고 전 면을 다시 올린다"))
         prog["placed"] = []
         prog.pop("done", None)
     clock = Clock(cfg, prog)
@@ -116,26 +130,27 @@ def run(config: Path, restart: bool = False, prepare: bool = True,
     # 도색은 `현재 자동차에 적용`으로 즉시 커밋되므로 apply=false면 건드리지 않는다.
     if cfg.paint is not None and cfg.apply:
         if prog.get("painted") == list(cfg.paint):
-            log("베이스 도색: 이미 칠했다 (진행 파일 기준)")
+            log(msg("베이스 도색: 이미 칠했다 (진행 파일 기준)"))
         else:
             from .. import paintcar
 
-            log(f"베이스 도색: HSB {cfg.paint} (자동차 도색 → 전체 도색)")
+            log(msg("베이스 도색: HSB {paint} (자동차 도색 → 전체 도색)",
+                    paint=cfg.paint))
             with clock.stage("paint"):
                 paintcar.set_paint(Driver(), cfg.paint, log=log)
             prog["painted"] = list(cfg.paint)
             save_progress(cfg, prog)
     elif cfg.paint is not None:
-        log("베이스 도색: apply=false라 건너뛴다 (도색은 즉시 커밋이라)")
+        log(msg("베이스 도색: apply=false라 건너뛴다 (도색은 즉시 커밋이라)"))
     if prepare:
         prepare_groups(cfg, prog, log=log, clock=clock)
     else:
-        log("그룹 준비 건너뜀 (--no-prepare)")
+        log(msg("그룹 준비 건너뜀 (--no-prepare)"))
     b = place_all(cfg, prog, log=log, replace=replace, fit=fit, clock=clock)
     with clock.stage("finish"):
         finish(b, cfg.apply, log=log)
     prog["done"] = True
     clock.add("run", time.time() - t_run)
-    log(f"\n끝. 진행 파일 {cfg.progress_path.name}")
+    log("\n" + msg("끝. 진행 파일 {name}", name=cfg.progress_path.name))
     log(timing_summary(prog))
     return 0

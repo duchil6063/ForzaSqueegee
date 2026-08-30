@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+from ...i18n import msg
 from ..model import Layer
 from . import ids
 from .binfmt import (
@@ -156,11 +157,11 @@ def encode_group(layers: list[Layer], *, center: bool = True,
     둔다. 3,000장짜리도 이 길로 안전하게 선다."""
     usable, skipped = usable_layers(layers)
     if not usable:
-        raise ValueError("내보낼 수 있는 레이어가 하나도 없다 "
-                         "(카탈로그 도형 id를 아는 장이 없다)")
+        raise ValueError(msg("내보낼 수 있는 레이어가 하나도 없다 "
+                             "(카탈로그 도형 id를 아는 장이 없다)"))
     if len(usable) > MAX_DIRECT_CHILDREN:
-        raise ValueError(f"레이어 {len(usable):,}장 — 자식 비트맵 상한"
-                         f"({MAX_DIRECT_CHILDREN:,})을 넘는다")
+        raise ValueError(msg("레이어 {n:,}장 — 자식 비트맵 상한({cap:,})을 넘는다",
+                             n=len(usable), cap=MAX_DIRECT_CHILDREN))
     ox, oy = content_center([l for l, _ in usable]) if center else (0.0, 0.0)
 
     n = len(usable)
@@ -230,7 +231,7 @@ class Walker:
             self._skip_unwind()
         p = self.p
         if p >= len(d):
-            raise ValueError("도형 레코드가 없다")
+            raise ValueError(msg("도형 레코드가 없다"))
         if first and d[p] == 0x02:
             lead, body = 0x00, p + 1        # 표식 없는 31바이트 (그룹의 첫 자식)
         elif p + 1 < len(d) and d[p] in (0x00, 0x01) and d[p + 1] == 0x02:
@@ -238,10 +239,11 @@ class Walker:
         elif d[p] == 0x02:
             lead, body = 0x00, p + 1
         else:
-            raise ValueError(f"0x{p:x}: 도형 레코드 표식이 아니다 "
-                             f"(0x{d[p]:02x} — 자식 비트맵은 도형이라 한다)")
+            raise ValueError(msg("0x{off:x}: 도형 레코드 표식이 아니다 "
+                                 "(0x{byte:02x} — 자식 비트맵은 도형이라 한다)",
+                                 off=p, byte=d[p]))
         if body + 30 > len(d):
-            raise ValueError(f"0x{p:x}: 도형 레코드가 잘렸다")
+            raise ValueError(msg("0x{off:x}: 도형 레코드가 잘렸다", off=p))
         # `01 02`는 **앞 도형**이 마스크라는 뜻이다. 앞 형제가 그룹이었으면
         # 같은 `01`이 순회 되감기라 마스크가 아니다.
         if lead == 0x01 and prev_was_shape and self._last_shape is not None:
@@ -307,26 +309,26 @@ class Walker:
             return transform_matrix(r_f32(d, start), r_f32(d, start + 4),
                                     sx, sx if sy is None else sy,
                                     r_f32(d, start + 12), 0.0)
-        raise ValueError(f"0x{self.p:x}: 그룹 변환을 못 읽었다")
+        raise ValueError(msg("0x{off:x}: 그룹 변환을 못 읽었다", off=self.p))
 
     def _read_group(self, parent_mask: bool, gm: Mat) -> None:
         d = self.d
         local = self._read_transform()
         p = self.p
         if p >= len(d):
-            raise ValueError("그룹 머리가 없다")
+            raise ValueError(msg("그룹 머리가 없다"))
         if d[p] in (0x20, 0x60):
             mask = d[p] == 0x60
             p += 1
         else:
             mask = False                    # 표식 없는 그룹 (markerless)
         if p + 6 > len(d):
-            raise ValueError(f"0x{p:x}: 그룹 머리가 잘렸다")
+            raise ValueError(msg("0x{off:x}: 그룹 머리가 잘렸다", off=p))
         count = r_u16(d, p)
         blocks = r_u16(d, p + 2)
         if count <= 0 or blocks != (count + 7) // 8:
-            raise ValueError(f"0x{p:x}: 자식 수 {count}와 비트맵 블록 {blocks}이 "
-                             f"안 맞는다")
+            raise ValueError(msg("0x{off:x}: 자식 수 {count}와 비트맵 블록 {blocks}이 "
+                                 "안 맞는다", off=p, count=count, blocks=blocks))
         bitmap = d[p + 6 : p + 6 + blocks]
         self.p = p + 6 + blocks
         self.groups += 1
@@ -354,19 +356,20 @@ class Walker:
 def decode_group(payload: bytes) -> tuple[list[Layer], dict]:
     """`C_group` 페이로드 → 평면 레이어 목록 + 통계 (그룹 변환은 합성한다)."""
     if len(payload) < 0x25 or payload[:4] != MAGIC:
-        raise ValueError("gyvl 페이로드가 아니다")
+        raise ValueError(msg("gyvl 페이로드가 아니다"))
     marker = payload[ROOT_MARKER_OFF]
     if marker == 0x21:
-        raise ValueError("잠긴 그룹이다 (0x1D == 0x21) — 남의 저장본은 안 연다")
+        raise ValueError(msg("잠긴 그룹이다 (0x1D == 0x21) — 남의 저장본은 안 연다"))
     if marker not in (0x20, 0x60, 0x00):
-        raise ValueError(f"뿌리 그룹 표식이 아니다 (0x{marker:02x})")
+        raise ValueError(msg("뿌리 그룹 표식이 아니다 (0x{marker:02x})", marker=marker))
     count = r_u16(payload, 0x1E)
     want = (count + 7) // 8
     # 뿌리 블록 칸은 판마다 u8(0x20 한 바이트)로도 u16으로도 읽힌다 — 자식이
     # 2,040장 이하면 두 해석이 같은 값이라 갈릴 일이 없고, 넘으면 u16 쪽만 선다
     if count <= 0 or want not in (payload[0x20], r_u16(payload, 0x20)):
-        raise ValueError(f"뿌리 자식 수 {count}와 블록 "
-                         f"{payload[0x20]}/{r_u16(payload, 0x20)}이 안 맞는다")
+        raise ValueError(msg("뿌리 자식 수 {count}와 블록 {b8}/{b16}이 안 맞는다",
+                             count=count, b8=payload[0x20],
+                             b16=r_u16(payload, 0x20)))
     blocks = want
     bitmap = payload[0x24 : 0x24 + blocks]
     scale = r_f32(payload, 0x15)

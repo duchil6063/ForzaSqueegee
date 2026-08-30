@@ -75,10 +75,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 import ctypes
 
-                msg = "ForzaSqueegee가 오류로 멈췄습니다."
+                try:                       # i18n마저 깨졌으면 한국어 원문으로 간다
+                    from .i18n import msg as _t
+                except Exception:          # noqa: BLE001 — 마지막 문지기다
+                    _t = lambda s, **kw: s.format(**kw) if kw else s  # noqa: E731
+                text = _t("ForzaSqueegee가 오류로 멈췄습니다.")
                 if where:
-                    msg += f"\n\n기록: {where}\n이 파일을 개발자에게 보내 주세요."
-                ctypes.windll.user32.MessageBoxW(None, msg, "ForzaSqueegee", 0x10)
+                    text += _t("\n\n기록: {where}\n이 파일을 개발자에게 보내 주세요.",
+                               where=where)
+                ctypes.windll.user32.MessageBoxW(None, text, "ForzaSqueegee", 0x10)
             except Exception:    # noqa: BLE001
                 pass
         return 1

@@ -26,6 +26,7 @@ import numpy as np
 from ..game import body
 from ..game import io as gio
 from ..game import ocr
+from ..i18n import msg
 from .driver import Driver, DriverError
 
 # 그룹 그리드 (내 비닐 그룹) 기하 — 1600×899 실측 비율
@@ -195,7 +196,8 @@ class BodyEditor:
         """
         n = self.n_tabs()
         if not 0 <= index < n:
-            raise DriverError(f"면 탭 범위 밖: {index} (0..{n - 1})")
+            raise DriverError(msg("면 탭 범위 밖: {index} (0..{max})",
+                                  index=index, max=n - 1))
         for _ in range(3):                       # 아는 자리에서면 상대 이동이 싸다
             cur = self.current_tab()
             if cur == index:
@@ -249,8 +251,9 @@ class BodyEditor:
                 if got in (index, None):         # None = 여전히 덮여 있다 (정상)
                     return
                 raise DriverError(
-                    f"면 탭 이동 실패: 목표 {index}, 배너 우회 후 {got}")
-        raise DriverError(f"면 탭 이동 실패: 목표 {index}")
+                    msg("면 탭 이동 실패: 목표 {index}, 배너 우회 후 {got}",
+                        index=index, got=got))
+        raise DriverError(msg("면 탭 이동 실패: 목표 {index}", index=index))
 
     # ---------- 레이어 만들기 ----------
     def goto_plus(self, max_steps: int = 8) -> None:
@@ -271,7 +274,7 @@ class BodyEditor:
     def menu_rows(self) -> int:
         idx = self.d._menu_row_index()
         if idx is None:
-            raise DriverError("레이어 만들기 메뉴 행 미검출")
+            raise DriverError(msg("레이어 만들기 메뉴 행 미검출"))
         return idx[1]
 
     # ---------- 저장된 비닐 그룹 불러오기 ----------
@@ -311,14 +314,14 @@ class BodyEditor:
                 seen["empty"] = True
             return bool(seen)
 
-        self.d._step("enter", _opened, "비닐 그룹 그리드")
+        self.d._step("enter", _opened, msg("비닐 그룹 그리드"))
         if seen.get("grid"):
             return True
         gio.press("enter")                        # 확인 → 레이어 리스트
         time.sleep(0.8)
         if not allow_empty:
-            raise DriverError("저장된 비닐 그룹이 하나도 없다 — 불러올 것이 없다 "
-                              "(그룹 준비가 먼저다)")
+            raise DriverError(msg("저장된 비닐 그룹이 하나도 없다 — 불러올 것이 없다 "
+                                  "(그룹 준비가 먼저다)"))
         return False
 
     def group_layers(self, img: np.ndarray | None = None) -> int | None:
@@ -427,8 +430,8 @@ class BodyEditor:
                 return
             seen.append(got)
         raise DriverError(
-            f"레이어 {layers:,}장짜리 비닐 그룹을 못 찾았다 "
-            f"(본 것: {sorted(set(seen))})")
+            msg("레이어 {layers:,}장짜리 비닐 그룹을 못 찾았다 "
+                "(본 것: {seen})", layers=layers, seen=sorted(set(seen))))
 
     def scan_groups(self, max_cells: int = 40) -> set[int]:
         """그리드를 훑어 저장된 비닐 그룹들의 **장수**를 모은다.
@@ -450,7 +453,7 @@ class BodyEditor:
         if rows < 6:
             gio.press("esc")
             time.sleep(0.5)
-            raise DriverError("이 면에는 '반대편 붙여넣기'가 없다 (좌우 짝이 없는 면)")
+            raise DriverError(msg("이 면에는 '반대편 붙여넣기'가 없다 (좌우 짝이 없는 면)"))
         self.d.menu_goto_row(rows - 2)
         gio.press("enter")
         for _ in range(40):
@@ -459,10 +462,10 @@ class BodyEditor:
             if n1 is not None and n1 > n0:
                 if expect is not None and n1 - n0 != expect:
                     raise DriverError(
-                        f"반대편 붙여넣기: {n1 - n0:,}장이 들어왔다 "
-                        f"(기대 {expect:,}장)")
+                        msg("반대편 붙여넣기: {delta:,}장이 들어왔다 "
+                            "(기대 {expect:,}장)", delta=n1 - n0, expect=expect))
                 return
-        raise DriverError("반대편 붙여넣기 후 카운터가 안 늘었다")
+        raise DriverError(msg("반대편 붙여넣기 후 카운터가 안 늘었다"))
 
     def load_group(self, layers: int) -> None:
         """그룹 그리드에서 그 장수의 그룹을 골라 면에 불러온다 → 변형 편집.
@@ -471,14 +474,15 @@ class BodyEditor:
         3,000장 그룹은 로드에 수 초가 걸린다.
         """
         self.find_group(layers)
-        self.d._step("enter", lambda: self._fileopt_open(self.cap()), "파일 옵션 대화상자")
+        self.d._step("enter", lambda: self._fileopt_open(self.cap()),
+                     msg("파일 옵션 대화상자"))
         gio.press("enter")
         t_end = time.time() + 60.0
         while time.time() < t_end:
             if self.in_transform():
                 return
             time.sleep(0.4)
-        raise DriverError("그룹 로드 후 변형 편집 미진입")
+        raise DriverError(msg("그룹 로드 후 변형 편집 미진입"))
 
     # ---------- 배치 ----------
     def place(self, x: float = 0.0, y: float = 0.0, scale: float = 1.0,
@@ -519,7 +523,7 @@ class BodyEditor:
         """변형 편집 → Enter → 레이어 리스트 복귀 (양성 확인)."""
         gio.press("1")           # 이동 도구로 되돌려 두 칸 판별을 살린다
         time.sleep(0.3)
-        self.d._step("enter", lambda: not self.in_transform(), "그룹 배치 확정")
+        self.d._step("enter", lambda: not self.in_transform(), msg("그룹 배치 확정"))
         for _ in range(20):
             img = self.cap()
             if self.d._edit_menu_open(img):
@@ -529,7 +533,7 @@ class BodyEditor:
             if ocr.read_body_cap(img) is not None:
                 return
             time.sleep(0.2)
-        raise DriverError("확정 후 리스트 미도착")
+        raise DriverError(msg("확정 후 리스트 미도착"))
 
     def clear_surface(self) -> int:
         """이 면의 레이어를 통째로 지운다 (만들기 메뉴 마지막 행 → 확인). 반환: 지운 장수.
@@ -543,13 +547,13 @@ class BodyEditor:
         self.open_create_menu()
         rows = self.menu_rows()
         self.d.menu_goto_row(rows - 1)
-        self.d._step("enter", self.d._confirm_band, "모든 레이어 삭제 확인창")
+        self.d._step("enter", self.d._confirm_band, msg("모든 레이어 삭제 확인창"))
         gio.press("enter")
         for _ in range(40):
             time.sleep(0.4)
             if ocr.read_body_count(self.cap()) == 0:
                 return n0
-        raise DriverError("면을 비우지 못했다 (카운터가 0이 안 됐다)")
+        raise DriverError(msg("면을 비우지 못했다 (카운터가 0이 안 됐다)"))
 
     # ---------- 들어가기·나가기 ----------
     def exit_dialog_open(self, img: np.ndarray | None = None) -> bool:
@@ -590,7 +594,7 @@ class BodyEditor:
                 return True
             if design.menu_open(img):
                 return False          # 바꾼 게 없다 — 저장할 것도 없다
-        raise DriverError("에디터 나가기 실패 (대화상자·메뉴 둘 다 안 왔다)")
+        raise DriverError(msg("에디터 나가기 실패 (대화상자·메뉴 둘 다 안 왔다)"))
 
     def enter_editor(self) -> None:
         """`디자인 및 도색` 메뉴에서 `비닐 & 데칼 적용`으로 들어간다.
@@ -610,7 +614,7 @@ class BodyEditor:
             gio.press("esc")
             time.sleep(1.0)
         design.goto_row(self.d, design.ROW_BODY_VINYL)
-        self.d._step("enter", lambda: self.screen() == "list", "차체 에디터 진입",
+        self.d._step("enter", lambda: self.screen() == "list", msg("차체 에디터 진입"),
                      tries=3, wait=4.0)
 
     # ---------- 저장 그룹 재사용 (2026-08-24 실측 확립) ----------
@@ -674,7 +678,8 @@ class BodyEditor:
             if cc is not None:
                 return cc
             time.sleep(0.5)
-        raise DriverError(f"저장 그룹({layers:,}장) 불러오기 후 편집 캔버스 미진입")
+        raise DriverError(msg("저장 그룹({layers:,}장) 불러오기 후 편집 캔버스 미진입",
+                              layers=layers))
 
     def remove_sentinel(self) -> int | None:
         """위저드로 방금 심은 **센티널(최상위 레이어)을 잘라낸다** (재사용 정리).
@@ -695,7 +700,7 @@ class BodyEditor:
             n1 = canvas_count(self.hwnd)
             if n1 is not None and n0 is not None and n1 < n0:
                 return n1
-        raise DriverError("센티널 제거 실패 (canvas 카운터가 안 줄었다)")
+        raise DriverError(msg("센티널 제거 실패 (canvas 카운터가 안 줄었다)"))
 
     def resave_overwrite(self, layers: int, max_cells: int = 30) -> None:
         """편집 캔버스의 현재 내용을 **`layers`장 슬롯에 덮어쓴다** (재저장).
@@ -712,9 +717,11 @@ class BodyEditor:
 
         if self.d._save_screen() == "list":
             self.d._step("backspace",
-                         lambda: self.d._save_screen() == "slots", "저장 슬롯 그리드")
+                         lambda: self.d._save_screen() == "slots",
+                         msg("저장 슬롯 그리드"))
         elif self.d._save_screen() != "slots":
-            raise DriverError(f"재저장 시작: 예상 밖 화면({self.d._save_screen()})")
+            raise DriverError(msg("재저장 시작: 예상 밖 화면({screen})",
+                                  screen=self.d._save_screen()))
         # 슬롯 그리드는 **회전목마**다 (선택 항목이 늘 같은 자리에 그려져
         # `group_cell`이 항상 (0,0)) — 자리로는 못 훑고 **장수로** 훑는다.
         # 함정 둘 (2026-08-24 실측): ① **1행 첫 셀은 새 슬롯**이고 그 장수는
@@ -744,9 +751,10 @@ class BodyEditor:
             _gio.press("down")
             time.sleep(0.4)
         if not found:
-            raise DriverError(f"저장 슬롯에서 {layers:,}장 그룹을 못 찾았다")
+            raise DriverError(msg("저장 슬롯에서 {layers:,}장 그룹을 못 찾았다",
+                                  layers=layers))
         self.d._step("enter", lambda: self._fileopt_open(self.cap()),
-                     "덮어쓰기 파일 옵션")
+                     msg("덮어쓰기 파일 옵션"))
         _gio.press("enter")                       # 첫 행 = 덮어쓰기
         for _ in range(15):
             if self.d._save_screen() in ("list", "slots"):
@@ -756,4 +764,4 @@ class BodyEditor:
                 return
             _gio.press("enter")
             time.sleep(1.0)
-        raise DriverError("덮어쓰기 후 리스트 미복귀")
+        raise DriverError(msg("덮어쓰기 후 리스트 미복귀"))

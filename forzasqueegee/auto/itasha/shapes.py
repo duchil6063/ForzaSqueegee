@@ -10,6 +10,7 @@ import time
 
 from ...engine.model import game_hsb
 from ...game import io as gio
+from ...i18n import msg
 from ..bodyedit import BodyEditor
 from ..driver import Driver, DriverError
 from .progress import Clock
@@ -103,7 +104,8 @@ def add_shape_jobs(b: BodyEditor, specs: list[dict], log=print,
             # Y 스탬프가 이 화면에서 안 선다는 서명이다 — 스탬프가 다 무시되면
             # 마지막 명세(Enter 커밋) **한 장만** 남는다. 나머지를 장별로 다시
             # 놓고 스탬프는 접는다 (같은 에디터 세션에서 거동이 안 바뀐다).
-            log(f"  스탬프가 안 선다 ({landed}/{len(batch)}) — 장별 경로로 물러난다")
+            log(msg("  스탬프가 안 선다 ({landed}/{total}) — 장별 경로로 물러난다",
+                    landed=landed, total=len(batch)))
             b.stamp_ok = False
             retry = batch[:-1]
         elif landed == 0:
@@ -113,8 +115,8 @@ def add_shape_jobs(b: BodyEditor, specs: list[dict], log=print,
         else:
             # 드문 키 드롭 — 모자란 만큼 꼬리를 장별로 놓는다. 같은 색·같은
             # 도형이라 어느 장이 떨어졌든 겹쳐 놓여도 그림이 안 바뀐다.
-            log(f"  스탬프 {landed}/{len(batch)}장 — 남은 "
-                f"{len(batch) - landed}장을 장별로 놓는다")
+            log(msg("  스탬프 {landed}/{total}장 — 남은 {left}장을 장별로 놓는다",
+                    landed=landed, total=len(batch), left=len(batch) - landed))
             retry = batch[landed:]
         for spec in retry:
             total += bool(add_shape_job(b, spec, log=log, clock=clock,
@@ -166,7 +168,7 @@ def _shape_axes(b: BodyEditor, spec: dict, log=print,
                     time.sleep(1.0)
                     d.set_axis(axis, sign * val * factor,
                                press_tool=False, gentle=True)
-                    log(f"    {axis} 느린 화살표로 앉혔다")
+                    log(msg("    {axis} 느린 화살표로 앉혔다", axis=axis))
             fail = None
             break
         except DriverError as e:
@@ -174,8 +176,10 @@ def _shape_axes(b: BodyEditor, spec: dict, log=print,
             now = ocr.read_stable(b.hwnd, "x", tries=20)
             if now is not None and now * sign < 0 and abs(now) > 0.5:
                 sign = -sign
-                log(f"    스케일이 랩 너머에 있다 (현재 {now:g}) — 부호를 따라간다")
-            log(f"    스케일 ×{factor:g} 실패 — 백오프 ({e})")
+                log(msg("    스케일이 랩 너머에 있다 (현재 {now:g}) — 부호를 따라간다",
+                        now=now))
+            log(msg("    스케일 ×{factor:g} 실패 — 백오프 ({err})",
+                    factor=factor, err=e))
     if fail is not None:
         raise fail
     _soft_xy(d, "x", float(spec["x"]), log=log)
@@ -194,7 +198,8 @@ def _add_shape_job(b: BodyEditor, spec: dict, log=print, fav=None) -> bool:
     어긋나면 행 색 대조가 잡아 HSB로 물러나 자기 치유한다.
     """
     d = b.d
-    log(f"  면 도형 ({spec['shape']} · sx {spec['sx']:g} · sy {spec['sy']:g})")
+    log(msg("  면 도형 ({shape} · sx {sx:g} · sy {sy:g})",
+            shape=spec['shape'], sx=spec['sx'], sy=spec['sy']))
     n_before = b.count_stable()
     try:
         b.open_wizard()
@@ -205,7 +210,7 @@ def _add_shape_job(b: BodyEditor, spec: dict, log=print, fav=None) -> bool:
         b.commit()
         return True
     except DriverError as e:
-        log(f"    도형을 버린다 — {e}")
+        log(msg("    도형을 버린다 — {err}", err=e))
         # 커밋이 **늦게 먹었을 수 있다** (2026-08-19 실측: 확정 후 리스트 전환이
         # 4초를 넘겨 폐기 루프가 헛돌았다 — 마지막 raise 시점엔 이미 list였다).
         # 먼저 Esc 없이 기다리고, 리스트가 오면 카운터로 커밋 여부를 가른다.
@@ -214,13 +219,14 @@ def _add_shape_job(b: BodyEditor, spec: dict, log=print, fav=None) -> bool:
                 n_after = b.count_stable()
                 if (n_before is not None and n_after is not None
                         and n_after > n_before):
-                    log("    …커밋이 늦게 도착했다 — 놓은 것으로 센다")
+                    log(msg("    …커밋이 늦게 도착했다 — 놓은 것으로 센다"))
                     return True
                 return False
             if i >= 3:                   # 리스트가 안 오면 그때부터 미확정 폐기
                 gio.press("esc")
             time.sleep(1.0)
-        raise DriverError(f"도형 폐기 후 리스트 복귀 실패 (화면 {b.screen()})")
+        raise DriverError(msg("도형 폐기 후 리스트 복귀 실패 (화면 {screen})",
+                              screen=b.screen()))
 
 
 def _add_shape_run(b: BodyEditor, specs: list[dict], log=print, fav=None) -> int:
@@ -235,7 +241,8 @@ def _add_shape_run(b: BodyEditor, specs: list[dict], log=print, fav=None) -> int
     """
     d = b.d
     spec0 = specs[0]
-    log(f"  면 도형 묶음 ({spec0['shape']} × {len(specs)} · 같은 색 — 스탬프)")
+    log(msg("  면 도형 묶음 ({shape} × {n} · 같은 색 — 스탬프)",
+            shape=spec0['shape'], n=len(specs)))
     n0 = b.count_stable()
     prev_rot: float | None = None
     try:
@@ -251,7 +258,7 @@ def _add_shape_run(b: BodyEditor, specs: list[dict], log=print, fav=None) -> int
             else:
                 b.commit()
     except DriverError as e:
-        log(f"    묶음이 끊겼다 ({e}) — 스탬프된 장까지만 남긴다")
+        log(msg("    묶음이 끊겼다 ({err}) — 스탬프된 장까지만 남긴다", err=e))
         # 커밋이 늦게 먹었을 수 있는 것까지 카운터가 가른다 (`_add_shape_job`의
         # 늦은 커밋과 같은 사정) — 리스트로 돌아와 세면 그게 답이다.
         for i in range(8):
@@ -261,7 +268,8 @@ def _add_shape_run(b: BodyEditor, specs: list[dict], log=print, fav=None) -> int
                 gio.press("esc")
             time.sleep(1.0)
         else:
-            raise DriverError(f"묶음 폐기 후 리스트 복귀 실패 (화면 {b.screen()})")
+            raise DriverError(msg("묶음 폐기 후 리스트 복귀 실패 (화면 {screen})",
+                                  screen=b.screen()))
     n1 = b.count_stable()
     if n0 is None or n1 is None:
         # 카운터를 못 읽으면 몇 장 섰는지 알 길이 없다 — 다 선 것으로 치고

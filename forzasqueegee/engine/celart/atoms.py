@@ -27,6 +27,8 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
+
 # 그리드 재분할 — 이 둘을 **함께** 넘긴 원자만 쪼갠다. 넓기만 하고 속이 고른
 # 면(흰 셔츠)은 쪼개 봐야 병합이 도로 붙이므로 재료가 안 된다.
 _SPLIT_AREA = float(os.environ.get("FS_ATOM_SPLIT_AREA", 0.015))   # 실루엣 비
@@ -65,7 +67,8 @@ def watershed_atoms(lbl: np.ndarray, K: int, sel: np.ndarray,
     labels = np.where((markers > 0) & (markers != bg), markers - 1, -1)
     labels[~sel] = -1
     labels = _close_gaps(labels, sel)
-    log(f"  watershed 원자 {int(labels.max()) + 1}개 (씨앗 {nid})")
+    log(msg("  watershed 원자 {n}개 (씨앗 {seeds})",
+            n=int(labels.max()) + 1, seeds=nid))
     return labels
 
 
@@ -156,5 +159,6 @@ def oversegment(labels: np.ndarray, lab: np.ndarray, sel: np.ndarray,
             blk[piece == v] = dst
         # watershed 능선(-1)은 원자 주인에게 그대로 남긴다 (아래에서 붙는다)
     if split:
-        log(f"  그리드 재분할: 원자 {split}개 → {nxt - n + split}조각")
+        log(msg("  그리드 재분할: 원자 {split}개 → {pieces}조각",
+                split=split, pieces=nxt - n + split))
     return out

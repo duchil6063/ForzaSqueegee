@@ -38,6 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import msg
 from .surface import SurfaceMap
 
 # 정식 면 순서 — 인게임 탭 순서와 같다 (catalog/body_tabs.json 실측 순서).
@@ -132,7 +133,7 @@ def resolve() -> tuple[Path | None, str]:
     bad = ""
     for src, cand in (("--game-dir", _OVERRIDE),
                       (ENV_DIR, os.environ.get(ENV_DIR)),
-                      ("저장해 둔 폴더", saved_dir())):
+                      (msg("저장해 둔 폴더"), saved_dir())):
         if not cand:
             continue
         root = _root_of(cand)
@@ -140,11 +141,11 @@ def resolve() -> tuple[Path | None, str]:
             return root, src + bad
         # 못 박았는데 그 자리가 아니면 **말은 해 준다** — 조용히 자동 탐색으로
         # 물러나면 사람은 못 박았다고 믿는 채로 프리셋 배치를 받는다.
-        bad = f" ({src} `{cand}`에 media/Cars가 없다)"
+        bad = msg(" ({src} `{cand}`에 media/Cars가 없다)", src=src, cand=cand)
     for c in _steam_roots():
         if (c / "media" / "Cars").is_dir():
-            return c, "Steam 자동 탐색" + bad
-    return None, "못 찾았다" + bad
+            return c, msg("Steam 자동 탐색") + bad
+    return None, msg("못 찾았다") + bad
 
 
 def install_dir() -> Path | None:
@@ -165,7 +166,8 @@ def use_dir(path: str | Path | None) -> Path | None:
     global _OVERRIDE
     root = None if path is None else _root_of(path)
     if path is not None and root is None:
-        raise ValueError(f"FH6 설치 폴더가 아니다 (media/Cars가 없다) — {path}")
+        raise ValueError(msg("FH6 설치 폴더가 아니다 (media/Cars가 없다) — {path}",
+                             path=path))
     _OVERRIDE = root
     _clear_caches()
     return root
@@ -184,7 +186,8 @@ def set_install_dir(path: str | Path | None) -> Path | None:
         return None
     root = _root_of(path)
     if root is None:
-        raise ValueError(f"FH6 설치 폴더가 아니다 (media/Cars가 없다) — {path}")
+        raise ValueError(msg("FH6 설치 폴더가 아니다 (media/Cars가 없다) — {path}",
+                             path=path))
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps({"install_dir": str(root)}, ensure_ascii=False, indent=1),
                  encoding="utf-8")
@@ -334,7 +337,7 @@ def read_car(media: str, root: Path | None = None) -> dict[str, InstallSurface]:
     """차 하나의 유효 면 전부 — {면 이름: InstallSurface}. 탭 인덱스 포함."""
     base = root or install_dir()
     if base is None:
-        raise FileNotFoundError("FH6 설치 폴더를 못 찾았다")
+        raise FileNotFoundError(msg("FH6 설치 폴더를 못 찾았다"))
     zp = base / "media" / "Cars" / f"{media}.zip"
     with zipfile.ZipFile(zp) as z:
         xml_root = ET.fromstring(z.read("LiveryMasks/Masks.xml"))
@@ -613,6 +616,7 @@ def resolve_media(name: str, root: Path | None = None) -> str:
         return low[name.lower()]
     cands = [c for _, c in match_media(name, root)][:6] \
         or [c for c in cars if name.lower() in c.lower()][:6]
-    hint = ("  이런 것들이 있다: " + ", ".join(cands)) if cands else \
-        "  설치 폴더에서 media/Cars/*.zip 이름을 볼 것"
-    raise ValueError(f"설치본에 그런 차가 없다 — {name}\n{hint}")
+    hint = msg("  이런 것들이 있다: {cands}", cands=", ".join(cands)) if cands else \
+        msg("  설치 폴더에서 media/Cars/*.zip 이름을 볼 것")
+    raise ValueError(msg("설치본에 그런 차가 없다 — {name}\n{hint}",
+                         name=name, hint=hint))

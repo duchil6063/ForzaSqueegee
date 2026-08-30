@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..i18n import msg
 from .pipeline import read_rgba
 
 
@@ -32,12 +33,12 @@ def _make_painter(image: Path, out: Path, shapes: int, size: int,
     rgba = read_rgba(image)
     opaque = bool(rgba[..., 3].min() >= 250)
     if opaque:
-        log("  경고: 알파가 없다 — 캔버스 경계 제약과 투명 침범 벌점이 놀게 된다")
+        log(msg("  경고: 알파가 없다 — 캔버스 경계 제약과 투명 침범 벌점이 놀게 된다"))
     rep = generate(image, out, shapes=shapes, preset=PAINTER_PRESET,
                    log=log, progress=progress)
     checks = [{"id": "alpha", "ok": not opaque,
-               "text": "투명 배경 있음" if not opaque
-                       else "알파 없음 — 침범 벌점이 안 걸린다"}]
+               "text": msg("투명 배경 있음") if not opaque
+                       else msg("알파 없음 — 침범 벌점이 안 걸린다")}]
     bad = [c for c in checks if not c["ok"]]
     sel = rep.get("selected", {})
     return {"input": {"size": [int(rgba.shape[1]), int(rgba.shape[0])],
@@ -48,6 +49,7 @@ def _make_painter(image: Path, out: Path, shapes: int, size: int,
                      "shape_types": sel.get("shape_types"),
                      "preset": rep.get("preset"),
                      "checkpoints": len(rep.get("candidates", []))},
-            "notes": [PAINTER_NOTE], "checks": checks,
-            "verdict": ("판정: 걸린 것 없음" if not bad else
-                        "판정: " + " · ".join(c["text"] for c in bad))}
+            "notes": [msg(PAINTER_NOTE)], "checks": checks,
+            "verdict": (msg("판정: 걸린 것 없음") if not bad else
+                        msg("판정: {items}",
+                            items=" · ".join(c["text"] for c in bad)))}

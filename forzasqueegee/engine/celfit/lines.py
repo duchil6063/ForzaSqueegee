@@ -13,6 +13,7 @@ import os
 import cv2
 import numpy as np
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import Layer, LayerPlan
@@ -144,7 +145,7 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
             lay.color = c
         n += 1
     if n:
-        log(f"  획 색 보정 {n}그룹 — 발자국 아래 원화 평균색")
+        log(msg("  획 색 보정 {n}그룹 — 발자국 아래 원화 평균색", n=n))
     return n
 
 
@@ -279,5 +280,6 @@ def align_to_regions(layers: list, cat: Catalog, upp: float, w: int, h: int,
         if not hit:
             break
     if moved:
-        log(f"  선↔면 보정: 획 {moved}장을 색 경계로 한 칸씩 밀었다")
+        log(msg("  선↔면 보정: 획 {moved}장을 색 경계로 한 칸씩 밀었다",
+                moved=moved))
     return moved

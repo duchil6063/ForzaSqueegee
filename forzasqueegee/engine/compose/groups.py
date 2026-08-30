@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ...i18n import msg
 from ..catalog import Catalog
 from ..model import LayerPlan
 from .boxes import _rel
@@ -77,7 +78,8 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
         L, t = place_xf(mp, group_unit)
         keep = layers_on(hp, cat, L, t, dm.paint)
         if not keep:
-            notes.append(f"{mp.surface}: 도안이 통째로 면 밖이다 — 자리를 다시 볼 것")
+            notes.append(msg("{surface}: 도안이 통째로 면 밖이다 — 자리를 다시 볼 것",
+                             surface=mp.surface))
         got.update(keep)
     files: dict[str, tuple[Path, int]] = {}
     for key, keeps in keep_by_plan.items():
@@ -88,8 +90,9 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
             continue
         p, n = _put(f"{base.stem}-fit", take_layers(hp, sorted(keeps)))
         files[key] = (p, n)
-        notes.append(f"{base.name}: 어느 면에서도 안 그려질 "
-                     f"{len(hp.layers) - n:,}장을 빼고 {n:,}장으로 올린다")
+        notes.append(msg("{name}: 어느 면에서도 안 그려질 "
+                         "{cut:,}장을 빼고 {n:,}장으로 올린다",
+                         name=base.name, cut=len(hp.layers) - n, n=n))
     for i, mp in enumerate(hand):
         hand_group[i] = files[mp.key()]
 
@@ -121,8 +124,9 @@ def _unique_group_counts(items: list[dict], out_dir: Path,
             taken[n] = p
             continue
         if not p.is_relative_to(out_dir.resolve()):  # 남의 파일은 못 고친다
-            notes.append(f"{p.name}: {taken[n].name}과 장수가 {n:,}장으로 같다 "
-                         f"— 우리 폴더 밖이라 못 비킨다")
+            notes.append(msg("{name}: {other}과 장수가 {n:,}장으로 같다 "
+                             "— 우리 폴더 밖이라 못 비킨다",
+                             name=p.name, other=taken[n].name, n=n))
             continue
         raw = json.loads(p.read_text(encoding="utf-8"))
         pad = dict(raw["layers"][-1])
@@ -135,5 +139,6 @@ def _unique_group_counts(items: list[dict], out_dir: Path,
             add += 1
         p.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
         taken[n] = p
-        notes.append(f"{p.name}: 다른 그룹과 장수가 겹쳐 투명 패딩 {add}장을 "
-                     f"덧대 {n:,}장으로 비킨다 (그룹은 장수로 고른다)")
+        notes.append(msg("{name}: 다른 그룹과 장수가 겹쳐 투명 패딩 {add}장을 "
+                         "덧대 {n:,}장으로 비킨다 (그룹은 장수로 고른다)",
+                         name=p.name, add=add, n=n))

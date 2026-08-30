@@ -45,6 +45,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...i18n import msg
 from ...paths import find_run_file, run_file
 from ..catalog import Catalog, default_catalog_path
 from ..model import LayerPlan
@@ -102,7 +103,7 @@ def open_project(project_path: str | Path, *,
     p = Path(project_path).resolve()
     doc = project.read(p)
     if not doc.get("is_livery"):
-        raise ValueError("리버리 프로젝트가 아니다 — 이타샤 명령은 리버리에만 선다")
+        raise ValueError(msg("리버리 프로젝트가 아니다 — 이타샤 명령은 리버리에만 선다"))
     sp = state_path(p)
     state = _blank_state()
     if sp.is_file():
@@ -210,7 +211,8 @@ def _absorb(st: Studio) -> None:
         d["scale"] = round((abs(sx) + abs(sy)) / 2.0, 4)
         d["rot"] = round(rot, 1)
         d["mirror"] = sx < 0.0
-        st.notes.append(f"{d['surface']}: 편집기에서 옮긴 자리를 받았다")
+        st.notes.append(msg("{surface}: 편집기에서 옮긴 자리를 받았다",
+                            surface=d["surface"]))
 
 
 # ────────────────────────────── 굽기 ──────────────────────────────
@@ -254,7 +256,7 @@ def rebuild(st: Studio, *, log=None) -> dict:
 
     log = log or (lambda _s: None)
     if not st.designs:
-        raise ValueError("올린 도안이 없다 — [Load Design into Section]으로 넣으세요")
+        raise ValueError(msg("올린 도안이 없다 — [Load Design into Section]으로 넣으세요"))
     work = st.work
     work.mkdir(parents=True, exist_ok=True)
     clean_work(st)          # 지난 굽기의 조각이 남으면 이름이 `-2`·`-3`으로 샌다
@@ -314,7 +316,7 @@ def _restore_foreign(doc: dict, foreign: dict) -> None:
 
 def surface_of_slot(slot: int) -> str:
     if not 0 <= slot < len(SLOTS):
-        raise ValueError(f"구획 번호가 범위 밖이다 — {slot}")
+        raise ValueError(msg("구획 번호가 범위 밖이다 — {slot}", slot=slot))
     return SLOTS[slot][0]
 
 
@@ -354,21 +356,22 @@ def import_design(src: str | Path, out_root: str | Path) -> Path:
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
-            raise ValueError(f"JSON을 못 읽는다 — {p.name}: {e}") from e
+            raise ValueError(msg("JSON을 못 읽는다 — {name}: {error}",
+                                 name=p.name, error=e)) from e
         if isinstance(raw, dict) and "layers" in raw:
             return p                    # 우리 도안 그대로
         if sniff_kfps(p):
             out = out_root / folder.safe_name(p.stem, "design")
             return import_kfps_to(p, out)[2]
-        raise ValueError(f"도안으로 못 읽는다 — {p.name}")
+        raise ValueError(msg("도안으로 못 읽는다 — {name}", name=p.name))
     kind = folder.sniff(p)
     if kind is None:
-        raise ValueError(f"도안으로 못 읽는다 — {p.name} "
-                         f"(우리 도안 · KFPS JSON · .3so · C_group)")
+        raise ValueError(msg("도안으로 못 읽는다 — {name} "
+                             "(우리 도안 · KFPS JSON · .3so · C_group)", name=p.name))
     got, _stats = bridge.import_any(p, out_root)
     if not got.name.endswith("plan.json"):
-        raise ValueError(f"{p.name}은 비닐 그룹이 아니라 리버리다 — "
-                         f"[Load Design]은 그룹 하나를 받는다")
+        raise ValueError(msg("{name}은 비닐 그룹이 아니라 리버리다 — "
+                             "[Load Design]은 그룹 하나를 받는다", name=p.name))
     return got
 
 
@@ -384,7 +387,8 @@ def _auto_place_one(st: Studio, d: dict) -> None:
     mp = compose.auto_place(d["surface"], Path(d["plan"]), lk, maps, rigs,
                             mirror=bool(d.get("mirror")), notes=st.notes)
     if mp is None:
-        st.notes.append(f"{d['surface']}: 자동 자리를 못 잡았다 — 프리셋으로 둔다")
+        st.notes.append(msg("{surface}: 자동 자리를 못 잡았다 — 프리셋으로 둔다",
+                            surface=d["surface"]))
         return
     d.update({"x": mp.x, "y": mp.y, "scale": mp.scale, "rot": mp.rot,
               "mirror": mp.mirror})
@@ -434,7 +438,7 @@ def _targets(st: Studio, surface: str | None, groups: list | None, *,
     Front다. 면 하나를 고르는 뜻이 아닌 명령(좌우 대칭 따위)은 그래서 전부로
     물러난다."""
     if not st.designs:
-        raise ValueError("올린 도안이 없다 — [Load Design into Section]으로 넣으세요")
+        raise ValueError(msg("올린 도안이 없다 — [Load Design into Section]으로 넣으세요"))
     picked = designs_of_groups(st, groups or [])
     if picked:
         return picked
@@ -443,21 +447,23 @@ def _targets(st: Studio, surface: str | None, groups: list | None, *,
         return hit
     if not fallback_all:
         raise ValueError(
-            f"{what}: 어느 도안에 걸지 못 정했다 — 레이어 나무에서 그 도안 "
-            f"그룹(FS:decal-…)을 고르거나, 도안이 있는 면을 열고 누르세요"
-            + (f" (지금 면: {surface})" if surface else ""))
+            msg("{what}: 어느 도안에 걸지 못 정했다 — 레이어 나무에서 그 도안 "
+                "그룹(FS:decal-…)을 고르거나, 도안이 있는 면을 열고 누르세요",
+                what=what)
+            + (msg(" (지금 면: {surface})", surface=surface) if surface else ""))
     if surface:
-        st.notes.append(f"{surface}에 올린 도안이 없다 — 리버리 전체로 돈다")
+        st.notes.append(msg("{surface}에 올린 도안이 없다 — 리버리 전체로 돈다",
+                            surface=surface))
     return list(st.designs)
 
 
 def act_auto_place(st: Studio, surface: str | None,
                    groups: list | None = None) -> str:
     """고른 도안(또는 이 면·전부)을 자동 자리로 되돌린다."""
-    hit = _targets(st, surface, groups, what="자동 배치", fallback_all=True)
+    hit = _targets(st, surface, groups, what=msg("자동 배치"), fallback_all=True)
     for d in hit:
         _auto_place_one(st, d)
-    return f"도안 {len(hit)}장을 자동 자리로"
+    return msg("도안 {n}장을 자동 자리로", n=len(hit))
 
 
 def act_decoration(st: Studio, on: bool) -> str:
@@ -467,22 +473,24 @@ def act_decoration(st: Studio, on: bool) -> str:
     올리는 것과 꾸밈이 자라는 것은 별개의 일이고, 후자는 사람이 시킬 때만 한다.
     한 번 켠 뒤로는 그 조리법에 남아 다음 굽기에도 실린다."""
     st.state["deco"] = bool(on)
-    return "꾸밈을 짠다 (띠·모티프·지붕)" if on else "꾸밈을 뺀다 — 도안만 올린다"
+    return (msg("꾸밈을 짠다 (띠·모티프·지붕)") if on
+            else msg("꾸밈을 뺀다 — 도안만 올린다"))
 
 
 def act_motif(st: Studio, family: str | None) -> str:
     from .. import compose
 
     if family is not None and family not in compose.MOTIF_SETS:
-        raise ValueError(f"모르는 모티프 계열: {family} "
-                         f"(있는 것: {', '.join(compose.MOTIF_FAMILIES)})")
+        raise ValueError(msg("모르는 모티프 계열: {family} (있는 것: {families})",
+                             family=family,
+                             families=", ".join(compose.MOTIF_FAMILIES)))
     st.state["motif"] = family
     if not st.state.get("deco"):
         # 계열만 골라 두는 것은 **꾸밈을 켜는 일이 아니다** (자동 적용 금지) —
         # 그래도 아무 일도 안 일어난 것처럼 보이므로 그 사실을 말한다.
-        st.notes.append("꾸밈이 꺼져 있어 지금은 안 보인다 — "
-                        "[Grow Decoration]을 누르면 이 계열로 자란다")
-    return f"모티프 계열 {family or '자동'}"
+        st.notes.append(msg("꾸밈이 꺼져 있어 지금은 안 보인다 — "
+                            "[Grow Decoration]을 누르면 이 계열로 자란다"))
+    return msg("모티프 계열 {family}", family=family or msg("자동"))
 
 
 def act_mirror(st: Studio, surface: str | None,
@@ -499,21 +507,22 @@ def act_mirror(st: Studio, surface: str | None,
     # 열린 구획을 같이 넘기는데, 창이 막 떴을 때 그것은 대개 Front다 — 거기서
     # 멈추면 메뉴가 "옆면에서만 된다"는 말만 하고 아무 일도 안 한다.
     if surface is not None and surface not in pairs:
-        st.notes.append(f"{surface}은 대칭할 수 있는 면이 아니다 — 옆면·도어 "
-                        f"유리를 전부 대칭한다")
+        st.notes.append(msg("{surface}은 대칭할 수 있는 면이 아니다 — 옆면·도어 "
+                            "유리를 전부 대칭한다", surface=surface))
         surface = None
     srcs = [d for d in st.designs
             if d["surface"] in pairs
             and (surface is None or d["surface"] == surface)]
     if not srcs:
-        raise ValueError("좌우 대칭은 옆면·도어 유리에서만 선다 — "
-                         "그 면에 올린 도안이 없다")
+        raise ValueError(msg("좌우 대칭은 옆면·도어 유리에서만 선다 — "
+                             "그 면에 올린 도안이 없다"))
     done: list[str] = []
     for d in list(srcs):
         dst = pairs[d["surface"]]
         sm, dm = maps.get(d["surface"]), maps.get(dst)
         if sm is None or dm is None:
-            st.notes.append(f"{dst}: 면 지도가 없다 — 대칭을 건너뛴다")
+            st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다",
+                                surface=dst))
             continue
         mp = compose.mirror_place(_manual(d), sm, dm, dst)
         st.state["designs"] = [o for o in st.designs
@@ -524,8 +533,8 @@ def act_mirror(st: Studio, surface: str | None,
                            "mirror": mp.mirror})
         done.append(f"{d['surface']} → {dst}")
     if not done:
-        raise ValueError("대칭할 면을 못 찾았다")
-    return "좌우 대칭: " + " · ".join(done)
+        raise ValueError(msg("대칭할 면을 못 찾았다"))
+    return msg("좌우 대칭: {done}", done=" · ".join(done))
 
 
 def act_base_paint(st: Studio, color: str | None, auto: bool) -> str:
@@ -536,11 +545,12 @@ def act_base_paint(st: Studio, color: str | None, auto: bool) -> str:
     if auto or color is None:
         st.state["paint"] = None
         rgb = _auto_paint(st)
-        return (f"베이스 도색을 도안에서 고른다 — #{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
-                if rgb else "베이스 도색을 도안에서 고른다")
+        return (msg("베이스 도색을 도안에서 고른다 — #{r:02X}{g:02X}{b:02X}",
+                    r=rgb[0], g=rgb[1], b=rgb[2])
+                if rgb else msg("베이스 도색을 도안에서 고른다"))
     st.state["paint"] = list(_parse_rgb(color))
     r, g, b = st.state["paint"]
-    return f"베이스 도색 #{r:02X}{g:02X}{b:02X}"
+    return msg("베이스 도색 #{r:02X}{g:02X}{b:02X}", r=r, g=g, b=b)
 
 
 def _auto_paint(st: Studio) -> tuple[int, int, int] | None:
@@ -560,11 +570,11 @@ def _auto_paint(st: Studio) -> tuple[int, int, int] | None:
 def _parse_rgb(text: str) -> tuple[int, int, int]:
     s = str(text).strip().lstrip("#")
     if len(s) != 6:
-        raise ValueError(f"색은 #RRGGBB로 준다 — {text!r}")
+        raise ValueError(msg("색은 #RRGGBB로 준다 — {text!r}", text=text))
     try:
         return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
     except ValueError as e:
-        raise ValueError(f"색은 #RRGGBB로 준다 — {text!r}") from e
+        raise ValueError(msg("색은 #RRGGBB로 준다 — {text!r}", text=text)) from e
 
 
 def act_export(st: Studio, out_root: str | Path | None) -> str:
@@ -574,12 +584,12 @@ def act_export(st: Studio, out_root: str | Path | None) -> str:
     도색까지 그 파일에 실리므로 자동차 도색 메뉴를 누를 일이 없다."""
     cfg = find_run_file(st.work, "itasha.json")
     if not cfg.is_file():
-        raise ValueError("아직 구운 구성이 없다 — 도안을 올리고 한 번 지으세요")
+        raise ValueError(msg("아직 구운 구성이 없다 — 도안을 올리고 한 번 지으세요"))
     root = Path(out_root) if out_root else st.path.parent
     label = st.path.with_suffix("").name
     out, stats = bridge.itasha_folder(cfg, root, name=label)
-    return (f"리버리 컨테이너: {out}  ({stats['layers']:,}장 · "
-            f"차 id {stats.get('car_id', 0)})")
+    return msg("리버리 컨테이너: {out}  ({layers:,}장 · 차 id {car_id})",
+               out=out, layers=stats["layers"], car_id=stats.get("car_id", 0))
 
 
 # ────────────────────────────── 비닐 그룹 프로젝트 내보내기 ──────────────────────────────
@@ -601,34 +611,37 @@ def export_group(project_path: str | Path, fmt: str,
     p = Path(project_path).resolve()
     doc = project.read(p)
     if doc.get("is_livery"):
-        raise ValueError("리버리 프로젝트다 — 이 내보내기는 비닐 그룹의 것이다")
+        raise ValueError(msg("리버리 프로젝트다 — 이 내보내기는 비닐 그룹의 것이다"))
     label = str(doc.get("name") or p.with_suffix("").name)
     layers, stats = project.layers_of(doc)
     if not layers:
-        raise ValueError("프로젝트에 도형이 없다")
+        raise ValueError(msg("프로젝트에 도형이 없다"))
     root = Path(out) if out else p.parent
     if fmt == "fls":
         got = folder.export_folder(root, label, livery_kind=False)
         wst = folder.write_group(got, layers, name=label, creator="")
-        return got, f"비닐 그룹 컨테이너: {got}  ({wst['layers']:,}장)"
+        return got, msg("비닐 그룹 컨테이너: {out}  ({layers:,}장)",
+                        out=got, layers=wst["layers"])
     plan_dir = root if out and Path(root).suffix == "" else root / folder.safe_name(
         label, "group")
     plan_path = bridge._write_plan(layers, plan_dir)
     if fmt == "plan":
-        return plan_path, f"도안: {plan_path}  ({len(layers):,}장)"
+        return plan_path, msg("도안: {path}  ({layers:,}장)",
+                              path=plan_path, layers=len(layers))
     if fmt != "kfps":
-        raise ValueError(f"모르는 갈래: {fmt} (fls · kfps · plan)")
+        raise ValueError(msg("모르는 갈래: {fmt} (fls · kfps · plan)", fmt=fmt))
     from ..kfpsjson import export_typecode
 
     data, est = export_typecode(LayerPlan.load(plan_path),
                                 Catalog(default_catalog_path()))
     if not data["shapes"]:
-        raise ValueError("KFPS로 내보낼 수 있는 도형이 하나도 없다")
+        raise ValueError(msg("KFPS로 내보낼 수 있는 도형이 하나도 없다"))
     kp = run_file(plan_path.parent, "kfps.json")
     kp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    return kp, (f"KFPS JSON: {kp}  ({len(data['shapes']):,}장 — "
-                f"정확 {est['exact']} · 마스크 {est['masks']} · "
-                f"근사 {est['approx']})")
+    return kp, msg("KFPS JSON: {path}  ({shapes:,}장 — "
+                   "정확 {exact} · 마스크 {masks} · 근사 {approx})",
+                   path=kp, shapes=len(data["shapes"]), exact=est["exact"],
+                   masks=est["masks"], approx=est["approx"])
 
 
 def clean_work(st: Studio) -> None:

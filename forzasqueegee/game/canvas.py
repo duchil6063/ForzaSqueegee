@@ -20,6 +20,7 @@ import cv2
 import numpy as np
 
 from ..engine.model import Layer, LayerPlan
+from ..i18n import msg
 from . import io as gio
 
 # 레이어를 캔버스 **밖으로 미는** 값 — 안 보이게 치우는 유일한 수단이다
@@ -155,6 +156,7 @@ def seed_missing(shapes: list[str], n: int, bg: np.ndarray | None = None,
             if float((a & g).sum()) / max(1.0, float((a | g).sum())) < SEED_IOU:
                 missing.append(s)
     if missing:
-        log(f"  이 그룹이 못 그리는 도형 {len(missing)}/{len(shapes)}종: "
+        log(msg("  이 그룹이 못 그리는 도형 {n}/{total}종: ", n=len(missing),
+                total=len(shapes))
             + " ".join(missing[:20]) + (" …" if len(missing) > 20 else ""))
     return missing

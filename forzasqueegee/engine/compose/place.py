@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from ...game import hull as ghull, seam as gseam, surface as gsurf
+from ...i18n import msg
 from ..catalog import Catalog
 from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
@@ -153,11 +154,13 @@ def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     if not best or bs < up * LIE_GAIN_MIN:
         return 0.0, ""
     iw, ih = person_ink(lk, best)
-    return best, (f"세로 도안(비 {lk.aspect:.2f})을 **{abs(best):g}° 눕혀** 차체 "
-                  f"밴드를 가로로 채운다 (머리 = 차 "
-                  + ("뒤" if LIE_HEAD_REAR else "앞") + ") — 인물이 "
-                  f"{bs / up:.2f}배 커진다 (면에서 {iw * bs:.0f}×{ih * bs:.0f}유닛 "
-                  f"· 예산 {wb:.0f}×{hb:.0f})")
+    return best, msg("세로 도안(비 {aspect:.2f})을 **{deg:g}° 눕혀** 차체 "
+                     "밴드를 가로로 채운다 (머리 = 차 {head}) — 인물이 "
+                     "{gain:.2f}배 커진다 (면에서 {w:.0f}×{h:.0f}유닛 "
+                     "· 예산 {wb:.0f}×{hb:.0f})",
+                     aspect=lk.aspect, deg=abs(best),
+                     head=msg("뒤") if LIE_HEAD_REAR else msg("앞"),
+                     gain=bs / up, w=iw * bs, h=ih * bs, wb=wb, hb=hb)
 
 
 def _refit_canvas(plan: LayerPlan, cat: Catalog) -> LayerPlan:
@@ -399,13 +402,15 @@ def dodge_parts(box: tuple[float, float, float, float], rig: "SideRig",
         best = d
         break
     if best is None:
-        return box, (f"{rig.name}: {hits[0][1]}가 얼굴권에 걸리는데 문짝 안에서 "
-                     f"못 비킨다 — 그대로 둔다")
+        return box, msg("{name}: {part}가 얼굴권에 걸리는데 문짝 안에서 "
+                        "못 비킨다 — 그대로 둔다",
+                        name=rig.name, part=hits[0][1])
     if abs(best) < 0.5:                            # 이미 비켜 있다 (반올림 몫)
         return box, ""
     return ((u0 + best, v0, u1 + best, v1),
-            f"{rig.name}: {' · '.join(sorted({h[1] for h in hits}))}를 피해 "
-            f"인물을 {best:+.0f}유닛 민다 (업계 지침)")
+            msg("{name}: {parts}를 피해 인물을 {shift:+.0f}유닛 민다 (업계 지침)",
+                name=rig.name, parts=" · ".join(sorted({h[1] for h in hits})),
+                shift=best))
 
 
 def fit_on(smap: gsurf.SurfaceMap, lk: Look, *, anchor: str = "bottom",
@@ -490,8 +495,9 @@ def place_in_rect(rect: tuple[float, float, float, float], name: str, lk: Look, 
     return Place(surface=name, plan=Path(), x=round(x, 1), y=round(y, 1),
                  scale=round(s, 3), rot=round(tilt % 360.0, 1),
                  target=tuple(round(v, 1) for v in tgt),
-                 why=f"도색상자 {rw:.0f}×{rh:.0f}유닛 · 잉크 {lk.w:.0f}×{lk.h:.0f}유닛"
-                     + (f" · 기울기 {tilt:g}°" if tilt else ""))
+                 why=msg("도색상자 {rw:.0f}×{rh:.0f}유닛 · 잉크 {w:.0f}×{h:.0f}유닛",
+                         rw=rw, rh=rh, w=lk.w, h=lk.h)
+                     + (msg(" · 기울기 {tilt:g}°", tilt=tilt) if tilt else ""))
 
 
 def door_span(rig: "SideRig") -> tuple[float, float] | None:

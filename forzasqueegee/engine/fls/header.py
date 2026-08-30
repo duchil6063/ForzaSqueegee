@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...i18n import msg
 from .binfmt import r_u16, r_u32, u16, u32
 
 FORMAT_VERSION = 7          # FLS `kCurrentHeaderFormatVersion`
@@ -33,7 +34,7 @@ def _utf16(text: str) -> bytes:
 def _read_utf16(b: bytes, off: int, chars: int) -> str:
     n = chars * 2
     if off < 0 or off + n > len(b):
-        raise ValueError("header: UTF-16 문자열이 파일 끝을 넘는다")
+        raise ValueError(msg("header: UTF-16 문자열이 파일 끝을 넘는다"))
     return b[off : off + n].decode("utf-16-le")
 
 
@@ -83,7 +84,7 @@ class Header:
 def parse(b: bytes) -> Header:
     """`header` 바이트 → `Header` (FLS `parseHeader`와 같은 검사·경계)."""
     if len(b) < 8:
-        raise ValueError("header가 너무 짧다")
+        raise ValueError(msg("header가 너무 짧다"))
     h = Header()
     off = 0
     h.format_version = r_u32(b, off); off += 4
@@ -98,26 +99,26 @@ def parse(b: bytes) -> Header:
     off += 4
     h.field_block = b[off : off + _FIELD_BLOCK]
     if len(h.field_block) != _FIELD_BLOCK:
-        raise ValueError("header: 메타 블록에서 잘렸다")
+        raise ValueError(msg("header: 메타 블록에서 잘렸다"))
     off += _FIELD_BLOCK
     h.creator_tag = b[off : off + _TAG]
     if len(h.creator_tag) != _TAG:
-        raise ValueError("header: 만든이 태그에서 잘렸다")
+        raise ValueError(msg("header: 만든이 태그에서 잘렸다"))
     off += _TAG
     n = r_u32(b, off); off += 4
     h.creator_name = _read_utf16(b, off, n); off += n * 2
     h.section_prefix = b[off : off + _SECTION_PREFIX]
     if len(h.section_prefix) != _SECTION_PREFIX:
-        raise ValueError("header: 구획 앞자리에서 잘렸다")
+        raise ValueError(msg("header: 구획 앞자리에서 잘렸다"))
     off += _SECTION_PREFIX
     if b[off : off + 2] != _SEC3:
-        raise ValueError("header: 구획 표식(01 02)이 제자리에 없다")
+        raise ValueError(msg("header: 구획 표식(01 02)이 제자리에 없다"))
     off += 9
     h.type_value = r_u32(b, off); off += 4
     h.car_id = r_u32(b, off); off += 4
     h.guid = b[off : off + _GUID]
     if len(h.guid) != _GUID:
-        raise ValueError("header: GUID에서 잘렸다")
+        raise ValueError(msg("header: GUID에서 잘렸다"))
     off += _GUID
     h.trailing = b[off:]
     return h

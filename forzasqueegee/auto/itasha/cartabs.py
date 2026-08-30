@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...i18n import msg
 from ..bodyedit import BodyEditor
 from ..driver import Driver, DriverError
 from .config import Config, _car_tabs
@@ -32,7 +33,7 @@ def check_car_tabs(cfg: Config, b: BodyEditor, log=print) -> None:
     b.tabs_n = len(want)
     got = b.count_tabs()
     if got == len(want):
-        log(f"차 확인: 면 탭 {got}개 — 구성의 차와 맞는다")
+        log(msg("차 확인: 면 탭 {got}개 — 구성의 차와 맞는다", got=got))
         return
     if got < len(want):
         # 부품 의존 면을 빼서 맞춰 본다 (선루프 → 스포일러 순)
@@ -40,26 +41,28 @@ def check_car_tabs(cfg: Config, b: BodyEditor, log=print) -> None:
         for drop in PART_TABS:
             if len(names) > got and drop in names:
                 if any(p.surface == drop for p in cfg.placements):
-                    raise DriverError(
-                        f"지금 차에는 {drop} 면이 없는데 구성이 그 면을 쓴다 — "
-                        f"지금 타는 차로 구성을 다시 지을 것 (`--car`)")
+                    raise DriverError(msg(
+                        "지금 차에는 {drop} 면이 없는데 구성이 그 면을 쓴다 — "
+                        "지금 타는 차로 구성을 다시 지을 것 (`--car`)", drop=drop))
                 names.remove(drop)
         if len(names) == got:
             for p in cfg.placements:
                 if p.surface not in names:
-                    raise DriverError(
-                        f"{p.surface}: 지금 차에 없는 면이다 — 있는 면은 "
-                        f"{', '.join(names)}")
+                    raise DriverError(msg(
+                        "{surface}: 지금 차에 없는 면이다 — 있는 면은 {names}",
+                        surface=p.surface, names=', '.join(names)))
                 p.tab = names.index(p.surface)
             b.tabs_n = got
             dropped = [n for n in want if n not in names]
-            log(f"차 확인: 면 탭 {got}개 — 예측({len(want)})에서 장착 안 된 "
-                f"{'·'.join(dropped)} 면을 빼고 탭을 다시 못 박았다")
+            log(msg("차 확인: 면 탭 {got}개 — 예측({want})에서 장착 안 된 "
+                    "{dropped} 면을 빼고 탭을 다시 못 박았다",
+                    got=got, want=len(want), dropped='·'.join(dropped)))
             return
-    raise DriverError(
-        f"지금 차의 탭이 {got}개인데 구성은 면 {len(want)}개 차"
-        f"({cfg.media or cfg.car})로 지었다 — 배치 수치도 탭 번호도 어긋난다. "
-        f"**지금 타는 차**로 구성을 다시 지을 것 (`--car`)")
+    raise DriverError(msg(
+        "지금 차의 탭이 {got}개인데 구성은 면 {want}개 차"
+        "({car})로 지었다 — 배치 수치도 탭 번호도 어긋난다. "
+        "**지금 타는 차**로 구성을 다시 지을 것 (`--car`)",
+        got=got, want=len(want), car=cfg.media or cfg.car))
 
 
 def verify_car(cfg: Config, log=print) -> None:
@@ -73,7 +76,7 @@ def verify_car(cfg: Config, log=print) -> None:
     b = BodyEditor(d)
     design.back_to_menu(d)
     design.goto_row(d, design.ROW_BODY_VINYL)
-    b.d._step("enter", lambda: b.screen() == "list", "차체 에디터 진입",
+    b.d._step("enter", lambda: b.screen() == "list", msg("차체 에디터 진입"),
               tries=3, wait=4.0)
     try:
         check_car_tabs(cfg, b, log=log)

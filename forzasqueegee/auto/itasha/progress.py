@@ -9,6 +9,7 @@ import json
 import time
 from contextlib import contextmanager
 
+from ...i18n import msg
 from .config import Config
 
 
@@ -83,16 +84,18 @@ def timing_summary(prog: dict) -> str:
         a[0] += 1
         a[1] += float(r.get("s") or 0.0)
         a[2] += float(r.get("n") or 0.0)
-    lines = ["단계별 시간 (하위 단계는 상위에 포함된다):"]
+    lines = [msg("단계별 시간 (하위 단계는 상위에 포함된다):")]
     for k in order:
         c, s, n = agg[k]
         if n:
-            per = f"  장당 {s / n:.2f}초 ({n:,.0f}장)"
+            per = msg("  장당 {sec:.2f}초 ({n:,.0f}장)", sec=s / n, n=n)
         elif c > 1:
-            per = f"  평균 {s / c:.1f}초"
+            per = msg("  평균 {sec:.1f}초", sec=s / c)
         else:
             per = ""
-        lines.append(f"  {k:<16} {c:>4.0f}회 {s / 60:7.1f}분{per}")
+        lines.append(msg("  {stage:<16} {count:>4.0f}회 {minutes:7.1f}분{per}",
+                         stage=k, count=c, minutes=s / 60, per=per))
     top = sum(v[1] for k, v in agg.items() if "." not in k)
-    lines.append(f"  {'합(상위만)':<16} {'':>4} {top / 60:7.1f}분")
+    lines.append(msg("  {label:<16} {pad:>4} {minutes:7.1f}분",
+                     label=msg("합(상위만)"), pad="", minutes=top / 60))
     return "\n".join(lines)

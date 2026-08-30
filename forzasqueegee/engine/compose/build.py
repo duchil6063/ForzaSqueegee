@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ...game import fold as gfold, seam as gseam, surface as gsurf
+from ...i18n import msg
 from ...paths import run_file
 from ..catalog import Catalog, default_catalog_path
 from ..model import LayerPlan, rgb_to_hsb
@@ -102,8 +103,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     from ...auto.itasha import PRESET             # 순환 참조를 피해 늦게 들여온다
 
     if motif is not None and motif not in MOTIF_SETS:
-        raise ValueError(f"모르는 모티프 계열: {motif!r} "
-                         f"(있는 것: {', '.join(MOTIF_FAMILIES)})")
+        raise ValueError(msg("모르는 모티프 계열: {motif!r} (있는 것: {families})",
+                             motif=motif, families=", ".join(MOTIF_FAMILIES)))
     cat = cat or Catalog(default_catalog_path())
     preset = preset if preset is not None else PRESET
     extra_plans = list(extra_plans or [])
@@ -111,7 +112,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     notes: list[str] = []
     maps = surfaces_for(car, media=media, notes=notes)
     if car and not maps:
-        notes.append(f"'{car}' 면 실측이 없다 — 전부 프리셋으로 앉힌다")
+        notes.append(msg("'{car}' 면 실측이 없다 — 전부 프리셋으로 앉힌다", car=car))
     group_unit = _group_unit(car)
 
     plan = LayerPlan.load(main_plan)
@@ -122,15 +123,18 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if base_rgb is not None:
         base_rgb = tuple(int(v) for v in base_rgb)
         base_hsb = tuple(round(v, 2) for v in rgb_to_hsb(*base_rgb))
-        notes.append(f"베이스 도색은 사람이 정했다 — RGB {base_rgb}")
+        notes.append(msg("베이스 도색은 사람이 정했다 — RGB {rgb}", rgb=base_rgb))
     else:
         base_rgb, base_hsb = base_paint(lk)
     car_rgb = base_rgb if paint else (gsurf.car_color(car) if car else None)
     # 후광·톱니·지붕이 쓸 무채색 — 차 색의 반대다 (`contrast_ink`)
     ocol = contrast_ink(car_rgb)
-    log(f"도안 {main_plan.name}: {lk.layers:,}장 · 잉크 {lk.w:.0f}×{lk.h:.0f}유닛 "
-        f"(비 {lk.aspect:.2f}, {lk.kind}) · 팔레트 {len(lk.palette)}색"
-        + (f" · 베이스 도색 {base_rgb} (HSB {base_hsb})" if paint else ""))
+    log(msg("도안 {name}: {layers:,}장 · 잉크 {w:.0f}×{h:.0f}유닛 "
+            "(비 {aspect:.2f}, {kind}) · 팔레트 {colors}색",
+            name=main_plan.name, layers=lk.layers, w=lk.w, h=lk.h,
+            aspect=lk.aspect, kind=lk.kind, colors=len(lk.palette))
+        + (msg(" · 베이스 도색 {rgb} (HSB {hsb})", rgb=base_rgb, hsb=base_hsb)
+           if paint else ""))
 
     # ---- 옆면 뼈대 — 벨트라인·로커·루프라인·유리 이음새 + 부품 자리 ----
     pinned = media or carfiles_pick(car)
@@ -163,10 +167,12 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                     mirror=r.mirror, paint=r.smap.paint)
             over = max(0.0, box[3] - r.geom.belt) / max(1e-6, box[3] - box[1])
             r.place.why = (
-                f"차체 밴드 {r.geom.sill:.0f}~{r.geom.belt:.0f}유닛 · 문짝 폭의 "
-                f"{iw * s / max(1e-6, wb / gseam.PERSON_DOOR_FILL):.2f}"
-                f" · 벨트라인 위 {over * 100:.0f}%"
-                + (f" · 눕힘 {r.tilt:g}°" if r.tilt else "")
+                msg("차체 밴드 {sill:.0f}~{belt:.0f}유닛 · 문짝 폭의 {frac:.2f}"
+                    " · 벨트라인 위 {over:.0f}%",
+                    sill=r.geom.sill, belt=r.geom.belt,
+                    frac=iw * s / max(1e-6, wb / gseam.PERSON_DOOR_FILL),
+                    over=over * 100)
+                + (msg(" · 눕힘 {tilt:g}°", tilt=r.tilt) if r.tilt else "")
                 + (f" · {dodge.split(': ', 1)[-1]}" if dodge else ""))
 
     # 윗면은 **실제로 그리는 지도**로 짠다 — 유리를 잰 차에서는 앞·뒷유리가 구멍
@@ -180,8 +186,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         tilt, tilt_why = person_pose(lk, rigs)
         if not rigs:
             tilt = person_tilt(lk)
-            tilt_why = (f"세로 도안(비 {lk.aspect:.2f}) — {tilt:g}° 기울여 앉힌다 "
-                        f"(옆면 뼈대 없음 — 폴백)") if tilt else ""
+            tilt_why = msg("세로 도안(비 {aspect:.2f}) — {tilt:g}° 기울여 앉힌다 "
+                           "(옆면 뼈대 없음 — 폴백)",
+                           aspect=lk.aspect, tilt=tilt) if tilt else ""
         if tilt_why:
             notes.append(tilt_why)
         _place_people(tilt)
@@ -212,7 +219,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             if mp is not None:
                 hand.append(mp)
             else:
-                notes.append(f"{ROLE_EXTRA}: 보조 도안을 못 앉힌다 (면 지도가 없다)")
+                notes.append(msg("{surface}: 보조 도안을 못 앉힌다 (면 지도가 없다)",
+                                 surface=ROLE_EXTRA))
         elif (ts is not None and not ts.uncertain
                 and len(plan.layers) <= (ts.cap or 3000)):
             hood = _hood_place(ts, lk, group_unit, hood_u)
@@ -220,7 +228,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 hx, hy, hs, hrot, hwhy = hood
                 hand.append(ManualPlace(plan=Path(main_plan), surface=ROLE_EXTRA,
                                         x=hx, y=hy, scale=hs, rot=hrot))
-                notes.append(f"후드에 인물을 기울여 앉힌다 ({hwhy})")
+                notes.append(msg("후드에 인물을 기울여 앉힌다 ({why})", why=hwhy))
 
     # ---- 손 배치 읽기 — 면별 (자동 경로가 만든 것도 여기서부터는 같다) ----
     hand_ix = {id(mp): i for i, mp in enumerate(hand)}
@@ -267,7 +275,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     side0 = maps.get(deco_src) if deco_src else None
     deco_plan = deco_place = deco_front = front_place = None
     if not deco:
-        notes.append("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다")
+        notes.append(msg("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다"))
     if deco and side0 is not None and not side0.uncertain:
         r0 = rigs.get(deco_src)
         p0, q0, p1, q1 = side0.paint
@@ -303,19 +311,21 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 신원(장수)이 없어 불러올 수도 없다.
         if not deco_plan.layers:
             deco_plan = None
-            notes.append("옆면에 깔 꾸밈이 없다 — 인물이 차체 밴드를 다 쓰고 "
-                         "차가 이미 어두워 로커도 안 선다")
+            notes.append(msg("옆면에 깔 꾸밈이 없다 — 인물이 차체 밴드를 다 쓰고 "
+                             "차가 이미 어두워 로커도 안 선다"))
         else:
             deco_path = out_dir / "deco.json"
             deco_plan.save(deco_path)
             written.append(deco_path)
             deco_place = {"plan": _rel(deco_path, out_dir), "x": round(fcu, 1),
                           "y": round(fcv, 1), "scale": round(ds, 3), "rot": 0.0}
-            notes.append(
-                f"꾸밈 그룹 {len(deco_plan.layers):,}장 (로커·산포) — 캔버스 "
-                f"{CANVAS_UNITS:.0f}유닛이 옆면 {p1 - p0:.0f}유닛에 맞게 스케일 "
-                f"{ds:.3f}로 앉는다 (도안 스케일에 매이면 캔버스가 면의 1/3밖에 "
-                f"못 덮는다)")
+            notes.append(msg(
+                "꾸밈 그룹 {n:,}장 (로커·산포) — 캔버스 "
+                "{canvas:.0f}유닛이 옆면 {span:.0f}유닛에 맞게 스케일 "
+                "{scale:.3f}로 앉는다 (도안 스케일에 매이면 캔버스가 면의 1/3밖에 "
+                "못 덮는다)",
+                n=len(deco_plan.layers), canvas=CANVAS_UNITS, span=p1 - p0,
+                scale=ds))
         # 전경 벌 — 도안 **위**에 얹는다 (레퍼런스의 꽃·별은 인물을 덮고 지난다)
         deco_front = compose_deco(plan, lk, cat, car_rgb, frame_box=frame_box,
                                   person_box=person_box, front=True, **kw)
@@ -327,8 +337,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             written.append(fp)
             front_place = {"plan": _rel(fp, out_dir), "x": round(fcu, 1),
                            "y": round(fcv, 1), "scale": round(ds, 3), "rot": 0.0}
-            notes.append(f"전경 모티프 {len(deco_front.layers):,}장 — 도안 위에 "
-                         f"얹는다 (인물이 장면 안에 들어간다)")
+            notes.append(msg("전경 모티프 {n:,}장 — 도안 위에 "
+                             "얹는다 (인물이 장면 안에 들어간다)",
+                             n=len(deco_front.layers)))
         else:
             deco_front = None
 
@@ -345,7 +356,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     n_front = len(deco_front.layers) if deco_front is not None else 0
     if use_deco and n_person + len(deco_plan.layers) + n_front > cap:
         use_deco = False                         # 도안만 남긴다 (`_check`가 나머지를 잡는다)
-        notes.append(f"측면이 상한 {cap:,}을 넘는다 — 꾸밈 그룹을 뺀다")
+        notes.append(msg("측면이 상한 {cap:,}을 넘는다 — 꾸밈 그룹을 뺀다", cap=cap))
 
     # 면에 직접 놓는 꾸밈의 색·어휘 — 캔버스 산포와 **같은 세 벌**이다 (액센트 +
     # 밝은 자매 + 색조가 갈린 셋째). 옆면과 다른 팔레트를 쓰면 차를 한 바퀴 돌
@@ -404,7 +415,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # 몰린다). 윗면도 u가 차 뒤다 (`flow_shapes`의 축 규약).
             r = rigs.get(name)
             got = deco_anchor(own, (r.rear_dir if r is not None else 1.0, 0.0),
-                              why="이 면의 도안", avoid=own)
+                              why=msg("이 면의 도안"), avoid=own)
         else:
             # **넘쳤나를 묻지 않는다.** 접기 변환은 평면 전체의 아핀이라 도안이
             # 이음선을 안 건드려도 "이 패널에서 보면 도안이 어느 쪽에 있나"를
@@ -435,7 +446,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 d = math.hypot(fu - cu, fv - cv)
                 flow = ((fu - cu) / d, (fv - cv) / d) if d > 1e-6 else (1.0, 0.0)
                 got = deco_anchor(pb, flow, avoid=ink,
-                                  why=f"{src}의 도안을 이 면으로 투영")
+                                  why=msg("{src}의 도안을 이 면으로 투영", src=src))
         _anchor_memo[name] = got
         return got
 
@@ -476,7 +487,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     roof_sh = (roof_blackout(ts, shapes=flow_v, hood_u=hood_u, cat=cat)
                if (deco and ts is not None) else [])
     if roof_sh:
-        notes.append(f"지붕·데크 블랙아웃 {len(roof_sh)}장 (투톤 문법)")
+        notes.append(msg("지붕·데크 블랙아웃 {n}장 (투톤 문법)", n=len(roof_sh)))
 
     # ---- 옆면 말고 사람이 배치를 올린 나머지 면 ----
     # 꾸밈은 여기서도 **자동으로** 깔린다 (관통 띠 + 산포 + 지붕 블랙아웃) —
@@ -496,8 +507,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             n_group = sum(hand_group[hand_ix[id(m)]][1] for m in mps)
             if got and n_group + len(got) <= (sm.cap or 1000):
                 item["shapes"] = got
-                notes.append(f"{name}: 도안 옆에 모티프 {len(got)}장을 "
-                             f"흩는다 (ARIS 문법)")
+                notes.append(msg("{name}: 도안 옆에 모티프 {n}장을 "
+                                 "흩는다 (ARIS 문법)", name=name, n=len(got)))
         elif sm is not None and name not in GLASS and (not sm.uncertain
                                                        or _deco_usable(sm)):
             # 윗면 산포는 **후드 구간**에만 흩는다 — 블랙아웃이 덮는 지붕 위에
@@ -528,8 +539,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 if fg:
                     item["post_shapes"] = fg
             else:
-                notes.append(f"{name}: 도안 {n_group:,}장이 상한 {scap:,}에 "
-                             f"가깝다 — 꾸밈 도형을 뺀다")
+                notes.append(msg("{name}: 도안 {n:,}장이 상한 {cap:,}에 "
+                                 "가깝다 — 꾸밈 도형을 뺀다",
+                                 name=name, n=n_group, cap=scap))
         items.append(item)
 
     # ---- 빈 면 채우기 — 옆면의 띠·산포를 차 전체로 잇는다 ----
@@ -548,7 +560,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                 box=segs[0] if segs else None,
                                 shapes=motifs_v)})
         used.add(ROLE_EXTRA)
-        notes.append("윗면에 관통 띠 + 모티프를 잇는다")
+        notes.append(msg("윗면에 관통 띠 + 모티프를 잇는다"))
     # 리어 — 옆면 사이드실 띠가 뒤로 돈다. 띠만 두면 리어가 도색 견본처럼
     # 보인다 (미리보기 판정) — 레퍼런스의 리어도 모티프가 흩어져 있다.
     rs = maps.get(ROLE_REAR)
@@ -558,7 +570,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       "shapes": _flow(rs, center_v=_bumper_seed(media, ROLE_REAR))
                       + _motifs(motif_c, rs, cat, n=7, shapes=motifs_v)})
         used.add(ROLE_REAR)
-        notes.append("리어에 관통 띠 + 모티프를 잇는다")
+        notes.append(msg("리어에 관통 띠 + 모티프를 잇는다"))
     # 프론트 — 자리는 **내접 상자**다: 도색 상자 비율로 놓으면 띠가 그릴(비도색)에
     # 떨어져 안 보인다 (2026-08-18 캡처 실측). 스케일 상한도 따로 준다 (front는
     # ±2.3쯤에서 원형으로 감긴다).
@@ -571,7 +583,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                       max_sx=2.2)
                       + _motifs(motif_c, fs, cat, n=6, shapes=motifs_v)})
         used.add("front")
-        notes.append("프론트에 관통 띠 + 모티프를 잇는다")
+        notes.append(msg("프론트에 관통 띠 + 모티프를 잇는다"))
     # 도어 유리 = 작은 모티프 (ARIS 문법). 사람이 도안을 올린 면은 이미 `used`다.
     n_motif = 0
     for wname in (("window_left", "window_right") if deco else ()):
@@ -584,7 +596,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             used.add(wname)
             n_motif += 1
     if n_motif:
-        notes.append("도어 유리에 모티프를 흩는다 (ARIS 문법)")
+        notes.append(msg("도어 유리에 모티프를 흩는다 (ARIS 문법)"))
 
     # 모티프가 선 면마다 **어느 도안에서 자랐나**를 적는다 — 꾸밈이 엉뚱한 자리에
     # 섰을 때 사람이 먼저 볼 것이 이 뿌리다 (면을 잘못 짚었나, 투영이 딴 면에서
@@ -594,7 +606,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
              if (it.get("shapes") or it.get("post_shapes"))
              and (an := _anchor_memo.get(it["surface"])) is not None]
     if roots:
-        notes.append("꾸밈이 자란 뿌리: " + " · ".join(roots))
+        notes.append(msg("꾸밈이 자란 뿌리: {roots}", roots=" · ".join(roots)))
 
     # ---- 장수 신원 정리 — 그룹마다 장수가 달라야 한다 ----
     # 게임 그리드는 이름을 그림으로만 보여 줘서 **장수로** 그룹을 고른다
@@ -675,7 +687,8 @@ def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,
     x = bcx - scale * group_unit * rcx
     y = bcy - scale * group_unit * rcy
     return (round(x, 1), round(y, 1), round(scale, 3), round(rot % 360.0, 1),
-            f"후드 덩어리 {bw:.0f}×{bh:.0f}유닛 · 기울기 {rot:.0f}°")
+            msg("후드 덩어리 {w:.0f}×{h:.0f}유닛 · 기울기 {rot:.0f}°",
+                w=bw, h=bh, rot=rot))
 
 
 def _deco_usable(smap: gsurf.SurfaceMap) -> bool:

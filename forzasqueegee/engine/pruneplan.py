@@ -22,6 +22,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ..i18n import msg
 from .catalog import Catalog
 from .model import LayerPlan
 from .sortplan import _polys, plan_pad_px
@@ -51,7 +52,8 @@ def prune_plan(plan: LayerPlan, catalog: Catalog, min_vis: float = 0.0,
     grad = [catalog[l.shape].gradient is not None for l in layers]
     for i, l in enumerate(layers):
         if not l.mask and not grad[i] and l.alpha < 99.5:
-            raise ValueError(f"반투명 레이어(alpha {l.alpha}) 포함 — 프루닝 불가")
+            raise ValueError(msg("반투명 레이어(alpha {alpha}) 포함 — 프루닝 불가",
+                                 alpha=l.alpha))
     w, h = plan.image_size
     pad = plan_pad_px(plan, catalog)
     ow, oh = (w + 2 * pad) * _SS, (h + 2 * pad) * _SS
@@ -103,7 +105,8 @@ def _layer_impact(plan: LayerPlan, catalog: Catalog, bg: int,
     grad = [catalog[l.shape].gradient is not None for l in layers]
     for i, l in enumerate(layers):
         if not l.mask and not grad[i] and l.alpha < 99.5:
-            raise ValueError(f"반투명 레이어(alpha {l.alpha}) 포함 — 프루닝 불가")
+            raise ValueError(msg("반투명 레이어(alpha {alpha}) 포함 — 프루닝 불가",
+                                 alpha=l.alpha))
     w, h = plan.image_size
     pad = plan_pad_px(plan, catalog)
     ow, oh = (w + 2 * pad) * _SS, (h + 2 * pad) * _SS
