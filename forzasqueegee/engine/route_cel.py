@@ -415,6 +415,12 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         plan, cel, cat, log=log,
         progress=(lambda f, t: progress(0.95 + f * 0.04, t))
         if progress else None)
+    # 그리기 순서 미세 조정 — 옳은 색 조각이 이미 덮고 있는 자리를 이웃 영역
+    # 조각이 위에서 가리는 px를 순서만 바꿔 돌려준다 (도형 0장, 커버리지 불변.
+    # `finetune.reorder_fills` 문서)
+    from .finetune import reorder_fills as _reorder
+
+    stats.update(_reorder(plan, cel, cat, log=log))
     # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
     # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).

@@ -256,3 +256,105 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     log(f"  {tag} 미세 조정: 레이어 {stats['moved_layers']}/{len(todo)}개 이동 "
         f"(수락 {accepts}회)")
     return stats
+
+
+def reorder_fills(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
+                  log=print, max_passes: int = 2) -> dict:
+    """채움의 **그리기 순서**를 목표 기준으로 미세 조정한다 — 도형 0장.
+
+    배치의 그리기 순서는 넓이 내림차순 한 벌뿐이고, 그 뒤 어느 단도 순서를
+    다시 묻지 않는다. 그래서 "옳은 색 조각이 이미 그 자리를 덮고 있는데
+    이웃 영역 조각이 **위에서** 가리는" px가 남는다 — 목표에 없는 저대비
+    경계(유령 계단)의 몸통이 이것이다 (실측 X4-01: 아래 깔린 채움이 지금
+    보이는 색보다 ΔE 4+ 가까운 px 18k, 12+ 가까운 px 6.7k).
+
+    수는 하나다: 채움 a를 **위 조각 b 바로 뒤로** 올린다. 그때 바뀌는 화면은
+    정확히 F = mask(a) ∧ {지금 소유자의 순위가 (a, b] 안}이고, 커버리지
+    집합은 안 변하므로 실루엣 노출이 원리적으로 없다. F의 목표 대비 제곱
+    오차가 줄어드는 이동만 받는다 (미세 조정과 같은 자·같은 게이트).
+
+    대상은 선화 블록 **아래**의 불투명 채움뿐이다 — 선화·덧칠·마스크·
+    그라데이션의 순서는 그대로다 (선은 모든 면 위라는 문법이 순서 그 자체다).
+    결정적이다: 아래 순위부터 훑고, 후보 b는 가림 px 수 내림차순이다.
+    """
+    layers = plan.layers
+    n = len(layers)
+    w, h = cel.size
+    upp = plan.units_per_px
+    ink0 = next((i for i, l in enumerate(layers) if l.label == "ink"), n)
+    # 움직이는 것은 배치가 놓은 채움("cel")뿐 — 메움·봉인은 바닥이 제자리고
+    # (스필을 이웃이 덮는 설계), 수리·선화·마스크의 순서도 각자의 문법이다
+    movable = [i for i, l in enumerate(layers)
+               if i < ink0 and not l.mask and l.alpha >= 99.5
+               and (l.label or "cel") == "cel"
+               and cat[l.shape].gradient is None]
+    if not movable:
+        return {"reorder_moves": 0}
+
+    tgt = cel.flat_render().astype(np.int32)
+    lut = np.full((n + 1, 3), 255, np.int32)
+    for i, l in enumerate(layers):
+        lut[i + 1] = l.rgb()
+    boxes = np.zeros((n, 4), np.int32)
+    masks: list[np.ndarray] = [None] * n              # type: ignore[list-item]
+    owner = np.full((h, w), -1, np.int32)             # 레이어 **id** (index 불변)
+    for i, l in enumerate(layers):
+        boxes[i], masks[i], _ = _win_mask(cat, l, upp, w, h)
+        x0, y0, x1, y1 = boxes[i]
+        owner[y0:y1, x0:x1][masks[i]] = i
+    order = list(range(n))                 # 순위 → id
+    rank = np.arange(n, dtype=np.int64)    # id → 순위
+    ink_rank = int(min((rank[i] for i in range(n) if layers[i].label == "ink"),
+                       default=n))
+
+    moves = 0
+    gain = 0.0
+    for _ in range(max_passes):
+        pass_moves = 0
+        for a in sorted(movable, key=lambda i: rank[i]):
+            x0, y0, x1, y1 = boxes[a]
+            if x0 >= x1 or y0 >= y1:
+                continue
+            ow = owner[y0:y1, x0:x1][masks[a]]
+            ra = int(rank[a])
+            covered = ow[(rank[ow] > ra) & (rank[ow] < ink_rank)]
+            if not covered.size:
+                continue
+            ids, cnt = np.unique(covered, return_counts=True)
+            # 후보 b — 가림 px 내림차순 상위 넷 (동률은 id 오름차순: 결정적)
+            top = ids[np.lexsort((ids, -cnt))][:4]
+            best = None
+            ys0, xs0 = np.nonzero(masks[a])
+            ys0 = ys0 + y0
+            xs0 = xs0 + x0
+            ow_flat = owner[ys0, xs0]
+            d_a = ((tgt[ys0, xs0] - lut[a + 1]) ** 2).sum(1)
+            for b in top:
+                rb = int(rank[int(b)])
+                sel = (rank[ow_flat] > ra) & (rank[ow_flat] <= rb)
+                if not sel.any():
+                    continue
+                d_o = ((tgt[ys0[sel], xs0[sel]]
+                        - lut[ow_flat[sel] + 1]) ** 2).sum(1)
+                delta = float(d_a[sel].sum() - d_o.sum())
+                if delta < -_EPS and (best is None or delta < best[0]):
+                    best = (delta, rb, sel)
+            if best is None:
+                continue
+            delta, rb, sel = best
+            owner[ys0[sel], xs0[sel]] = a
+            order.pop(ra)
+            order.insert(rb, a)            # ra 제거로 rb 자리가 곧 "b 바로 뒤"
+            for r_, id_ in enumerate(order):
+                rank[id_] = r_
+            ink_rank = int(min((rank[i] for i in range(n)
+                                if layers[i].label == "ink"), default=n))
+            gain -= delta
+            moves += 1
+            pass_moves += 1
+        if not pass_moves:
+            break
+    if moves:
+        plan.layers[:] = [layers[i] for i in order]
+        log(f"  그리기 순서 조정 {moves}회 (도형 0장)")
+    return {"reorder_moves": moves, "reorder_gain": round(gain, 0)}
