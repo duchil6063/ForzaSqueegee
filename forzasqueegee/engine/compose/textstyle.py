@@ -65,4 +65,9 @@ def text_colors(pal: RolePalette, on_bed: bool, sub: bool = False
                 fill = pal.highlight
         return fill, pal.bed, pal.shadow
     fill = pal.secondary if sub else pal.primary
-    return fill, pal.dark, pal.shadow
+    edge = pal.dark
+    # 테두리는 본색과 갈려야 테다 — 짙은 액센트에 근검정 테는 한 덩이로 읽힌다
+    # (실측: 남색 본색 + 검정 테 = 뭉개진 실루엣)
+    if abs(lum(fill) - lum(edge)) < 0.3:
+        edge = (250, 250, 250) if lum(fill) < 0.5 else (22, 22, 26)
+    return fill, edge, pal.shadow

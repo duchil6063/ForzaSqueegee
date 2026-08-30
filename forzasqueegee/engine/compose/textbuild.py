@@ -18,7 +18,7 @@ from .. import textvinyl as tv
 from .field import CompositionField
 from .roles import RolePalette
 from .textbudget import TextPlan
-from .textlayout import TextPose, layout_sets, pose_mask
+from .textlayout import ROLES, TextPose, layout_sets, lockups, pose_mask
 from .textstyle import GAME_FONT, text_colors
 
 
@@ -103,6 +103,15 @@ def tier_for_size(tier: str, height: float, allow_game: bool = True) -> str:
     return tier
 
 
+def ix_for_size(ix: int, height: float) -> int:
+    """사다리 칸의 크기 하강 — 층 한 단 = 두 칸 (`tier_for_size`와 같은 문턱)."""
+    if height < SMALL_C:
+        return max(ix, tg.TIER_INDEX["C"])
+    if height < SMALL_B:
+        return max(ix, tg.TIER_INDEX["B"])
+    return ix
+
+
 def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
                 plan: TextPlan) -> tuple[list[Layer], dict | None]:
     """포즈 하나 → (레이어, 층 D면 면 글자 명세). 색·벌은 층과 `on_bed`가 정한다."""
@@ -110,9 +119,10 @@ def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
     tier = tier_for_size(plan.tier_sub if is_sub else plan.tier_main, p.height, plan.allow_game)
     if tier == "E":
         return [], None
+    ix = ix_for_size(plan.ix_sub if is_sub else plan.ix_main, p.height)
     fill, edge, shadow = text_colors(pal, p.on_bed, sub=is_sub)
-    outline = edge if (plan.outline and tier in ("A", "B", "D")) else None
-    shad = shadow if (plan.shadow and tier in ("A", "D") and not is_sub) else None
+    outline = edge if plan.outline else None
+    shad = shadow if (plan.shadow and not is_sub) else None
     font = GAME_FONT.get(style, "sans")
     if tier == "D":
         job = {"text": game_text(p.text, font, cat), "font": font, "x": p.x, "y": p.y,
@@ -120,7 +130,7 @@ def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
                **({"outline": list(outline)} if outline else {}),
                **({"shadow": list(shad)} if shad else {})}
         return _posed(_game_layers(p.text, font, p.height, fill, outline, cat), p), job
-    blk = tg.build_text(p.text, style, p.height, cat, tier=tier, fill=fill,
+    blk = tg.build_text(p.text, style, p.height, cat, tier=tier, ix=ix, fill=fill,
                         outline=outline, shadow=shad,
                         label="text_sub" if is_sub else "text")
     return _posed(blk.layers, p), None
@@ -143,15 +153,21 @@ def mirrored_set(ts: TextSet, pal: RolePalette, cat: Catalog, plan: TextPlan) ->
 def build_text_sets(fld: CompositionField, pal: RolePalette, cat: Catalog, *,
                     main: str, sub: str | None, style: str, plan: TextPlan,
                     rocker: bool, bed_alpha=None,
-                    roles: tuple[str, ...] = ("wordmark", "rocker", "signature")
-                    ) -> list[TextSet]:
-    """배치 후보마다 `TextSet` 하나. 층이 E면 빈 목록."""
+                    roles: tuple[str, ...] = ROLES) -> list[TextSet]:
+    """배치 후보마다 `TextSet` 하나. 층이 E면 빈 목록. 이름의 줄 나눔(`lockups`)
+    마다 배치를 따로 낸다 — 두 줄 락업은 포즈만 다른 게 아니라 글자 블록이 다르다."""
     if plan.tier_main == "E":
         return []
-    aspect_main = tg.render_mask(main, style).aspect
-    aspect_sub = tg.render_mask(sub, style).aspect if sub else 1.0
+    def _box(t: str) -> tuple[float, float]:
+        r = tg.render_mask(t, style)
+        return r.aspect, r.hratio
+
+    box_sub = _box(sub) if sub else (1.0, 1.0)
     sets: list[TextSet] = []
-    for poses in layout_sets(fld, main, sub, aspect_main, aspect_sub, rocker, roles):
+    cands: list[list[TextPose]] = []
+    for text in lockups(main):
+        cands += layout_sets(fld, text, sub, _box(text), box_sub, rocker, roles)
+    for poses in cands:
         layers: list[Layer] = []
         jobs: list[dict] = []
         used_sub = False
