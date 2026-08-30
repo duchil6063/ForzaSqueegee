@@ -487,7 +487,13 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     _pol = _P.CEL_FALLBACK if classic else _P.CEL
     # 선 도안의 구조 지표 — 획 레이어는 `plan`의 뒤쪽에 그대로 있으므로 cel도
     # line과 **같은 자**로 잰다 (두 노선을 나란히 대 보는 자리)
-    line_struct = stroke_metrics(plan, _rec, cat, 900.0 / h)
+    _joints = [] if _stg else None
+    line_struct = stroke_metrics(plan, _rec, cat, 900.0 / h,
+                                 joints_out=_joints)
+    if _stg and _joints is not None:
+        import json as _json
+        run_file(out, "plan_joints.json").write_text(
+            _json.dumps(_joints, ensure_ascii=False), encoding="utf-8")
     stats.update({k: v for k, v in
                   linedebug.save(out, _rec, _pol, (w, h),
                                  struct=line_struct).items()

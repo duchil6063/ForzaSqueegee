@@ -124,8 +124,13 @@ def _joint_at(path_g: np.ndarray, pt: np.ndarray) -> int:
     return int(np.argmin(((xy - pt) ** 2).sum(axis=1)))
 
 
-def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float) -> dict:
-    """배치된 플랜 + 재구성 자취 → 구조 지표 (rec가 없으면 빈 dict)."""
+def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float,
+                   joints_out: list | None = None) -> dict:
+    """배치된 플랜 + 재구성 자취 → 구조 지표 (rec가 없으면 빈 dict).
+
+    `joints_out`을 주면 이음마다 진단 레코드를 붙인다 (계측 전용, 값 불변) —
+    어느 도형 쌍·어느 길이의 마디에서 flat-kink가 나는지 귀속하는 자리다.
+    """
     if rec is None or not rec.strokes:
         return {}
     by: dict[int, list] = {}
@@ -185,19 +190,29 @@ def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float) -> dict:
                       and len(s.intent.corner) == len(pg) else None)
                 win = max(3, int(round(1.5 * max(s.width, 1.0))))
                 jn: list[int] = []
-                for (_, _, e0, _, t0), (_, s1, _, t1, _) in zip(ch, ch[1:]):
-                    jgap.append(float(np.hypot(*(s1 - e0))))
+                for (i0, a0, e0, _ta0, t0), (i1, s1, b1, t1, _tb1)                         in zip(ch, ch[1:]):
+                    gapv = float(np.hypot(*(s1 - e0)))
+                    jgap.append(gapv)
                     ang = float(np.degrees(np.arccos(float(
                         np.clip(np.dot(t0, t1), -1.0, 1.0)))))
                     jkink.append(ang)
-                    if cs is None:
-                        continue
-                    k = _joint_at(pg, 0.5 * (e0 + s1))
-                    jn.append(k)
-                    lo, hi = max(0, k - win), min(len(cs), k + win + 1)
-                    near = float(cs[lo:hi].max()) if hi > lo else 0.0
-                    if near <= 0.0:
-                        jflat.append(ang)      # 매끈한 자리를 끊어 생긴 각
+                    near = None
+                    if cs is not None:
+                        k = _joint_at(pg, 0.5 * (e0 + s1))
+                        jn.append(k)
+                        lo, hi = max(0, k - win), min(len(cs), k + win + 1)
+                        near = float(cs[lo:hi].max()) if hi > lo else 0.0
+                        if near <= 0.0:
+                            jflat.append(ang)  # 매끈한 자리를 끊어 생긴 각
+                    if joints_out is not None:
+                        joints_out.append({
+                            "sid": s.sid, "ang": round(ang, 1),
+                            "gap": round(gapv, 2),
+                            "near": None if near is None else round(near, 3),
+                            "sa": core[i0].shape, "sb": core[i1].shape,
+                            "la": round(float(np.hypot(*(e0 - a0))), 1),
+                            "lb": round(float(np.hypot(*(b1 - s1))), 1),
+                            "w": round(float(s.width), 2)})
                 if cs is not None:
                     got = I.nodes_of(I.StrokeIntent(cs), len(cs))
                     corner_n += len(got)
