@@ -218,6 +218,11 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     def _snap(name):
         if _stg:
             plan.save(run_file(out, f"plan_{name}.json"))
+    _grown_idx = stats.pop("_grown_idx", [])
+    if _stg:
+        import json as _json
+        run_file(out, "plan_grown.json").write_text(
+            _json.dumps(_grown_idx), encoding="utf-8")
     _snap("s1_fit")
     # 유예 덮개 (celfit이 미룬 λ×12~25 구간) — report에 못 실리는 레이어
     # 참조라 여기서 빼 두고, 예산이 확정된 뒤(아래) 잔여만큼 산다

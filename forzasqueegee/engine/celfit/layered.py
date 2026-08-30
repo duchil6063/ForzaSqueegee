@@ -189,7 +189,8 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
     return n
 
 
-def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8) -> int:
+def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8,
+              grown: set | None = None) -> int:
     """**사기 전에 늘린다** — 이 영역이 이미 놓은 도형을 한 스텝 키워 잔여를
     먹는다 (레이어 0장). 반환은 늘린 도형 수.
 
@@ -248,6 +249,8 @@ def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8) -> int:
                     continue
                 sc.commit_box(m, box)
                 layers[i] = c
+                if grown is not None:      # 계측용 — 어느 장이 늘었나 (동작 불변)
+                    grown.add(i)
                 n += 1
                 moved = True
                 break

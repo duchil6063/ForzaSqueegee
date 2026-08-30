@@ -112,6 +112,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         lut[rid] = o
     order_img[pos] = lut[cel.labels[pos]]
 
+    _grown: set = set()   # 계측 — 늘어난 장의 인덱스 (호출부가 pop)
     stats = {"regions": len(cel.regions), "skipped": 0, "uncovered_px": 0,
              "grown_fill": 0,
              "fill_layers": 0, "bar_layers": 0, "mop_layers": 0, "line_layers": 0,
@@ -232,7 +233,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         # 확장으로 먼저 먹는다 (레이어 0장). 그러고도 남는 것만 막대·마무리가
         # 산다 (`layered.grow_fill` 문서)
         if n_reg:
-            stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
+            stats["grown_fill"] += grow_fill(sc, plan.layers, lo, grown=_grown)
         # 가는 잔여 → 획 사슬
         if n_reg < cap and np.count_nonzero(sc.residual) > (1.0 - _COVER_STOP) * area:
             dt = cv2.distanceTransform(sc.residual.astype(np.uint8), cv2.DIST_L2, 3)
@@ -243,7 +244,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
             n_reg += n_bar
         # 막대가 놓인 뒤 한 번 더 — 새로 놓인 막대도 늘릴 자리가 생긴다
         if n_reg:
-            stats["grown_fill"] += grow_fill(sc, plan.layers, lo)
+            stats["grown_fill"] += grow_fill(sc, plan.layers, lo, grown=_grown)
         # 마무리 — 남은 큰 덩어리만 줍는다. 작은 조각은 구멍 메움(컷 뒤,
         # 군집당 1장)이 더 싸게 처리하므로 여기서 예산을 쓰지 않는다
         # (실측: min_blob 12일 때 mop 549장 — 채움 예산을 갉아먹었다)
@@ -291,6 +292,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                 notline=_CURVE_STATS["notline"]))
     if progress:
         progress(1.0, msg("배치 완료"))
+    stats["_grown_idx"] = sorted(_grown)
     return plan, stats
 
 
