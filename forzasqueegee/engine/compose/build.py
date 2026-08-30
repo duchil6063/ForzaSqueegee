@@ -18,16 +18,18 @@ from .boxes import (
 from .look import Look, look, person_ink, rot_ink_box
 from .palette import accent_color, accent_third, accent_tint, base_paint, contrast_ink
 from .vocabulary import MOTIF_FAMILIES, MOTIF_SETS, edge_shapes, motif_shapes
-from .scatter import DECO_ANCHOR, DECO_FRONT_N, DECO_FRONT_SIZE
+from .scatter import DECO_FRONT_N, DECO_FRONT_SIZE
 from .bands import ROCKER_BASE_MIN
 from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
-    drawable, manual_box, person_pose, person_tilt, place_in_rect)
+    drawable, manual_box, person_pose, person_tilt, place_in_rect, place_xf)
 from .folds import _all_folds
 from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
-from .canvasdeco import compose_deco
+from .intent import read_intent
+from .design import Design, compose_design
+from .families import FAMILIES
 from .rigs import (
     _bumper_seed, _hood_seed, _place_for, carfiles_pick, side_rigs, surfaces_for)
 from .groups import (
@@ -50,7 +52,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           preset: dict[str, dict[str, float]] | None = None,
           cat: Catalog | None = None,
           manual: list[ManualPlace] | None = None, deco: bool = True,
-          motif: str | None = None, log=print) -> Recipe:
+          motif: str | None = None, family: str | None = None,
+          log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
     나오는 것은 `auto.itasha`가 그대로 먹는 구성이다. 자동이든 손 배치든 **같은
@@ -98,6 +101,12 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     **계열은 원래 캐릭터 의미에서 오는 것**이라 팔레트로는 거기까지 못 간다
     (수이세이가 별인 것은 이름이 '별마을 혜성'이라서다). 베이스 도색의
     `base_rgb`와 같은 자리의 레버다: 자동으로 정해 주고 사람이 바꾼다.
+
+    ## 구성 계열 (`family`)
+
+    옆면 꾸밈은 **후보를 여럿 지어 점수로 고른다** (`design.compose_design` —
+    계열 × 흐름 × 팔레트 변종 × 베드 크기). `family`를 주면 그 계열 안에서만
+    고른다 (`families.FAMILIES`). 사람이 앉힌 도안은 어느 후보에서도 안 움직인다.
     """
     mirror_side = "side_left" if flip else "side_right"
     from ...auto.itasha import PRESET             # 순환 참조를 피해 늦게 들여온다
@@ -105,6 +114,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if motif is not None and motif not in MOTIF_SETS:
         raise ValueError(msg("모르는 모티프 계열: {motif!r} (있는 것: {families})",
                              motif=motif, families=", ".join(MOTIF_FAMILIES)))
+    if family is not None and family not in FAMILIES:
+        raise ValueError(msg("모르는 구성 계열: {family!r} (있는 것: {families})",
+                             family=family, families=", ".join(FAMILIES)))
     cat = cat or Catalog(default_catalog_path())
     preset = preset if preset is not None else PRESET
     extra_plans = list(extra_plans or [])
@@ -274,6 +286,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     deco_src = next((n for n in ROLE_MAIN if hand_box.get(n)), None)
     side0 = maps.get(deco_src) if deco_src else None
     deco_plan = deco_place = deco_front = front_place = None
+    design: Design | None = None
     if not deco:
         notes.append(msg("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다"))
     if deco and side0 is not None and not side0.uncertain:
@@ -294,23 +307,33 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                          _c=(fcu, fcv)) -> bool:
             return bool(_m.masked_at(_c[0] + _u * cx, _c[1] + _u * cy))
 
-        # 뭉치는 자리는 **차 뒤쪽**이다 (레퍼런스의 모티프 무리는 예외 없이 리어
-        # 쿼터에 몰린다). 꾸밈은 `deco_src` 면 좌표로 짜므로 그 면의 뒤 방향이다.
-        m_anchor = DECO_ANCHOR * (r0.rear_dir if r0 is not None else 1.0)
-        kw = dict(anchor=m_anchor, halo=ocol, drawable_at=_drawable_at,
-                  family=motif)
         frame_box = (-CANVAS_UNITS / 2, -band / u / 2,
                      CANVAS_UNITS / 2, band / u / 2)
         person_box = ((pbox[0] - fcu) / u, (pbox[1] - fcv) / u,
                       (pbox[2] - fcu) / u, (pbox[3] - fcv) / u)
-        deco_plan = compose_deco(plan, lk, cat, car_rgb, frame_box=frame_box,
-                                 person_box=person_box, **kw)
+        # **사람 배치를 읽는다** — 이 면에서 가장 크게 앉은 도안이 설계의 뿌리다.
+        # 그 배치 변환으로 도안 뜻(실루엣·머리·축)을 프레임 좌표에 얹고, 그
+        # 위에서 후보를 지어 점수로 고른다 (`design.compose_design`). 도안은
+        # 어느 후보에서도 움직이지 않는다.
+        root_mp = max(by_surface[deco_src],
+                      key=lambda m: (lambda b: (b[2] - b[0]) * (b[3] - b[1]))(
+                          manual_box(hand_look[m.key()][1], m, group_unit)))
+        root_plan, root_lk = hand_look[root_mp.key()]
+        intent = read_intent(root_plan, root_lk, cat)
+        L, t = place_xf(root_mp, group_unit)
+        design = compose_design(
+            root_plan, root_lk, intent, cat, car_rgb, frame_box=frame_box,
+            person_box=person_box, L=L, t=t, frame_center=(fcu, fcv), u=u,
+            rear_sign=(r0.rear_dir if r0 is not None else 1.0),
+            drawable_at=_drawable_at, motif=motif, halo=ocol, family=family,
+            phase=_face_phase(deco_src))
+        notes += design.notes
+        deco_plan = design.plan(plan, cat)
         # **빈 꾸밈 그룹은 안 만든다.** 이미 어두운 차라 로커가 빠지고
-        # (`ROCKER_BASE_MIN`) 인물이 차체 밴드를 거의 다 덮으면 (`avoid`) 남는
-        # 것이 하나도 없을 수 있다 — 빈 그룹은 게임 슬롯만 먹고, 장수 0장은
-        # 신원(장수)이 없어 불러올 수도 없다.
-        if not deco_plan.layers:
-            deco_plan = None
+        # (`ROCKER_BASE_MIN`) 인물이 차체 밴드를 거의 다 덮으면 남는 것이 하나도
+        # 없을 수 있다 — 빈 그룹은 게임 슬롯만 먹고, 장수 0장은 신원(장수)이
+        # 없어 불러올 수도 없다.
+        if deco_plan is None:
             notes.append(msg("옆면에 깔 꾸밈이 없다 — 인물이 차체 밴드를 다 쓰고 "
                              "차가 이미 어두워 로커도 안 선다"))
         else:
@@ -320,18 +343,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             deco_place = {"plan": _rel(deco_path, out_dir), "x": round(fcu, 1),
                           "y": round(fcv, 1), "scale": round(ds, 3), "rot": 0.0}
             notes.append(msg(
-                "꾸밈 그룹 {n:,}장 (로커·산포) — 캔버스 "
+                "꾸밈 그룹 {n:,}장 (로커·베드·산포·에코) — 캔버스 "
                 "{canvas:.0f}유닛이 옆면 {span:.0f}유닛에 맞게 스케일 "
                 "{scale:.3f}로 앉는다 (도안 스케일에 매이면 캔버스가 면의 1/3밖에 "
                 "못 덮는다)",
                 n=len(deco_plan.layers), canvas=CANVAS_UNITS, span=p1 - p0,
                 scale=ds))
         # 전경 벌 — 도안 **위**에 얹는다 (레퍼런스의 꽃·별은 인물을 덮고 지난다)
-        deco_front = compose_deco(plan, lk, cat, car_rgb, frame_box=frame_box,
-                                  person_box=person_box, front=True, **kw)
+        deco_front = design.plan(plan, cat, front=True)
         # 배경 벌이 안 섰으면 전경도 안 쓴다 (`use_deco`가 둘을 같이 켠다) —
         # 쓰지도 않을 그룹 파일을 남기지 않는다
-        if deco_front.layers and deco_place is not None:
+        if deco_front is not None and deco_place is not None:
             fp = out_dir / "deco-front.json"
             deco_front.save(fp)
             written.append(fp)
@@ -362,23 +384,35 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 밝은 자매 + 색조가 갈린 셋째). 옆면과 다른 팔레트를 쓰면 차를 한 바퀴 돌
     # 때 색이 갈아입혀진다. 근검정/근백은 안 섞는다 (어두운 베이스에서 검은
     # 구멍으로 읽힌다).
-    main_c = accent_color(lk, car_rgb)
-    motif_c = (main_c, accent_tint(main_c, car_rgb), accent_third(main_c, lk, car_rgb))
+    if design is not None:
+        motif_c = design.motif_colors
+    else:
+        main_c = accent_color(lk, car_rgb)
+        motif_c = (main_c, accent_tint(main_c, car_rgb), accent_third(main_c, lk, car_rgb))
     motifs_v = motif_shapes(lk, cat, motif)
+    # 다른 면의 모티프 수·윗면 스트라이프·로커는 **옆면이 고른 계열**을 따른다 —
+    # 면마다 따로 짜면 차를 한 바퀴 돌 때 밀도가 널뛴다.
+    fam = design.family if design is not None else None
+    dens = fam.other_density if fam is not None else 1.0
+    flow_rear = design.flow_rear if design is not None else True
+
+    def _n(k: int) -> int:
+        return max(1, int(round(k * dens)))
     # 관통 밴드·톱니는 **옆면 로커와 한 색·한 어휘**다 — 그래야 이어져 보인다.
     # 그래서 **옆면 로커가 안 서면 범퍼 밴드도 안 세운다**: 이을 것이 없는데
     # 범퍼에만 띠가 서면 도색 견본처럼 떠 있는 띠가 된다 (옆면 지도를 못 믿거나
     # 예산이 모자라 꾸밈 그룹을 버렸거나, 차가 이미 어두워 로커를 뺀 판이다).
     flow_v = edge_shapes(lk, cat, motif)
-    rocker_on = use_deco and (car_rgb is None
-                              or rgb_to_hsb(*car_rgb)[2] >= ROCKER_BASE_MIN)
+    rocker_on = use_deco and (fam is None or fam.rocker) and (
+        car_rgb is None or rgb_to_hsb(*car_rgb)[2] >= ROCKER_BASE_MIN)
+    stripe_on = use_deco and (fam is None or fam.top_stripe)
 
     def _flow(sm, mode: str = "rocker", **kw) -> list[dict]:
         # 윗면 세로 줄은 로커가 아니라 **레이싱 스트라이프**라 무채 대비색이고
         # (Chihaya의 흰·청록 두 줄) 로커 유무와 무관하다.
         if mode == "stripe":
             return flow_shapes(ocol, sm, shapes=flow_v, mode=mode, cat=cat, **kw) \
-                if use_deco else []
+                if stripe_on else []
         return flow_shapes(ROOF_DARK, sm, shapes=flow_v, mode=mode, cat=cat, **kw) \
             if rocker_on else []
 
@@ -411,10 +445,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         got = None
         own = hand_box.get(name)
         if own is not None:
-            # 흐름은 **차 뒤쪽**이다 (레퍼런스의 무리는 예외 없이 리어 쿼터에
-            # 몰린다). 윗면도 u가 차 뒤다 (`flow_shapes`의 축 규약).
+            # 흐름은 옆면 설계가 정한 쪽이다 (`Design.flow_rear` — 빈 자리·얼굴
+            # 방향·포즈 축이 고른다). 윗면도 u가 차 뒤다 (`flow_shapes`의 축 규약).
             r = rigs.get(name)
-            got = deco_anchor(own, (r.rear_dir if r is not None else 1.0, 0.0),
+            rd = r.rear_dir if r is not None else 1.0
+            got = deco_anchor(own, (rd if flow_rear else -rd, 0.0),
                               why=msg("이 면의 도안"), avoid=own)
         else:
             # **넘쳤나를 묻지 않는다.** 접기 변환은 평면 전체의 아핀이라 도안이
@@ -503,7 +538,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if sm is not None and name in GLASS and not sm.uncertain:
             # 유리에는 **띠 없이 모티프만** (ARIS 문법 — 레퍼런스의 유리에는
             # 작은 모티프와 낙서뿐이고 차체 띠는 안 올라온다).
-            got = _motifs(motif_c, sm, cat, n=3, shapes=motifs_v)
+            got = _motifs(motif_c, sm, cat, n=_n(3), shapes=motifs_v)
             n_group = sum(hand_group[hand_ix[id(m)]][1] for m in mps)
             if got and n_group + len(got) <= (sm.cap or 1000):
                 item["shapes"] = got
@@ -521,7 +556,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 + _flow(sm, mode="stripe" if name == ROLE_EXTRA else "rocker",
                         **({} if name == ROLE_EXTRA
                            else {"center_v": _bumper_seed(media, name)})) \
-                + _motifs(motif_c, sm, cat, n=7, shapes=motifs_v,
+                + _motifs(motif_c, sm, cat, n=_n(7), shapes=motifs_v,
                           box=tsegs[0] if tsegs else None)
             # **전경 몫** — 이 면에 도안이 있으면 몇 장은 그 위로 얹는다 (옆면
             # `deco-front`와 같은 문법: 레퍼런스의 꽃·별은 팔·다리를 스치고
@@ -529,7 +564,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # `post_shapes`라야 그룹 **위**다 — `shapes`는 맨 아래라 도안이
             # 통째로 덮는다 (제로투 실측: 후드 모티프 일곱이 800장 밑에 깔려
             # 하나도 안 보였다).
-            fg = (_motifs(motif_c, sm, cat, n=DECO_FRONT_N, shapes=motifs_v,
+            fg = (_motifs(motif_c, sm, cat, n=_n(fam.front_n if fam else DECO_FRONT_N),
+                          shapes=motifs_v,
                           over=True, box=tsegs[0] if tsegs else None)
                   if name in hand_box else [])
             n_group = sum(hand_group[hand_ix[id(m)]][1] for m in mps)
@@ -556,7 +592,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         items.append({"surface": ROLE_EXTRA,
                       "shapes": roof_sh
                       + _flow(ts, mode="stripe")
-                      + _motifs(motif_c, ts, cat,
+                      + _motifs(motif_c, ts, cat, n=_n(8),
                                 box=segs[0] if segs else None,
                                 shapes=motifs_v)})
         used.add(ROLE_EXTRA)
@@ -568,7 +604,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             and (not rs.uncertain or _deco_usable(rs)):
         items.append({"surface": ROLE_REAR,
                       "shapes": _flow(rs, center_v=_bumper_seed(media, ROLE_REAR))
-                      + _motifs(motif_c, rs, cat, n=7, shapes=motifs_v)})
+                      + _motifs(motif_c, rs, cat, n=_n(7), shapes=motifs_v)})
         used.add(ROLE_REAR)
         notes.append(msg("리어에 관통 띠 + 모티프를 잇는다"))
     # 프론트 — 자리는 **내접 상자**다: 도색 상자 비율로 놓으면 띠가 그릴(비도색)에
@@ -581,7 +617,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       "shapes": _flow(fs, box=fs.fit(2.5, coverage=0.85,
                                                      anchor="center"),
                                       max_sx=2.2)
-                      + _motifs(motif_c, fs, cat, n=6, shapes=motifs_v)})
+                      + _motifs(motif_c, fs, cat, n=_n(6), shapes=motifs_v)})
         used.add("front")
         notes.append(msg("프론트에 관통 띠 + 모티프를 잇는다"))
     # 도어 유리 = 작은 모티프 (ARIS 문법). 사람이 도안을 올린 면은 이미 `used`다.
@@ -590,7 +626,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         wm = maps.get(wname)
         if wname in used or wm is None or wm.uncertain:
             continue
-        motifs = _motifs(motif_c, wm, cat, n=3, shapes=motifs_v)
+        motifs = _motifs(motif_c, wm, cat, n=_n(3), shapes=motifs_v)
         if motifs:
             items.append({"surface": wname, "shapes": motifs})
             used.add(wname)
@@ -615,6 +651,19 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     _unique_group_counts(items, out_dir, notes)
 
     cfg = {"apply": apply, "car": car, "placements": items}
+    if design is not None:
+        # 설계 기록 — 어느 계열·팔레트·흐름이 이겼고 점수가 어땠나. 사람이
+        # 결과를 보고 "왜 이렇게 짰나"를 되짚는 자리이고, 검증 도구가 읽는다.
+        cfg["design"] = {
+            "family": design.family.name, "variant": design.pal.variant,
+            "flow": "rear" if design.flow_rear else "front",
+            "bed_level": round(design.level, 2),
+            "score": round(design.score.total, 4),
+            "parts": {k: round(v, 3) for k, v in design.score.parts.items()},
+            "ranking": design.ranking,
+            "palette": {k: list(getattr(design.pal, k)) for k in
+                        ("base", "bed", "bed_alt", "primary", "secondary",
+                         "shadow", "highlight", "dark")}}
     # 설치 차량을 못 박고 지었으면 **구성이 그걸 기억한다** — 안 적어 두면 다시
     # 돌릴 때 이름 매칭이 다른 차를 물어 미리보기와 검증이 딴 면 지도로 돈다.
     if media:

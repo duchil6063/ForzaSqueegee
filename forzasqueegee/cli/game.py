@@ -70,7 +70,7 @@ def cmd_itasha(args) -> int:
                     media=media,
                     mirror=not args.no_mirror, paint=not args.no_paint,
                     base_rgb=base, flip=args.flip, deco=not args.no_deco,
-                    motif=args.motif)
+                    motif=args.motif, family=args.family)
             except (ValueError, OSError) as e:
                 print(msg("오류: {e}", e=e))
                 return 1

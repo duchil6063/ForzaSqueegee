@@ -56,7 +56,7 @@ def stripe_layers(lk: Look, color: tuple[int, int, int], cat: Catalog,
     86의 흰 물감 가장자리가 된다. 색은 **테두리와 같은 무채**다 — 하부까지
     액센트로 칠하면 차 전체가 액센트 판이 된다.
 
-    `length`는 캔버스 유닛 — `compose_deco`가 면 실측에서 역산한 차 길이를 준다.
+    `length`는 캔버스 유닛 — `design`이 면 실측에서 역산한 차 길이를 준다.
     """
     sq = cat.square
     vocab = shapes or (cat.circle,)

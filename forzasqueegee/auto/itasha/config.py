@@ -396,7 +396,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    base_rgb: "tuple[int, int, int] | None" = None,
                    flip: bool = False, manual: "list | None" = None,
                    deco: bool = True,
-                   motif: str | None = None,
+                   motif: str | None = None, family: str | None = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -410,7 +410,9 @@ def compose_config(main_plan: Path, out: Path, *,
     3. 꾸밈 그룹(로커 띠·산포)·관통 띠·지붕 블랙아웃이 자동으로 짜인다 —
        `deco=False`면 그 전부를 빼고 **도안만** 올린다. 면을 넘친 조각은
        이웃 면에 안 잇고 그 자리에서 잘린다. 모티프 계열은 도안의 테마색이
-       고르고 `motif`로 못 박는다 (`compose.motif_family`).
+       고르고 `motif`로 못 박는다 (`compose.motif_family`). 옆면 꾸밈의 **구성
+       계열**은 후보를 지어 점수로 고르고 `family`로 못 박는다
+       (`compose.FAMILIES`).
 
     `manual`(`engine.compose.ManualPlace` 목록)을 주면 **도안 자리만** 사람이
     정한 것으로 바뀌고 나머지는 그대로다 — 내장 편집기(`engine.fls.studio`)가
@@ -429,7 +431,7 @@ def compose_config(main_plan: Path, out: Path, *,
                         extra_plans=list(extra_plans or []),
                         mirror=mirror, paint=paint, base_rgb=base_rgb,
                         flip=flip, manual=manual,
-                        deco=deco, motif=motif, log=log)
+                        deco=deco, motif=motif, family=family, log=log)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).

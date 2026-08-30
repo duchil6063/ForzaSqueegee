@@ -280,6 +280,9 @@ def rebuild(st: Studio, *, log=None) -> dict:
         paint=True, base_rgb=(tuple(st.state["paint"])
                               if st.state.get("paint") else None),
         deco=bool(st.state.get("deco")), motif=st.state.get("motif"),
+        # 구성 계열은 자동(후보 점수)이 기본이다 — 조리법에 `family`가 적혀
+        # 있으면 그 계열로 못 박는다 (메뉴는 없다, 사람이 조리법에 적는 레버)
+        family=st.state.get("family"),
         mirror=False, preview=False, log=log)
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)

@@ -28,8 +28,12 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
   무리는 이웃 면의 도안 상자를 이음새 너머로 투영해 그 자리에서 자란다
   (Fate R34의 리어 별무리는 리어 쿼터에서 들어온다). 자리를 정하는 문법은
   캔버스 꾸밈 그룹과 면 도형이 **한 벌을 나눠 쓴다** (`scatter_motifs`).
-- 인물 뒤에는 **꾸밈 그룹**(로커 밴드·산포)이 제 그룹으로 깔리고, 로커·모티프가
-  이웃 면으로 이어져 차 전체를 접착한다 (`compose_deco`·`flow_shapes`).
+- 인물 뒤에는 **꾸밈 그룹**(로커 밴드·베드·산포·에코)이 제 그룹으로 깔리고,
+  로커·모티프가 이웃 면으로 이어져 차 전체를 접착한다 (`design`·`flow_shapes`).
+- **사람 배치를 읽고, 후보를 만들고, 재서 고른다** (`intent` → `field` → `design`).
+  꾸밈 문법은 한 벌이 아니라 계열 여럿(`families`)이고, 인물 뒤 큰 색면(`bed`)과
+  역할 팔레트(`roles`)가 그 위에 선다. 사람이 앉힌 도안은 어느 후보에서도 안
+  움직인다.
 - 윗면 = 후드 인물(도안 재사용) + 지붕 블랙아웃.
 - **글자는 안 넣는다** — 스폰서 이름·넘버판 숫자 같은 텍스트는 어휘에 없다.
   자동으로 서는 것은 도안과 그것을 받치는 꾸밈뿐이다.
@@ -55,7 +59,14 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     folds       면 이음새 접기 그래프 — 꾸밈 뿌리를 이웃 면으로 투영하는 자.
     autoplace   자동 자리 — 편집기가 도안을 처음 앉히는 그 자리.
     surfshapes  면에 직접 놓는 꾸밈 — 관통 띠 · 산포 모티프의 도형 명세.
-    canvasdeco  꾸밈 그룹 — 베드 · 띠 · 산포를 **캔버스 한 장**으로 조립한다.
+    intent      도안 읽기 2단계 — 실루엣 · 머리 · 포즈 축 · 디테일 · 색 역할 씨앗.
+    roles       역할 팔레트 — 베이스 · 베드 · 주/부 액센트 · 그림자 · 하이라이트 · 무채.
+    field       구성 필드 — 배치 둘레의 보호 · 지지 · 장식 · 여백 구역과 흐름.
+    bed         캐릭터 베드 — 인물 뒤 큰 색면 (판 · 쐐기 · 슬래브 · 덩어리) + 키라인.
+    echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
+    families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
+    score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
+    design      구성 설계 — 후보 생성 + 평가 + 선택 (옆면 꾸밈 그룹의 머리).
     rigs        차 한 대의 면 지도와 옆면 뼈대 — 실측이 프리셋보다 우선한다.
     groups      구성 파일의 그룹 항목 — 플랜 파일을 쓰고 그것을 가리킨다.
     build       구성 한 대 짜기 — 이 패키지의 진입점.
@@ -91,7 +102,7 @@ from .vocabulary import (
     EDGE_SETS, MOTIF_FAMILIES, MOTIF_INSCRIBE, MOTIF_NEUTRAL, MOTIF_SETS, _RING8,
     edge_shapes, motif_family, motif_shapes, shape_half)
 from .scatter import (
-    DECO_ANCHOR, DECO_ANCHOR_GAP, DECO_FALLOFF, DECO_FRONT_N, DECO_FRONT_SIZE,
+    DECO_ANCHOR_GAP, DECO_FALLOFF, DECO_FRONT_N, DECO_FRONT_SIZE,
     DECO_GAP_MAX, DECO_HERO_CAP, DECO_N, DECO_SEP, DECO_TIER, DECO_TIER_MAX,
     DECO_TIER_SIZE, HALO_GROW, Motif, deco_layers, scatter_motifs)
 from .bands import (
@@ -112,7 +123,14 @@ from .autoplace import _side_place, auto_place, mirror_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
     deco_anchor, flow_shapes, surface_deco_shapes)
-from .canvasdeco import DECO_FRAME_FILL, compose_deco
+from .intent import DesignIntent, read_intent
+from .roles import RolePalette, role_palette
+from .field import CompositionField, build_field
+from .bed import bed_layers, keyline_layers
+from .echo import echo_layers
+from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
+from .score import ScoreCard, score_design
+from .design import DECO_FRAME_FILL, Design, compose_design
 from .rigs import (
     _arch_fallback, _avoid_on, _bumper_seed, _hood_seed, _place_for, carfiles_pick,
     probe_ok, side_rigs, surfaces_for)

@@ -16,12 +16,6 @@ from .vocabulary import _RING8, MOTIF_INSCRIBE, motif_shapes, shape_half
 DECO_N = 26
 
 
-# 산포가 **뭉치는 자리** — 프레임 반경의 몫으로 차 뒤쪽이다. 0이면 균등 산포
-# (색종이), 1.0이면 리어 범퍼에 다 몰린다. 레퍼런스의 무리 중심은 차 길이의
-# 0.68~0.80 언저리다 (수이세이의 별무리·RIN SHIBUYA의 꽃무리·EVELYNE의 백합).
-DECO_ANCHOR = 0.40
-
-
 # 뭉치는 자리를 인물 상자 모서리에서 얼마나 더 밀어내나 (인물 폭의 몫).
 # 0이면 모서리에 딱 붙어 무리 절반이 다시 인물에 걸린다.
 DECO_ANCHOR_GAP = 0.35
@@ -122,7 +116,8 @@ def scatter_motifs(*, center: tuple[float, float], radii: tuple[float, float],
                    avoid: tuple[float, float, float, float] | None = None,
                    over: bool = False, place_ok=None,
                    phase: float = 0.0,
-                   gap: float | None = None) -> list[Motif]:
+                   gap: float | None = None,
+                   pool: int | None = None) -> list[Motif]:
     """**산포 문법 한 벌** — 레퍼런스 8장에서 뽑은 무리의 꼴.
 
     자리·크기·층을 정하는 자가 전부 여기 있다. 부르는 쪽은 좌표계와 뱉는 꼴만
@@ -140,6 +135,9 @@ def scatter_motifs(*, center: tuple[float, float], radii: tuple[float, float],
     - `phase` — 나선의 위상. 면마다 흔들어야 같은 배열이 되풀이되지 않는다.
     - `gap` — 이웃이 **두 크기 평균의 이 배수**보다 멀면 그 조각을 잔것으로
       내린다 (고아 금지 — `DECO_SEP`과 같은 자의 반대쪽 끝이다).
+    - `pool` — 뜨는 후보 수 (기본 `n`의 6배). 자리 검사가 후보를 많이 버리는
+      판(휠아치 위에 뭉치는 자리가 앉은 옆면 · 좁은 필드)에서 늘린다 — n이
+      작은 계열은 후보가 마흔 남짓이라 검사를 다 통과하는 것이 하나도 없었다.
     """
     cx, cy = center
     rx, ry = radii
@@ -149,7 +147,8 @@ def scatter_motifs(*, center: tuple[float, float], radii: tuple[float, float],
     #    색종이로 읽힌다 (수이세이의 별무리 · RIN SHIBUYA의 꽃무리 · EVELYNE의
     #    백합은 예외 없이 한쪽 끝에 몰린다).
     cand: list[tuple[float, float, float, float]] = []   # (점수, x, y, 각)
-    for i in range(n * 6):
+    pool = pool if pool is not None else n * 6
+    for i in range(pool):
         a = phase + i * 2.399963                 # 황금각 — 뭉치지 않는 결정적 산포
         rr = 0.22 + 0.78 * ((i * 7 % (n * 3)) / max(1, n * 3 - 1))
         x = cx + math.cos(a) * rx * rr

@@ -130,6 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
                                "고른다, engine/compose.motif_family). 계열은 원래 "
                                "캐릭터 의미에서 오는 것이라 팔레트로는 거기까지 못 "
                                "간다 — 수이세이에 star처럼 아는 사람이 짚는 자리다"))
+    p_it.add_argument("--family", default=None, metavar=msg("계열"),
+                      help=msg("옆면 꾸밈의 구성 계열을 못 박는다 — minimal · "
+                               "graphic_bed · diagonal_flow · motorsport · splash "
+                               "(기본: 후보를 다 지어 점수로 고른다, "
+                               "engine/compose/design)"))
     p_it.add_argument("--no-mirror", action="store_true",
                       help=msg("우측면을 미러하지 않는다"))
     p_it.add_argument("--flip", action="store_true",
