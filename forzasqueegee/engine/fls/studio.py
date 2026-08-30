@@ -522,6 +522,23 @@ def act_text(st: Studio, fields: dict) -> str:
                style=spec.style, place=spec.placement)
 
 
+def act_family(st: Studio, family: str | None) -> str:
+    """옆면 꾸밈의 **구성 계열**을 못 박거나(None이면 자동) 푼다.
+
+    기본은 자동 — 후보를 다 지어 점수로 고른다 (`compose.design`). 사람이 계열을
+    고르면 그 계열 안에서만 고른다. 꾸밈이 꺼져 있으면 지금은 안 보인다."""
+    from .. import compose
+
+    if family is not None and family not in compose.FAMILIES:
+        raise ValueError(msg("모르는 구성 계열: {family!r} (있는 것: {families})",
+                             family=family, families=", ".join(compose.FAMILIES)))
+    st.state["family"] = family
+    if not st.state.get("deco"):
+        st.notes.append(msg("꾸밈이 꺼져 있어 지금은 안 보인다 — "
+                            "[Grow Decoration]을 누르면 이 계열로 짠다"))
+    return msg("구성 계열 {family}", family=family or msg("자동"))
+
+
 def act_motif(st: Studio, family: str | None) -> str:
     from .. import compose
 

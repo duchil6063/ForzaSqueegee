@@ -192,6 +192,8 @@ def cmd_flsedit(args) -> int:
             said = studio.act_decoration(st, args.action == "decoration")
         elif args.action == "motif":
             said = studio.act_motif(st, args.family)
+        elif args.action == "family":
+            said = studio.act_family(st, args.composition)
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))

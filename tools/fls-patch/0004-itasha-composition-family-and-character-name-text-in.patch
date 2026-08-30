@@ -1,0 +1,358 @@
+From 9791ac666aad1c273cd4c46721ccf2abedae7ee4 Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Mon, 31 Aug 2026 00:52:14 +0900
+Subject: [PATCH 4/4] itasha: composition family and character name text in the
+ Itasha menu
+
+Two entries the engine grew: [Composition Family] pins which grammar the
+side decoration is composed in (auto builds every family as a candidate and
+keeps the best-scoring one), and [Character Name Text...] opens a dialog
+for the name, a title, style, placement, priority, outline, shadow, a layer
+cap and the game-font fallback, then runs the "text" action. [Remove Text]
+runs "no-text". The last text input is kept in QSettings itasha/text/* so
+the dialog reopens with it. Strings go to the engine as single QProcess
+arguments, so spaces and case survive. Korean entries for every new string.
+---
+ src/gui/app/main_window.h          |   1 +
+ src/gui/app/main_window_itasha.cpp | 195 +++++++++++++++++++++++++++++
+ src/gui/i18n.cpp                   |  85 +++++++++++++
+ 3 files changed, 281 insertions(+)
+
+diff --git a/src/gui/app/main_window.h b/src/gui/app/main_window.h
+index 597f24f..489755c 100644
+--- a/src/gui/app/main_window.h
++++ b/src/gui/app/main_window.h
+@@ -240,6 +240,7 @@ private:
+     void refreshSplitTally();
+     void applySplit();
+     void setupItashaMenu();
++    void showItashaTextDialog();
+     bool runItashaAction(const QString &action, const QStringList &extra = {},
+                          bool needLivery = true, bool reload = true);
+     QStringList itashaCommand() const;
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 6058e7d..558d3b8 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -29,9 +29,20 @@
+ 
+ #include <QAction>
+ #include <QApplication>
++#include <QCheckBox>
+ #include <QColor>
+ #include <QColorDialog>
++#include <QComboBox>
++#include <QDialog>
++#include <QDialogButtonBox>
+ #include <QDir>
++#include <QFormLayout>
++#include <QLabel>
++#include <QLineEdit>
++#include <QSpinBox>
++#include <QVBoxLayout>
++
++#include <iterator>
+ #include <QFileDialog>
+ #include <QGuiApplication>
+ #include <QMenu>
+@@ -57,6 +68,40 @@ constexpr int kItashaTimeoutMs = 30 * 60 * 1000;   // 도안 하나가 몇 분 
+ const char *const kMotifFamilies[] = {"star", "flower", "splat", "swirl",
+                                       "crystal"};
+ 
++// Composition families the side decoration is built from (engine/compose/
++// families.py). Auto builds every candidate and keeps the best-scoring one.
++struct CompositionFamily {
++    const char *name;
++    const char *text;
++    const char *tip;
++};
++
++const CompositionFamily kCompositionFamilies[] = {
++    {"minimal", "&Minimal",
++     "A thin slab, a few motifs, lots of empty space"},
++    {"graphic_bed", "&Graphic Bed",
++     "A big colour plate behind the character carries the composition"},
++    {"diagonal_flow", "&Diagonal Flow",
++     "Two diagonal plates run past the character; motifs follow the grain"},
++    {"motorsport", "Moto&rsport",
++     "Rocker, stripes and straight lines - a low slab, few motifs"},
++    {"splash", "&Splash",
++     "A blob bed with torn edges and many motifs, some over the artwork"},
++};
++
++// Text styles, placements and priorities the engine accepts
++// (engine/compose/textspec.py). The first entry of each list is the default.
++const char *const kTextStyles[] = {"auto", "script", "brush", "graffiti",
++                                   "racing", "techno", "minimal", "game"};
++const char *const kTextPlacements[] = {"auto", "side", "rear", "hood", "roof",
++                                       "window"};
++const char *const kTextPriorities[] = {"normal", "high", "low"};
++const char *const kTextTri[] = {"auto", "on", "off"};
++
++// The last text the user typed comes back the next time the dialog opens -
++// a name is typed once and tweaked many times.
++constexpr auto kItashaTextKey = "itasha/text";
++
+ // Exporting a vinyl group: the same design, in the three formats the tools
+ // share.
+ struct GroupFormat {
+@@ -222,6 +267,39 @@ void MainWindow::setupItashaMenu() {
+                        {QStringLiteral("--family"), name});
+     }
+ 
++    // Which grammar the side decoration is composed in. Auto builds every
++    // family as a candidate and keeps the one that scores best; picking a
++    // family narrows the candidates to it. Like the motif family, this does
++    // not switch the decoration on.
++    QMenu *composition = itashaMenu_->addMenu(i18n::t("&Composition Family"));
++    composition->setStatusTip(i18n::t(
++        "Which grammar the side decoration is composed in - bed, flow, density, "
++        "empty space. Auto builds every family and keeps the best-scoring one."));
++    addLiveryEntry(composition, i18n::t("&Auto (score picks)"),
++                   QStringLiteral("family"),
++                   i18n::t("Build every family as a candidate and keep the best"));
++    for (const CompositionFamily &fam : kCompositionFamilies) {
++        addLiveryEntry(composition, i18n::t(fam.text), QStringLiteral("family"),
++                       i18n::t(fam.tip),
++                       {QStringLiteral("--composition"), QString::fromLatin1(fam.name)});
++    }
++
++    itashaMenu_->addSeparator();
++    // Text is optional and off by default - the Itasha vocabulary has no
++    // letters unless someone types a name. The dialog runs the "text" action;
++    // the engine draws the name as a custom decal from bundled fonts and steps
++    // down to the game font, then to nothing, as the layer budget shrinks.
++    QAction *text = itashaMenu_->addAction(i18n::t("Character Name &Text..."));
++    text->setStatusTip(i18n::t(
++        "Put the character's name (and a title) into the decoration as a "
++        "wordmark - a custom decal from bundled fonts, or the game font when "
++        "layers run short"));
++    connect(text, &QAction::triggered, this, &MainWindow::showItashaTextDialog);
++    itashaLiveryActions_.push_back(text);
++    addLiveryEntry(itashaMenu_, i18n::t("Remove Text"),
++                   QStringLiteral("no-text"),
++                   i18n::t("Take the name text out of the decoration"));
++
+     itashaMenu_->addSeparator();
+     addLiveryEntry(itashaMenu_, i18n::t("Mirror Left/&Right"),
+                    QStringLiteral("mirror"),
+@@ -343,6 +421,123 @@ void MainWindow::refreshItashaMenu() {
+     }
+ }
+ 
++void MainWindow::showItashaTextDialog() {
++    QSettings settings;
++    settings.beginGroup(QLatin1String(kItashaTextKey));
++
++    QDialog dialog(this);
++    dialog.setWindowTitle(i18n::t("Character Name Text"));
++    auto *layout = new QVBoxLayout(&dialog);
++    auto *intro = new QLabel(i18n::t(
++        "The name goes into the decoration as a wordmark. Spaces, case and "
++        "punctuation are kept as typed; \\n breaks a line."), &dialog);
++    intro->setWordWrap(true);
++    layout->addWidget(intro);
++
++    auto *form = new QFormLayout;
++    layout->addLayout(form);
++    auto *name = new QLineEdit(settings.value(QStringLiteral("main")).toString(),
++                               &dialog);
++    name->setPlaceholderText(QStringLiteral("Asuka Langley"));
++    form->addRow(i18n::t("Character name:"), name);
++    auto *title = new QLineEdit(settings.value(QStringLiteral("sub")).toString(),
++                                &dialog);
++    title->setPlaceholderText(QStringLiteral("EVANGELION"));
++    form->addRow(i18n::t("Title / tagline (optional):"), title);
++
++    const auto combo = [&](const char *const *items, int count, const char *key) {
++        auto *box = new QComboBox(&dialog);
++        for (int i = 0; i < count; ++i) {
++            box->addItem(i18n::t(QString::fromLatin1(items[i])),
++                         QString::fromLatin1(items[i]));
++        }
++        const int at = box->findData(settings.value(QString::fromLatin1(key)).toString());
++        box->setCurrentIndex(at < 0 ? 0 : at);
++        return box;
++    };
++    QComboBox *style = combo(kTextStyles, int(std::size(kTextStyles)), "style");
++    style->setToolTip(i18n::t(
++        "auto lets the composition family choose - script for soft beds, racing "
++        "and techno for diagonal and motorsport, brush and graffiti for splash. "
++        "game uses the game's own font vinyl."));
++    form->addRow(i18n::t("Style:"), style);
++    QComboBox *placement = combo(kTextPlacements, int(std::size(kTextPlacements)),
++                                 "placement");
++    placement->setToolTip(i18n::t(
++        "auto puts the wordmark beside the character on the sides; rear, hood, "
++        "roof and window pin it to that panel instead."));
++    form->addRow(i18n::t("Placement:"), placement);
++    QComboBox *priority = combo(kTextPriorities, int(std::size(kTextPriorities)),
++                                "priority");
++    priority->setToolTip(i18n::t(
++        "high keeps the name even if scattered motifs have to go; low gives it "
++        "half the layer budget."));
++    form->addRow(i18n::t("Priority:"), priority);
++    QComboBox *outline = combo(kTextTri, int(std::size(kTextTri)), "outline");
++    form->addRow(i18n::t("Outline:"), outline);
++    QComboBox *shadow = combo(kTextTri, int(std::size(kTextTri)), "shadow");
++    form->addRow(i18n::t("Shadow:"), shadow);
++    auto *maxLayers = new QSpinBox(&dialog);
++    maxLayers->setRange(0, 3000);
++    maxLayers->setSpecialValueText(i18n::t("no cap"));
++    maxLayers->setValue(settings.value(QStringLiteral("maxLayers"), 0).toInt());
++    maxLayers->setToolTip(i18n::t(
++        "Layers the text may use. 0 lets the panel budget decide - the engine "
++        "steps down from a full custom decal to a simpler one, then to the game "
++        "font, then drops the text."));
++    form->addRow(i18n::t("Layer cap:"), maxLayers);
++    auto *fallback = new QCheckBox(
++        i18n::t("Fall back to the game font when layers run short"), &dialog);
++    fallback->setChecked(settings.value(QStringLiteral("fallback"), true).toBool());
++    layout->addWidget(fallback);
++
++    auto *buttons = new QDialogButtonBox(
++        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
++    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
++    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
++    layout->addWidget(buttons);
++    name->setFocus();
++
++    if (dialog.exec() != QDialog::Accepted) {
++        return;
++    }
++    const QString main = name->text();
++    if (main.trimmed().isEmpty()) {
++        QMessageBox::information(this, i18n::t("Itasha"),
++                                 i18n::t("Type a character name first."));
++        return;
++    }
++    settings.setValue(QStringLiteral("main"), main);
++    settings.setValue(QStringLiteral("sub"), title->text());
++    settings.setValue(QStringLiteral("style"), style->currentData().toString());
++    settings.setValue(QStringLiteral("placement"), placement->currentData().toString());
++    settings.setValue(QStringLiteral("priority"), priority->currentData().toString());
++    settings.setValue(QStringLiteral("outline"), outline->currentData().toString());
++    settings.setValue(QStringLiteral("shadow"), shadow->currentData().toString());
++    settings.setValue(QStringLiteral("maxLayers"), maxLayers->value());
++    settings.setValue(QStringLiteral("fallback"), fallback->isChecked());
++    settings.endGroup();
++
++    // The strings go to the engine untouched - QProcess passes each argument
++    // as one item, so spaces survive without any quoting here.
++    QStringList extra{QStringLiteral("--text"), main};
++    if (!title->text().trimmed().isEmpty()) {
++        extra << QStringLiteral("--subtext") << title->text();
++    }
++    extra << QStringLiteral("--text-style") << style->currentData().toString()
++          << QStringLiteral("--text-placement") << placement->currentData().toString()
++          << QStringLiteral("--text-priority") << priority->currentData().toString()
++          << QStringLiteral("--text-outline") << outline->currentData().toString()
++          << QStringLiteral("--text-shadow") << shadow->currentData().toString()
++          << QStringLiteral("--game-text-fallback")
++          << (fallback->isChecked() ? QStringLiteral("on") : QStringLiteral("off"));
++    if (maxLayers->value() > 0) {
++        extra << QStringLiteral("--text-max-layers")
++              << QString::number(maxLayers->value());
++    }
++    runItashaAction(QStringLiteral("text"), extra);
++}
++
+ bool MainWindow::runItashaAction(const QString &action, const QStringList &extra,
+                                  bool needLivery, bool reload) {
+     const QStringList command = itashaCommand();
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index e00074e..0301690 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -493,6 +493,91 @@ const Entry kTable[] = {
+     {"Swirl", "소용돌이"},
+     {"Crystal", "수정"},
+     {"Use the %1 family", "%1 계열을 씁니다"},
++    {"&Composition Family", "구성 계열(&C)"},
++    {"Which grammar the side decoration is composed in - bed, flow, density, "
++     "empty space. Auto builds every family and keeps the best-scoring one.",
++     "옆면 꾸밈을 어느 문법으로 짤지 정합니다 — 받침판·흐름·밀도·여백. 자동은 "
++     "모든 계열을 후보로 지어 점수가 가장 높은 것을 씁니다."},
++    {"&Auto (score picks)", "자동(&A) (점수가 고름)"},
++    {"Build every family as a candidate and keep the best",
++     "모든 계열을 후보로 지어 가장 좋은 것을 씁니다"},
++    {"&Minimal", "미니멀(&M)"},
++    {"A thin slab, a few motifs, lots of empty space",
++     "얇은 띠판 하나, 무늬 몇 개, 넉넉한 여백"},
++    {"&Graphic Bed", "그래픽 받침판(&G)"},
++    {"A big colour plate behind the character carries the composition",
++     "캐릭터 뒤의 큰 색면이 구도를 잡습니다"},
++    {"&Diagonal Flow", "사선 흐름(&D)"},
++    {"Two diagonal plates run past the character; motifs follow the grain",
++     "사선 판 둘이 캐릭터를 지나 흐르고 무늬가 그 결을 따릅니다"},
++    {"Moto&rsport", "모터스포츠(&R)"},
++    {"Rocker, stripes and straight lines - a low slab, few motifs",
++     "로커·스트라이프 같은 직선 요소 — 낮은 띠판, 적은 무늬"},
++    {"&Splash", "스플래시(&S)"},
++    {"A blob bed with torn edges and many motifs, some over the artwork",
++     "뜯긴 가장자리의 덩어리 받침판과 많은 무늬 — 일부는 그림 위로"},
++    {"Character Name &Text...", "캐릭터 이름 글자(&T)..."},
++    {"Put the character's name (and a title) into the decoration as a "
++     "wordmark - a custom decal from bundled fonts, or the game font when "
++     "layers run short",
++     "캐릭터 이름(과 작품명)을 워드마크로 꾸밈에 넣습니다 — 동봉 글꼴로 만든 "
++     "커스텀 데칼이고, 레이어가 모자라면 게임 글꼴로 물러납니다"},
++    {"Remove Text", "글자 빼기"},
++    {"Take the name text out of the decoration", "꾸밈에서 이름 글자를 뺍니다"},
++    {"Character Name Text", "캐릭터 이름 글자"},
++    {"The name goes into the decoration as a wordmark. Spaces, case and "
++     "punctuation are kept as typed; \\n breaks a line.",
++     "이름이 워드마크로 꾸밈에 들어갑니다. 띄어쓰기·대소문자·구두점은 친 그대로 "
++     "지켜지고, \\n은 줄바꿈입니다."},
++    {"Character name:", "캐릭터 이름:"},
++    {"Title / tagline (optional):", "작품명 / 태그라인 (선택):"},
++    {"auto lets the composition family choose - script for soft beds, racing "
++     "and techno for diagonal and motorsport, brush and graffiti for splash. "
++     "game uses the game's own font vinyl.",
++     "auto는 구성 계열이 고릅니다 — 부드러운 받침판엔 필기체, 사선·모터스포츠엔 "
++     "레이싱·테크노, 스플래시엔 붓·그래피티. game은 게임 자체 글꼴 비닐을 씁니다."},
++    {"Style:", "스타일:"},
++    {"auto puts the wordmark beside the character on the sides; rear, hood, "
++     "roof and window pin it to that panel instead.",
++     "auto는 옆면 캐릭터 곁에 워드마크를 둡니다. rear·hood·roof·window는 그 "
++     "구획에 못 박습니다."},
++    {"Placement:", "자리:"},
++    {"high keeps the name even if scattered motifs have to go; low gives it "
++     "half the layer budget.",
++     "high는 흩뿌린 무늬를 빼서라도 이름을 지킵니다. low는 레이어 예산을 절반만 "
++     "줍니다."},
++    {"Priority:", "우선순위:"},
++    {"Outline:", "테두리:"},
++    {"Shadow:", "그림자:"},
++    {"no cap", "상한 없음"},
++    {"Layers the text may use. 0 lets the panel budget decide - the engine "
++     "steps down from a full custom decal to a simpler one, then to the game "
++     "font, then drops the text.",
++     "글자가 쓸 수 있는 레이어 수. 0이면 구획 예산이 정합니다 — 엔진이 온전한 "
++     "커스텀 데칼에서 단순한 것으로, 다음 게임 글꼴로 내려가고, 그래도 안 되면 "
++     "글자를 뺍니다."},
++    {"Layer cap:", "레이어 상한:"},
++    {"Fall back to the game font when layers run short",
++     "레이어가 모자라면 게임 글꼴로 물러나기"},
++    {"Type a character name first.", "먼저 캐릭터 이름을 입력하세요."},
++    {"script", "필기체"},
++    {"brush", "붓글씨"},
++    {"graffiti", "그래피티"},
++    {"racing", "레이싱"},
++    {"techno", "테크노"},
++    {"minimal", "미니멀"},
++    {"game", "게임 글꼴"},
++    {"side", "옆면"},
++    {"rear", "뒷면"},
++    {"hood", "보닛"},
++    {"roof", "지붕"},
++    {"window", "유리"},
++    {"normal", "보통"},
++    {"high", "높음"},
++    {"low", "낮음"},
++    {"auto", "자동"},
++    {"on", "켬"},
++    {"off", "끔"},
+     {"Mirror Left/&Right", "좌우 대칭(&R)"},
+     {"Copy the side and door-glass panels onto "
+      "their mirrored counterparts",

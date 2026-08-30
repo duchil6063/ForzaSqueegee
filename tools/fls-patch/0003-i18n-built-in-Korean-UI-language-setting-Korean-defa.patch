@@ -1,7 +1,7 @@
-From ef40f50c2ab35b232b3b23ebd5f571db6bdea148 Mon Sep 17 00:00:00 2001
+From d8435f54100040d6e85a71870d95d77e279ab754 Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Sun, 30 Aug 2026 01:35:55 +0900
-Subject: [PATCH 3/3] i18n: built-in Korean UI, language setting, Korean
+Subject: [PATCH 3/4] i18n: built-in Korean UI, language setting, Korean
  default
 
 Every user-facing string goes through gui::i18n::t(), a lookup into a
