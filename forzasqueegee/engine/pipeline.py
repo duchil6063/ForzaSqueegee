@@ -130,7 +130,12 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     if route not in ROUTES:
         raise SystemExit(msg("모르는 노선: {route} ({routes})",
                              route=route, routes="|".join(ROUTES)))
-    shapes = max(1, min(int(shapes), MAX_SHAPES))
+    # 하드캡은 clamp가 아니라 **오류**다 — 조용히 3,000으로 줄이면 사용자는
+    # 요청한 상한이 지켜졌다고 믿는다 (게임은 3,000 초과 그룹을 통째로 거부한다)
+    shapes = int(shapes)
+    if not 1 <= shapes <= MAX_SHAPES:
+        raise SystemExit(msg("레이어 상한이 범위 밖: {shapes} (1~{cap})",
+                             shapes=shapes, cap=MAX_SHAPES))
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()

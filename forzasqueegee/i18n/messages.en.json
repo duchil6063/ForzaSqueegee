@@ -932,5 +932,6 @@
  "후드 덩어리 {w:.0f}×{h:.0f}유닛 · 기울기 {rot:.0f}°": "hood blob {w:.0f}×{h:.0f} units · tilt {rot:.0f}°",
  "후드에 인물을 기울여 앉힌다 ({why})": "placing the figure tilted on the hood ({why})",
  "후보 건너뜀 {name}: {kind}: {error}": "skipping candidate {name}: {kind}: {error}",
- "휠아치가 마스크에 없다 — 로케이터 어림으로 자리를 뚫고 피한다 (범퍼 기반 배율 {k:g}유닛/m · 자리 오차 중앙 0.11 m)": "no wheel arches in the mask — punching and dodging them by locator estimate (bumper-based scale {k:g} units/m · median position error 0.11 m)"
+ "휠아치가 마스크에 없다 — 로케이터 어림으로 자리를 뚫고 피한다 (범퍼 기반 배율 {k:g}유닛/m · 자리 오차 중앙 0.11 m)": "no wheel arches in the mask — punching and dodging them by locator estimate (bumper-based scale {k:g} units/m · median position error 0.11 m)",
+  "레이어 상한이 범위 밖: {shapes} (1~{cap})": "layer cap out of range: {shapes} (1~{cap})"
 }
