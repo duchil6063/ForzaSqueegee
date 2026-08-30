@@ -22,9 +22,20 @@
 준다) — 결정적이다.
 
 r는 상수가 아니라 게임 격자다 (호출부: 최소 도형 반폭 ≈ 1px@1200).
+
+**색 가드 (X7 검수).** 밴드를 지우고 밖에서 걸어 들어오면, 밴드 안에**만**
+살던 구조가 통째로 이웃에게 넘어간다 — 선의 **주제**(어두운 끈·옷단)가
+그렇다: 선 지도보다 획이 가늘거나 어긋난 자리마다 양쪽의 밝은 면이 이어져
+어두운 선 위에 흰 점선이 찍히고(X7-01 #2), 옷 경계 밴드가 살색으로 넘어간다
+(X7-06 #3·#4, 실측: 결함 px의 대부분이 이 스냅에서 생겼다). 그래서 **선
+지도가 덮지 않아 눈에 보일 픽셀**은 원화색을 물어 본다 — 새 라벨의 영역색이
+옛 라벨보다 Lab로 `guard` 이상 나쁘면 안 바꾼다. 선 지도 밑(어차피 선이
+덮는다)은 그대로 스냅해 경계가 획 중앙선에 서는 본기능을 지킨다.
 """
 
 from __future__ import annotations
+
+import os
 
 import cv2
 import numpy as np
@@ -32,10 +43,22 @@ import numpy as np
 from .geodesic import propagate
 from .model import CelArt, Region
 
+# 보이는 픽셀의 라벨 교체 허용 한계 (Lab ΔE, 새 라벨 적합도 − 옛 라벨 적합도).
+# 15는 X7 실측: 표시 22곳의 "어두운 곳→밝은 라벨" 생성 0, 슬리버 지우기는
+# 선 지도 밑과 적합도 비슷한 교체로 살아남는다
+_SNAP_GUARD = float(os.environ.get("FS_SNAP_GUARD", 15.0))
+
 
 def snap_labels_to_ink(labels: np.ndarray, sel: np.ndarray, ink: np.ndarray,
-                       r: int) -> np.ndarray:
-    """영역 라벨을 **배치된 획 라스터**에 스냅한다 — 채움 목표를 만든다."""
+                       r: int, *, src: np.ndarray | None = None,
+                       colors: np.ndarray | None = None,
+                       visible: np.ndarray | None = None,
+                       guard: float = _SNAP_GUARD) -> np.ndarray:
+    """영역 라벨을 **배치된 획 라스터**에 스냅한다 — 채움 목표를 만든다.
+
+    `src`(RGB 원화)·`colors`(rid→영역색 LUT)·`visible`(선 지도가 안 덮는
+    자리)이 다 오면 색 가드가 켜진다 (모듈 문서). 하나라도 없으면 종전 그대로.
+    """
     if not ink.any():
         return labels
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
@@ -51,6 +74,21 @@ def snap_labels_to_ink(labels: np.ndarray, sel: np.ndarray, ink: np.ndarray,
     got, _ = propagate(seed, zone, order=order)
     out = labels.copy()
     fill = zone & (got >= 0)
+    if src is not None and colors is not None and visible is not None:
+        chg = fill & visible & (got != labels) & (labels >= 0)
+        if chg.any():
+            ys, xs = np.nonzero(chg)
+
+            def _lab(rgb):
+                return cv2.cvtColor(rgb.reshape(-1, 1, 3).astype(np.uint8),
+                                    cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+
+            clab = _lab(np.ascontiguousarray(colors))
+            pxl = _lab(src[ys, xs])
+            d_new = np.linalg.norm(pxl - clab[got[ys, xs]], axis=1)
+            d_old = np.linalg.norm(pxl - clab[labels[ys, xs]], axis=1)
+            bad = (d_new - d_old) > guard
+            fill[ys[bad], xs[bad]] = False
     out[fill] = got[fill]
     return out
 

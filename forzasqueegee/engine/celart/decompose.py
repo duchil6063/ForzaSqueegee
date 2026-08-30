@@ -82,6 +82,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     else:
         lm = lineart.extract(src, log=log)
         line_mask = lineart.hysteresis(lm) & sel if lm is not None else None
+    src0 = src
     if line_mask is not None:
         log(f"  선화: 선 픽셀 {int(line_mask.sum()):,}개")
         src = inkfill.complete(src, sel, line_mask, log)[0]
@@ -124,6 +125,38 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
 
     # 5) 영역 표 — 대표색은 평활 이미지의 영역 평균 (팔레트 중심보다 국소 충실)
     regions = region_table(labels, sm, sel, w, h)
+
+    # **삼킨 선 (X7 검수).** 어두운 잔선·끈이 선 지도에서 빠지면 세 손이
+    # 차례로 지운다 — 귀속 배리어(CLOSE)가 밝은 면 색으로 덧칠하고, 평활이
+    # 이웃 면으로 뭉개고, 병합이 밝은 영역에 흡수한다. 결과는 같다: **영역색이
+    # 원화보다 훨씬 밝은 어두운 px** (X7-01 #1·#2류 — 어두운 끈이 살색·중간톤
+    # 판이 된다). 그 px를 여기서 선으로 기록한다 — 호출부가 선 얹기 마스크에
+    # 합치면 flat_render(목표)가 원화색으로 되칠하고, 수리·메움 기계도 정직한
+    # 목표를 본다. 라벨은 안 만진다. 문턱 40은 "명백히 딴 색"(팔레트 꼬리
+    # 15의 갑절 이상)이고, 4px 미만 군집은 화면에서 안 보이는 크기라
+    # (`route_cel.HOLE_MIN_PX`와 같은 논리) 안 센다.
+    if line_mask is not None and regions:
+        lut_ = np.zeros((int(labels.max()) + 1, 3), np.uint8)
+        for _r in regions:
+            lut_[_r.rid] = _r.color
+        reg_lab = cv2.cvtColor(lut_.reshape(-1, 1, 3),
+                               cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.int16)
+        src_lab = cv2.cvtColor(src0, cv2.COLOR_RGB2LAB).astype(np.int16)
+        px_reg = reg_lab[np.maximum(labels, 0)]
+        d_l = px_reg[..., 0].astype(np.int32) - src_lab[..., 0].astype(np.int32)
+        d_e = np.linalg.norm(px_reg.astype(np.float32)
+                             - src_lab.astype(np.float32), axis=-1)
+        cand = sel & (labels >= 0) & ~line_mask & (d_l > 40) & (d_e > 40)
+        if cand.any():
+            n_cc, cc = cv2.connectedComponents(cand.astype(np.uint8))
+            sizes = np.bincount(cc.ravel(), minlength=n_cc)
+            swallowed = cand & (sizes[cc] >= 4)
+        else:
+            swallowed = cand
+        trace["line_swallowed"] = swallowed
+        if swallowed.any():
+            log(f"  삼킨 선 {int(swallowed.sum()):,}px — 밝은 면에 먹힌 "
+                "어두운 잔선, 선 얹기로 되칠한다")
 
     log(f"  영역 {len(regions)}개 (병합 후)")
     trace["regions_decomposed"] = len(regions)

@@ -132,6 +132,12 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             native_gray=native_gray,
             labels=cel.labels, regions=cel.regions)
         line_rec = line_stats.pop("_rec", None)
+        # 삼킨 선 되칠 (celart.decompose 문서) — 귀속·평활이 밝게 덧칠한
+        # 어두운 잔선 px를 선 얹기에 합친다. src_line은 원화색이라 그 자리가
+        # 도로 어두워지고, 목표(cel.png)의 밝은 반점이 사라진다
+        _sw = (cel.trace or {}).get("line_swallowed")
+        if _sw is not None and _sw.any():
+            line_mask = line_mask | _sw
         # ③의 채비 — 채움 목표 = **선 도안에 스냅한 셀** (`snap_labels_to_ink`
         # 문서). 획 라스터·캔버스 배율은 배치와 같은 식이고(`fit_plan` upp),
         # 스냅 반경은 게임 격자(최소 도형 반폭)다. line_mask(이은 선 지도)와
@@ -148,7 +154,15 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                                        line_mask, cel.labels, log)
         ink = _ink_cover(line_plan.layers, cat, upp, w, h)
         r = max(1, int(round(0.01 * UNITS_PER_SCALE / upp)))
-        labels = snap_labels_to_ink(cel.labels, sel, ink, r)
+        # 색 가드 (snap 문서) — 선 지도가 안 덮는 픽셀은 원화색이 라벨 교체를
+        # 심사한다. 어두운 선 주제가 밝은 이웃에게 넘어가 흰 점선·경계 침범이
+        # 되는 것을 막는다 (X7 검수 실측)
+        lut = np.zeros((int(cel.labels.max()) + 1, 3), np.uint8)
+        for _r in cel.regions:
+            lut[_r.rid] = _r.color
+        labels = snap_labels_to_ink(cel.labels, sel, ink, r,
+                                    src=np.ascontiguousarray(rgba[..., :3]),
+                                    colors=lut, visible=~line_mask)
         # `replace`로 갈아 끼운다 — 면 지도(faces)·분해 자취(trace)가 그대로
         # 따라와야 계측·디버그 겹판이 같은 판을 본다
         cel = replace(cel, labels=labels,
