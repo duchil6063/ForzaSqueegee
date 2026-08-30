@@ -223,9 +223,10 @@ def livery_project(sections: dict, *, name: str = "Untitled",
             kept += len(shaped)
             kids += shaped if not cname else [_plain_group(
                 f"sec{slot}-{len(kids)}", CHUNK_PREFIX + cname, shaped)]
-        if not kids:
-            continue
-        counts[surface] = kept
+        # 빈 구획도 쓴다 — 편집기는 새 리버리에 구획 11개를 빈 채로 두고,
+        # 열 때 빠진 구획을 만들어 주지 않는다 (빠지면 레이어 나무에서 사라진다).
+        if kids:
+            counts[surface] = kept
         sec = _plain_group(f"sec{slot}", label, kids)
         sec.update({"is_livery_section": True, "livery_section_slot": slot})
         children.append(sec)
