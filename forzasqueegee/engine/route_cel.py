@@ -210,6 +210,15 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         stats.update({k: v for k, v in line_stats.items() if k not in stats})
         stats["line_layers"] = len(line_plan.layers)
         stats["align_moves"] = stats_align
+    # 단계 스냅숏 계측 (`FS_CEL_STAGES=1`) — 결함 px가 **어느 단계에서 처음
+    # 생기는지** 귀속하는 자리다 (goal 세션의 검증된 디버깅 방법). 단계마다
+    # plan만 저장하고 아무것도 안 바꾼다 — 끄면 산출물 바이트 동일
+    _stg = os.environ.get("FS_CEL_STAGES")
+
+    def _snap(name):
+        if _stg:
+            plan.save(run_file(out, f"plan_{name}.json"))
+    _snap("s1_fit")
     # 유예 덮개 (celfit이 미룬 λ×12~25 구간) — report에 못 실리는 레이어
     # 참조라 여기서 빼 두고, 예산이 확정된 뒤(아래) 잔여만큼 산다
     carve_defer = stats.pop("_carve_defer", [])
@@ -279,6 +288,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                      tag=msg("잔차 초점"))
         stats["res_focus_layers"] = len(only)
         stats["res_focus_moves"] = st["accepts"]
+    _snap("s2_focus")
     # 수렴하면 조기 종료라 상한은 여유 있게 — 3,000은 3라운드에 끝나고(불변),
     # 낮은 상한은 컷이 깊어 수렴이 느리다. 12는 포화 장 실측이다 — 선+채움
     # 3,355장의 컷↔메움 초과가 라운드마다 십수 장씩 잦아들며 단조 수렴하므로
@@ -428,6 +438,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             if n_h:
                 grow_covers(plan, cel, cat, log=log, passes=6)
     _hlog(msg("사후 가격 후"))
+    _snap("s3_price")
     if _dbg:
         plan.save(run_file(out, "plan_preft.json"))
     # 전역 미세 조정 (DiffCompositing 이산 이식) — 완성된 스택 전체를 놓고
@@ -438,12 +449,14 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         plan, cel, cat, log=log,
         progress=(lambda f, t: progress(0.95 + f * 0.04, t))
         if progress else None)
+    _snap("s4_ft")
     # 그리기 순서 미세 조정 — 옳은 색 조각이 이미 덮고 있는 자리를 이웃 영역
     # 조각이 위에서 가리는 px를 순서만 바꿔 돌려준다 (도형 0장, 커버리지 불변.
     # `finetune.reorder_fills` 문서)
     from .finetune import reorder_fills as _reorder
 
     stats.update(_reorder(plan, cel, cat, log=log))
+    _snap("s5_reorder")
     # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
     # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).

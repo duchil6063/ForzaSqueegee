@@ -26,6 +26,8 @@ celfit 배치는 영역별 그리디다: 채점판이 자기 영역 ROI만 보�
 
 from __future__ import annotations
 
+import os
+
 import cv2
 import numpy as np
 
@@ -46,6 +48,17 @@ _P_BG = 4000.0
 _P_HOLE = 8000.0
 _EPS = 1.0            # 이보다 못 버는 이동은 무시 (부동소수 채터 방지)
 _MAX_WALK = 8         # 같은 방향 연속 스텝 상한
+# **JND 대역 벌점** (기본 켜짐 · `FS_FT_JND=0`으로 끈다) — 덮은 px가 목표와
+# Lab ΔE 4~12로 틀리면
+# px당 이 상수를 더한다. 제곱 오차만 보면 "큰 오차를 고치며 은근한 틀림을
+# 흩뿌리는" 이동이 늘 이긴다 — 잔차 초점 패스가 유령 경계(목표에 없는 저대비
+# 경계)를 배로 늘리는 원인이 이것이다 (단계 귀속 실측 S1-01: ghost 1,530
+# → 3,611px). 4~12 대역은 수리 문턱(12) 아래·JND(4) 위라 어느 손도 다시
+# 안 보는 자리이므로, 만들 때 막는 것이 유일한 손이다. 값 1,500은 RGB 노름
+# ~39(Lab ΔE 십수)의 제곱 오차에 해당 — 대역 px 하나가 "잘 보이는 오차"
+# 하나 값이 되게 한다. 목표 자체 경계 2px 안(경계 양자화 자리)과 획(ink)
+# 소유 px는 제외 — 획이 흐린 선 위를 긋는 것은 이 벌점의 대상이 아니다
+_P_JND = 1500.0
 
 # 수 하나 = (속성, 게임 양자화 스텝)의 묶음 — 짧은 스텝 먼저 (대부분의 개선은
 # 반 스텝이다). 홑 축 여덟 뒤에 **한쪽 변 수** 넷이 선다: 이동과 스케일을 한
@@ -118,6 +131,24 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     # 미커버 px 비용: 흰 노출 오차 + 실루엣 안이면 색 불문 바닥
     ucost = ((255 - tgt) ** 2).sum(2).astype(np.float64)
     ucost[sil] += _P_HOLE
+    # JND 대역 벌점 채비 (_P_JND 문서) — 스위치 꺼짐이면 계산도 안 한다
+    _jnd = os.environ.get("FS_FT_JND", "1") != "0"
+    if _jnd:
+        tgt_lab = cv2.cvtColor(tgt.astype(np.uint8),
+                               cv2.COLOR_RGB2LAB).astype(np.float32)
+        lut_lab = cv2.cvtColor(np.clip(lut, 0, 255).astype(np.uint8)
+                               .reshape(-1, 1, 3),
+                               cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+        _e = np.zeros((h, w), bool)
+        for _dx, _dy in ((1, 0), (0, 1)):
+            _d = np.linalg.norm(tgt_lab[_dy:, _dx:]
+                                - tgt_lab[:h - _dy, :w - _dx], axis=-1) > 4.0
+            _e[_dy:, _dx:] |= _d
+            _e[:h - _dy, :w - _dx] |= _d
+        band_ok = sil & ~cv2.dilate(
+            _e.astype(np.uint8),
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))).astype(bool)
+        not_ink = np.array([True] + [l.label != "ink" for l in layers])
 
     boxes = np.zeros((n, 4), np.int32)
     masks: list[np.ndarray] = [None] * n              # type: ignore[list-item]
@@ -133,6 +164,12 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         d = ((tgt[ys, xs] - lut[o + 1]) ** 2).sum(1).astype(np.float64)
         cov = o >= 0
         d[cov & ~sil[ys, xs]] += _P_BG
+        if _jnd:
+            bsel = cov & band_ok[ys, xs] & not_ink[o + 1]
+            if bsel.any():
+                de = np.linalg.norm(tgt_lab[ys[bsel], xs[bsel]]
+                                    - lut_lab[o[bsel] + 1], axis=1)
+                d[bsel] += _P_JND * ((de > 4.0) & (de <= 12.0))
         unc = ~cov
         if unc.any():
             d[unc] = ucost[ys[unc], xs[unc]]
