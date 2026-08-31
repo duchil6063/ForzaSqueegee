@@ -160,9 +160,9 @@ def group_project(layers: list[Layer], *, name: str = "Untitled",
     return doc, {"layers": kept, "skipped": skipped}
 
 
-# 구성기가 지은 덩어리에 붙는 그룹 이름 머리. **이 머리가 곧 소유권 표시**다 —
-# FLS에서 사람이 새로 그린 것은 이 머리가 없고, 이타샤 명령은 다시 지을 때
-# 제 머리가 붙은 그룹만 갈아 끼운다 (`engine.fls.studio`).
+# 구성기가 지은 덩어리에 붙는 그룹 이름 머리. **이 머리가 "조리법이 아는 것"의
+# 표시**다 — 이타샤 명령은 이 머리가 붙은 그룹의 변환만 조리법에 접어 넣고, 머리
+# 없는 것(가른 조각·사본·사람이 그린 것)은 도안으로 새로 받는다 (`engine.fls.studio`).
 CHUNK_PREFIX = "FS:"
 
 

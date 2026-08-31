@@ -21,8 +21,12 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
    끌면 **그룹 자신의 변환**에 적는다(`editor_state.transformEntryFrames`). 다음
    명령이 그 변환을 배치 수치에 접어 넣으므로, 편집기에서 밀어 놓은 자리가 곧
    조리법의 자리가 된다.
-2. **`FS:` 머리가 없는 것은 안 건드린다.** 사람이 편집기에서 직접 그린 도형은
-   면 그룹 아래에 그대로 있고, 다시 구울 때 원본 노드째 옮겨 실린다.
+2. **`FS:` 머리가 없는 것은 도안으로 받는다** (`_adopt`). 도안 그룹을 선으로
+   가르면 조각은 `FS:` 머리를 잃고, 베낀 사본도 그렇고, 사람이 직접 그린 도형도
+   그렇다 — 그것이 **지금 차에 실린 그림**이다. 그래서 면 아래 `FS:` 없는 덩어리는
+   레이어를 면 유닛 그대로 도안 파일로 떠서 항등 배치로 조리법에 올리고, 꾸밈은
+   그 위에 짓는다. 다음 굽기부터는 `FS:decal-<n>` 덩어리라 1번 규칙을 탄다.
+   숨긴 그룹·래스터 로고·안내선만 종전처럼 원본 노드째 옮겨 실린다.
 
 ## 시키지 않은 것은 안 한다
 
@@ -41,22 +45,25 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
 
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from ...i18n import msg
 from ...paths import find_run_file, run_file
 from ..catalog import Catalog, default_catalog_path
-from ..model import LayerPlan
+from ..model import Layer, LayerPlan
 from . import bridge, folder, header as hdr, project
-from .binfmt import decompose, mat_mul, transform_matrix
+from .binfmt import IDENTITY, decompose, mat_mul, transform_matrix
 from .livery import SLOTS
 
 STATE_SUFFIX = ".fsitasha.json"
 STATE_VERSION = 1
 # 구성기가 쓰는 도안 파일 이름 머리 (`compose.build` — `decal-<i>.json`).
 DECAL = "decal-"
+# 편집기에서 받은 도안이 사는 작업 폴더 안 자리 (`_adopt`).
+ADOPTED_DIR = "adopted"
 
 
 # ────────────────────────────── 조리법 ──────────────────────────────
@@ -120,6 +127,7 @@ def open_project(project_path: str | Path, *,
     st = Studio(path=p, doc=doc, state=state, notes=[])
     _learn_car(st, geometry)
     _absorb(st)
+    _adopt(st)
     return st
 
 
@@ -240,6 +248,139 @@ def _absorb(st: Studio) -> None:
         st.state["designs"] = kept
 
 
+def _adopt(st: Studio) -> None:
+    """`FS:` 머리가 없는 덩어리 — 가른 조각·사본·손으로 그린 것 — 를 **도안으로 받는다**.
+
+    편집기에서 도안 그룹을 [선으로 가르기]로 가르면 조각은 `FS:` 머리를 잃고,
+    베끼면 사본도 그렇다. 그 조각들이 지금 차에 실린 그림인데 조리법은 모르니
+    꾸밈이 "올린 도안이 없다"로 섰다. 그래서 **지금 프로젝트에 있는 것이 도안**이다:
+    면 아래 `FS:` 없는 덩어리마다 레이어를 면 유닛 그대로 도안 파일로 뜨고, 항등
+    배치(x·y 0 · 캔버스 1유닛 = 면 1유닛 · 회전 0)로 조리법에 올린다. 배치·색을
+    다시 계산하는 것은 없다 — 사람이 둔 자리가 그대로 도안의 자리다. 다음
+    굽기부터 그 조각은 `FS:decal-<n>` 덩어리라 옮긴 자리도 되돌아온다 (`_absorb`).
+
+    받는 단위는 면 아래 **최상위 덩어리 하나**다 — 그룹은 그룹째 도안 하나, 그룹
+    밖 낱 도형은 면마다 한 도안으로 묶는다. 안 받는 것은 셋이다: 숨긴 그룹(화면
+    상태이지 내용이 아니다), 래스터 로고(카탈로그 밖 그림), 안내선. 그것들은
+    종전처럼 원본 노드째 남아 다시 구울 때 그대로 실린다 (`_restore_foreign`).
+    """
+    gu = _group_unit_of(st)
+    leftover: dict[str, list] = {}
+    added = 0
+    for node in (st.doc.get("root") or {}).get("children") or []:
+        if not isinstance(node, dict) or node.get("kind") != "group":
+            continue
+        if not node.get("is_livery_section"):
+            continue
+        slot = int(node.get("livery_section_slot", -1))
+        if not 0 <= slot < len(SLOTS):
+            continue
+        surface = SLOTS[slot][0]
+        gm = mat_mul(IDENTITY, _node_matrix(node))
+        loose: list[Layer] = []
+        rest: list[dict] = []
+        for kid in node.get("children") or []:
+            if not isinstance(kid, dict):
+                continue
+            name = str(kid.get("name") or "")
+            if kid.get("kind") == "group" and name.startswith(project.CHUNK_PREFIX):
+                continue                       # 구성기 몫 — 조리법이 이미 안다
+            layers, keep = _peel(kid, gm)
+            if keep is not None:
+                rest.append(keep)
+            if not layers:
+                continue
+            if kid.get("kind") == "group":
+                _adopt_one(st, surface, name or msg("이름 없는 그룹"), layers, gu)
+                added += 1
+            else:
+                loose += layers
+        if loose:
+            _adopt_one(st, surface, msg("낱 도형"), loose, gu)
+            added += 1
+        if rest:
+            leftover[surface] = rest
+    st.state["foreign"] = leftover
+    if added:
+        st.notes.append(msg("편집기의 덩어리 {n}개를 도안으로 받았다 — 지금 자리 그대로",
+                            n=added))
+
+
+def _node_matrix(node: dict):
+    t = node.get("transform") or {}
+    return transform_matrix(
+        float(t.get("x", 0.0)), float(t.get("y", 0.0)),
+        float(t.get("scale_x", 1.0)), float(t.get("scale_y", 1.0)),
+        float(t.get("rotation", 0.0)), float(t.get("skew", 0.0)))
+
+
+def _peel(node: dict, gm) -> tuple[list[Layer], dict | None]:
+    """노드 하나 → (받을 레이어들, 못 받아 그대로 둘 노드).
+
+    그룹은 변환을 접어 내려가며 벡터 도형을 레이어로 뜬다 (`project._layer_of`
+    — 되읽기와 같은 식). 못 받는 것(숨긴 그룹·래스터·안내선)만 남긴 사본이
+    둘째 값이다 — 받은 도형이 사본에도 남으면 두 겹으로 실린다."""
+    kind = node.get("kind")
+    if kind == "guide":
+        return [], node
+    if kind == "group":
+        if node.get("visible") is False:
+            return [], node
+        m = mat_mul(gm, _node_matrix(node))
+        layers: list[Layer] = []
+        kept: list[dict] = []
+        for kid in node.get("children") or []:
+            if not isinstance(kid, dict):
+                continue
+            ls, keep = _peel(kid, m)
+            layers += ls
+            if keep is not None:
+                kept.append(keep)
+        if not kept:
+            return layers, None
+        rest = dict(node)
+        rest["children"] = kept
+        return layers, rest
+    lay = project._layer_of(node, gm)
+    if lay is None:
+        return [], node
+    return [lay], None
+
+
+def _adopt_one(st: Studio, surface: str, name: str, layers: list[Layer],
+               group_unit: float) -> None:
+    """레이어 묶음 하나를 도안 파일로 떠서 항등 배치로 조리법에 올린다.
+
+    파일 이름은 **내용 서명**이다 — 같은 덩어리를 다시 열어도 같은 파일이라
+    `state`를 몇 번 읽어도 늘지 않고, 구성기가 지우는 이름(`decal-*`)과도 안
+    겹친다. 캔버스 1유닛 = 면 1유닛이 되게 스케일은 `1/group_unit`이다
+    (`compose.ManualPlace` — 표시 스케일이 `scale × group_unit`)."""
+    plan = LayerPlan(source_image=name, image_size=(0, 0), units_per_px=1.0,
+                     layers=list(layers))
+    sig = hashlib.sha1(json.dumps([asdict(l) for l in layers], sort_keys=True)
+                       .encode("utf-8")).hexdigest()[:10]
+    p = st.work / ADOPTED_DIR / f"{surface}-{sig}.json"
+    if not p.is_file():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        plan.save(p)
+    st.designs.append({
+        "plan": str(p), "surface": surface, "x": 0.0, "y": 0.0,
+        "scale": round(1.0 / max(1e-9, group_unit), 6), "rot": 0.0,
+        "mirror": False, "adopted": name})
+    st.notes.append(msg("{surface}: 편집기의 '{name}' {n:,}장을 도안으로 받았다",
+                        surface=surface, name=name, n=len(layers)))
+
+
+def _group_unit_of(st: Studio) -> float:
+    """구성기가 이 판에 쓸 `group_unit` — 차 이름을 **같은 문**으로 정한다
+    (`auto.itasha.compose_config`: 조리법의 차, 없으면 면 탭 실측표의 차)."""
+    from ...game import body as gbody
+    from ..compose.boxes import _group_unit
+
+    car = st.state.get("car") or gbody.tab_table().get("car")
+    return _group_unit(car)
+
+
 # ────────────────────────────── 굽기 ──────────────────────────────
 
 
@@ -320,7 +461,7 @@ def _write_project(st: Studio, cfg_path: Path) -> tuple[dict, dict]:
 
 
 def _restore_foreign(doc: dict, foreign: dict) -> None:
-    """사람이 편집기에서 직접 그린 노드를 면 그룹에 도로 얹는다 (맨 위)."""
+    """도안으로 못 받은 노드(숨긴 그룹·래스터·안내선)를 면 그룹에 도로 얹는다 (맨 위)."""
     if not foreign:
         return
     slot_of = {surface: slot for slot, (surface, _l) in enumerate(SLOTS)}
@@ -787,3 +928,8 @@ def clean_work(st: Studio) -> None:
         p.unlink(missing_ok=True)
     for p in st.work.glob("shapes-*.json"):
         p.unlink(missing_ok=True)
+    # 받은 도안 중 조리법이 더는 안 가리키는 것 — 가른 조각을 다시 갈랐거나 지운 것
+    keep = {Path(d["plan"]).resolve() for d in st.designs}
+    for p in (st.work / ADOPTED_DIR).glob("*.json"):
+        if p.resolve() not in keep:
+            p.unlink(missing_ok=True)
