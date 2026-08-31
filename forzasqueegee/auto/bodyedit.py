@@ -419,8 +419,17 @@ class BodyEditor:
                 time.sleep(0.45)
             if row and not fresh:
                 return                      # 이 줄에 새것이 없다 = 다 봤다
-            gio.press("down")
-            time.sleep(0.5)
+            # **줄 내리기는 확인하고 간다** — 전환 애니메이션이 down을 먹으면
+            # 같은 줄을 다시 걸어 "다 본 장수"만 만나고 조기 종료한다 (2026-08-31
+            # 실측: 2행의 deco 그룹을 세 번 연속 못 봤다). 라임 테두리 행이
+            # 바뀔 때까지 최대 3번 누른다 (못 읽으면 한 번 누른 것으로 친다).
+            before = self.group_cell()
+            for _try in range(3):
+                gio.press("down")
+                time.sleep(0.7)
+                now = self.group_cell()
+                if before is None or now is None or now[0] != before[0]:
+                    break
 
     def find_group(self, layers: int, max_cells: int = 40) -> None:
         """그리드에서 **레이어 수가 `layers`인** 항목을 찾아 포커스한 채로 멈춘다.
