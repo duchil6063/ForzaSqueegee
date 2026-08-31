@@ -63,6 +63,18 @@ UPSTREAM = "https://github.com/Arstz/ForzaLiveryStudio.git"
 # 패치가 얹히는 업스트림 고정점 (태그 1.2.1). 올릴 때는 여기와 패치를 같이 옮긴다.
 PIN = "5e890e1766eedd884cfa0d1234e135431bb7cdde"
 
+# 우리가 고친 것 — AGPL §5(a)가 요구하는 "무엇을 고쳤나"다. `_notice`가 이대로
+# 바이너리 옆 고지에 싣고, 개수가 `tools/fls-patch/*.patch`와 어긋나면 멈춘다.
+# 패치를 더하거나 뺄 때 여기도 같이 고친다 (순서는 패치 번호순).
+CHANGES = (
+    "**build** — Qt 플러그인 자리를 vcpkg 배치 가정 없이 찾도록 고침",
+    "**itasha** — [Itasha] 메뉴(리버리 한 벌 짓기) · 창 없는 면 기하 덤프\n"
+    "   (`--itasha-dump`) · [Edit → Split Selection at a Line]",
+    "**i18n** — 한국어 UI(내장 영→한 대응표)와 언어 설정, 한국어가 기본",
+    "**itasha** — [Auto Decoration...] 창 하나로 구성 계열 · 무늬 계열 ·\n"
+    "   바탕 도색 · 캐릭터 이름 글자를 짜서 엔진에 한 번에 넘긴다",
+)
+
 CMAKE_ARGS = [
     "-DCMAKE_BUILD_TYPE=Release",
     "-DFLS_ENABLE_CUDA=OFF",          # 선택 기능 — 툴킷 없이 짓는다
@@ -295,6 +307,14 @@ def _head() -> str:
 
 def _notice(binary_zip: str, source_zip: str) -> str:
     """바이너리 옆에 서는 고지 — AGPL §5(a)·§6(d)가 요구하는 것을 한 장에."""
+    patches = sorted(PATCH_DIR.glob("*.patch"))
+    if len(patches) != len(CHANGES):
+        raise SystemExit(
+            f"고지가 실제 수정과 어긋난다 — 패치 {len(patches)}개인데 CHANGES는 "
+            f"{len(CHANGES)}줄이다.\n"
+            f"AGPL §5(a) 고지가 무엇을 고쳤는지 다 적어야 한다 — "
+            f"`tools/fls_build.py`의 CHANGES를 맞추세요.")
+    changed = "\n".join(f"{i}. {c}" for i, c in enumerate(CHANGES, 1))
     return f"""# ForzaLiveryStudio — ForzaSqueegee 수정판
 
 이 프로그램은 [ForzaLiveryStudio](https://github.com/Arstz/ForzaLiveryStudio)
@@ -302,12 +322,9 @@ def _notice(binary_zip: str, source_zip: str) -> str:
 
 ## 무엇을 고쳤나 (AGPL-3.0 §5(a))
 
-업스트림 고정 커밋 `{PIN}` (태그 1.2.1) 위에 세 갈래를 얹었습니다:
+업스트림 고정 커밋 `{PIN}` (태그 1.2.1) 위에 다음을 얹었습니다:
 
-1. **build** — Qt 플러그인 자리를 vcpkg 배치 가정 없이 찾도록 고침
-2. **itasha** — [Itasha] 메뉴(리버리 한 벌 짓기) · 창 없는 면 기하 덤프
-   (`--itasha-dump`) · [Edit → Split Selection at a Line]
-3. **i18n** — 한국어 UI(내장 영→한 대응표)와 언어 설정, 한국어가 기본
+{changed}
 
 수정자는 ForzaSqueegee contributors이고, 날짜는 함께 실린 대응 소스의 각 커밋에
 있습니다.
@@ -315,7 +332,7 @@ def _notice(binary_zip: str, source_zip: str) -> str:
 ## 대응 소스 (AGPL-3.0 §6)
 
 **같은 릴리스의 `{source_zip}`이 이 바이너리의 대응 소스 전부입니다** — 업스트림
-고정 커밋에 위 세 갈래를 얹은 완전한 트리이고, 그것만으로 이 바이너리를 다시
+고정 커밋에 위의 것을 모두 얹은 완전한 트리이고, 그것만으로 이 바이너리를 다시
 지을 수 있습니다. 짓는 법은 그 안의 `BUILD.md`에 있습니다.
 
 ## 함께 실린 제3자 구성 요소

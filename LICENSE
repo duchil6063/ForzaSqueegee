@@ -24,11 +24,13 @@ SOFTWARE.
 
 ## 이 MIT가 적용되는 곳
 
-`forzasqueegee/`·`tools/`·`catalog/`의 **코드**에 적용된다. 그중 일부는 다른
-MIT 프로젝트에서 **이식한 파생물**이다 — `forzasqueegee/engine/galatea/`,
-`forzasqueegee/engine/kfpsjson.py`, `forzasqueegee/kfpseditor.py`는
-kloudys-forza-painter-suite(MIT)에서 왔고, 그 저작권 고지가 파일 머리와
-`THIRD_PARTY_NOTICES.md`에 함께 실린다 (MIT가 요구하는 대로).
+`forzasqueegee/`·`tools/`·`catalog/`의 **우리가 쓴 코드와 자료**에 적용된다
+(`catalog/` 안에서 게임에서 뽑아낸 것과 동봉 글꼴은 빼고 — 아래를 보라). 그중
+일부는 다른 MIT 프로젝트에서 **이식한 파생물**이다 —
+`forzasqueegee/engine/galatea/`, `forzasqueegee/engine/kfpsjson.py`,
+`forzasqueegee/kfpseditor.py`는 kloudys-forza-painter-suite(MIT)에서 왔고, 그
+저작권 고지가 파일 머리와 `THIRD_PARTY_NOTICES.md`에 함께 실린다 (MIT가
+요구하는 대로).
 
 ## 이 MIT가 **적용되지 않는** 곳
 
@@ -53,6 +55,14 @@ kloudys-forza-painter-suite(MIT)에서 왔고, 그 저작권 고지가 파일 �
     게임 자료에 대한 권한이 아니다)
   - `vendor/kfps-editor/Resources/`(도형 메시 2,800파일)는 **저장소에 없다** —
     편집기를 처음 열 때 KFPS 고정 커밋에서 받는다 (`tools/get_kfps.py`)
+
+- **`catalog/fonts/` — SIL Open Font License 1.1.** 캐릭터 이름 글자를 짓는 데
+  쓰는 글꼴 여섯 벌(Audiowide · Great Vibes · Kaushan Script · Poppins ·
+  Racing Sans One · Sedgwick Ave)이다. 저작권은 각 글꼴 저작자에게 있고 폴더마다
+  원본 `OFL.txt`가 글꼴과 같이 있다. 우리는 글꼴 파일을 고치지도 이름을 바꾸지도
+  않는다 — 글꼴로 글자를 그려 그 그림을 게임 도형으로 덮을 뿐이고, OFL은 글꼴로
+  만든 결과물에는 조건을 걸지 않는다. 저작권 줄과 전문은
+  `THIRD_PARTY_NOTICES.md`.
 
 - **동봉·수신하는 제3자 구성 요소** — 각자의 라이선스를 따른다. 전문과 출처는
   `THIRD_PARTY_NOTICES.md`:

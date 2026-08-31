@@ -232,7 +232,7 @@ python -m forzasqueegee --lang en …    # 이번 실행만 · this run only
 
 ## 라이선스
 
-이 저장소에서 직접 작성한 코드는 **MIT**입니다 ([LICENSE](LICENSE)). 다만 두
+이 저장소에서 직접 작성한 코드는 **MIT**입니다 ([LICENSE](LICENSE)). 다만 세
 가지는 MIT가 아니니 함께 봐 주세요:
 
 - **`tools/fls-patch/*.patch`는 AGPL-3.0-or-later** 입니다. AGPL 저작물인
@@ -241,6 +241,9 @@ python -m forzasqueegee --lang en …    # 이번 실행만 · this run only
 - **`catalog/`와 `vendor/kfps-editor/Resources/`의 게임 자료는 저희 것이
   아닙니다.** FH6 설치 에셋에서 뽑았거나 인게임 실측으로 뜬 것이라 저작권은
   각 권리자에게 있고, 저희는 여기에 어떤 라이선스도 부여하지 않습니다.
+- **`catalog/fonts/`의 글꼴 여섯 벌은 OFL-1.1** 입니다. 캐릭터 이름 글자를
+  짓는 데 쓰고, 저작권은 각 글꼴 저작자에게 있으며 폴더마다 원본 `OFL.txt`가
+  같이 있습니다. 글꼴 파일 자체는 고치지 않습니다.
 
 함께 쓰는 제3자 구성 요소는 각자의 라이선스를 따릅니다 — KFPS(MIT) ·
 Fabric.js(MIT) · AniLines(MIT) · Real-ESRGAN(BSD-3) · isnet-anime(Apache-2.0).

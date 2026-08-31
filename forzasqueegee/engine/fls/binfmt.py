@@ -3,6 +3,8 @@
 `C_group`·`C_livery`는 **게임이 제 저장 폴더에 쓰는 파일 그대로**다. 규격은
 ForzaLiveryStudio(AGPL-3.0)의 문서와 코덱에서 왔고, 여기 있는 것은 그 규격을
 파이썬으로 다시 쓴 것이다 (판정 기준·상수는 `docs/CGROUP.md`·`docs/CLIVERY.md`).
+저쪽에서 가져온 것은 **파일이 어떻게 생겼나라는 사실**뿐이고 코드는 한 줄도
+옮기지 않았다 — 그래서 이 파일은 AGPL의 파생물이 아니다 (`THIRD_PARTY_NOTICES.md`).
 
 ## 좌표·색은 우리 레이어와 1:1이다
 
