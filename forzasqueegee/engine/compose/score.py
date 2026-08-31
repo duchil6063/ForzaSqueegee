@@ -38,7 +38,7 @@ from .roles import RolePalette
 
 
 WEIGHTS = {
-    "readability": 2.0, "face": 2.0, "balance": 0.8, "clutter": 1.0,
+    "readability": 2.0, "face": 2.0, "balance": 1.8, "clutter": 1.0,
     "negative": 0.8, "flow": 1.0, "cohesion": 0.6, "integration": 1.4,
     "continuity": 0.5, "orphan": 0.6, "hierarchy": 1.4,
 }
