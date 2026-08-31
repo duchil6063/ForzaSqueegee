@@ -65,11 +65,13 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     autoplace   자동 자리 — 편집기가 도안을 처음 앉히는 그 자리.
     surfshapes  면에 직접 놓는 꾸밈 — 관통 띠 · 산포 모티프의 도형 명세.
     intent      도안 읽기 2단계 — 실루엣 · 머리 · 포즈 축 · 디테일 · 색 역할 씨앗.
+    graph       구성 그래프 — 요소가 아니라 요소 **사이**를 적는다 (관계 문법).
     roles       역할 팔레트 — 베이스 · 베드 · 주/부 액센트 · 그림자 · 하이라이트 · 무채.
     field       구성 필드 — 배치 둘레의 보호 · 지지 · 장식 · 여백 구역과 흐름.
     bed         캐릭터 베드 — 인물 뒤 큰 색면 (판 · 쐐기 · 슬래브 · 덩어리) + 키라인.
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
     families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
+    critic      구도 비평 — 같은 합성을 세 배율(멀리·중간·가까이)로 재는 자.
     score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
     textspec    텍스트 스펙 — 사람이 넣은 이름·작품명과 옵션 (기본 꺼짐).
     textstyle   텍스트 스타일 — 계열·인상이 글꼴을, 역할 팔레트가 색을 준다.
@@ -138,6 +140,10 @@ from .surfshapes import (
 from .intent import DesignIntent, read_intent
 from .roles import RolePalette, role_palette
 from .field import CompositionField, build_field
+from .critic import Critique, critique
+from .graph import (
+    CompositionGraph, DEFAULT_GRAMMAR, Node, RELATIONS, ROLES, Rel, derive,
+    relation_score)
 from .bed import bed_layers, keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families

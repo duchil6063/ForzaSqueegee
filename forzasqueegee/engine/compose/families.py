@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .graph import DEFAULT_GRAMMAR
 from .intent import DesignIntent
 from .look import Look
 
@@ -32,6 +33,13 @@ class Family:
     other_density: float        # 다른 면 모티프 수 배율
     torn: bool = False          # 베드 흐름 끝을 뜯는다 (스플래시)
     text_budget: float = 1.0    # 글자 장수 예산 배율 (여백 계열은 글자도 절제한다)
+    # 계열이 **덧붙이는** 관계 문법 (`graph`) — 공통 문법 위에 더한다.
+    # (관계, 노드 a, 노드 b, 가중치). 없는 노드를 가리키면 안 센다.
+    grammar: tuple[tuple[str, str, str, float], ...] = ()
+
+    def rels(self) -> tuple[tuple[str, str, str, float], ...]:
+        """이 계열이 지키려는 관계 전부 — 공통 문법 + 제 몫."""
+        return DEFAULT_GRAMMAR + self.grammar
 
 
 FAMILIES: dict[str, Family] = {
@@ -39,27 +47,39 @@ FAMILIES: dict[str, Family] = {
     "minimal": Family("minimal", bed="slab", bed_level=0.35, motif_n=7,
                       tier_scale=0.75, rocker=False, top_stripe=False, front_n=1,
                       empty_target=0.92, clutter=(0.03, 0.12), echo=False,
-                      flows=("auto",), other_density=0.45, text_budget=0.5),
+                      flows=("auto",), other_density=0.45, text_budget=0.5,
+                      # 덧붙일 것이 없다 — 공통 문법(품되 삼키지 않는 판 · 무리와
+                      # 여백의 맞섬)이 그대로 이 계열의 이치다
+                      ),
     # 그래픽 베드 — 인물 뒤 큰 색면이 구도를 잡고 모티프는 그 가장자리에
     "graphic_bed": Family("graphic_bed", bed="plate", bed_level=0.75, motif_n=14,
                           tier_scale=0.95, rocker=True, top_stripe=False, front_n=2,
                           empty_target=0.75, clutter=(0.10, 0.28), echo=True,
-                          flows=("auto", "rear", "front"), other_density=0.8),
+                          flows=("auto", "rear", "front"), other_density=0.8,
+                          # 무리는 판 **가장자리**에 선다 — 판 위에 얹으면 판이
+                          # 얼룩이 되고 무리도 안 읽힌다
+                          grammar=(("avoids", "motif", "macro0", 0.8),)),
     # 사선 흐름 — 대각 판 둘이 인물을 지나 흐르고 모티프가 그 결을 따른다
     "diagonal_flow": Family("diagonal_flow", bed="wedge", bed_level=0.65, motif_n=16,
                             tier_scale=0.9, rocker=True, top_stripe=True, front_n=3,
                             empty_target=0.65, clutter=(0.12, 0.32), echo=True,
-                            flows=("auto", "rear"), other_density=1.0),
+                            flows=("auto", "rear"), other_density=1.0,
+                            # 사선 둘이 서로를 **가로질러야** 흐름이 난다
+                            grammar=(("counter_to", "macro1", "macro0", 1.0),)),
     # 모터스포츠 — 로커·스트라이프 등 직선 요소, 베드는 낮은 슬래브, 모티프는 적게
     "motorsport": Family("motorsport", bed="slab", bed_level=0.55, motif_n=9,
                          tier_scale=0.8, rocker=True, top_stripe=True, front_n=1,
                          empty_target=0.80, clutter=(0.08, 0.24), echo=True,
-                         flows=("rear", "front"), other_density=0.6, text_budget=0.8),
+                         flows=("rear", "front"), other_density=0.6, text_budget=0.8,
+                         # 로커가 띠를 이어 받는다 (레이싱 그래픽의 직선 계열)
+                         grammar=(("continues", "rocker", "macro0", 0.6),)),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
     "splash": Family("splash", bed="blob", bed_level=0.8, motif_n=22,
                      tier_scale=1.05, rocker=True, top_stripe=False, front_n=4,
                      empty_target=0.5, clutter=(0.18, 0.45), echo=True,
-                     flows=("auto",), other_density=1.25, torn=True),
+                     flows=("auto",), other_density=1.25, torn=True,
+                     # 전경 조각이 인물을 스치고 지난다 (장면 안의 인물)
+                     grammar=(("overlaps", "front", "hero", 0.6),)),
 }
 
 

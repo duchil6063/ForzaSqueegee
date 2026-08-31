@@ -85,6 +85,9 @@ class Critique:
     parts: dict[str, float] = field(default_factory=dict)
     info: dict[str, float] = field(default_factory=dict)
     fails: tuple[str, ...] = ()
+    # 가장 큰 빈 덩이의 상자 (프레임 좌표) — 구성 그래프의 `negative` 노드가
+    # 이걸 쓴다 (`graph.derive`). 없으면 None.
+    neg_box: tuple[float, float, float, float] | None = None
 
 
 def _lum(img: np.ndarray) -> np.ndarray:
@@ -222,7 +225,7 @@ def rhythm(motifs: list[tuple[float, float, float, int]]) -> tuple[float, dict]:
     변하나(같은 간격이면 기계, 제멋대로면 뿌린 것) · 크기 층이 셋 이상인가.
     """
     if len(motifs) < 3:
-        return 0.5, {"r_tau": 0.0, "r_gap": 0.0, "r_tiers": float(len(motifs))}
+        return 0.5, {"r_tau": 0.0, "r_gap_cv": 0.0, "r_tiers": float(len(motifs))}
     xs = np.array([m[0] for m in motifs], np.float64)
     ys = np.array([m[1] for m in motifs], np.float64)
     d, _e = major_axis(xs, ys)
@@ -246,7 +249,8 @@ def rhythm(motifs: list[tuple[float, float, float, int]]) -> tuple[float, dict]:
 
 
 def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
-                   cell: float, char_w: float) -> tuple[float, dict]:
+                   cell: float, char_w: float, x0: float = 0.0, y_top: float = 0.0
+                   ) -> tuple[float, dict, tuple[float, float, float, float] | None]:
     """여백이 **꼴을 가졌나** — 가장 큰 빈 덩이의 넓이와 채움, 그리고 시선 앞.
 
     지금 자(`score`의 `negative`)는 "여백 구역에 모티프가 없나"만 물어서 33판이
@@ -255,7 +259,7 @@ def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
     """
     empty = (room & ~(ink > 0.5)).astype(np.uint8)
     if not empty.any():
-        return 0.0, {"n_area": 0.0, "n_fill": 0.0, "n_gaze": 0.0}
+        return 0.0, {"n_area": 0.0, "n_fill": 0.0, "n_gaze": 0.0}, None
     n, lbl, st, cen = cv2.connectedComponentsWithStats(empty, 8)
     tot = float(room.sum()) or 1.0
     best, ba = None, 0.0
@@ -267,6 +271,10 @@ def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
     w = float(st[best, cv2.CC_STAT_WIDTH])
     h = float(st[best, cv2.CC_STAT_HEIGHT])
     fill = ba / max(1.0, w * h)
+    bx = float(st[best, cv2.CC_STAT_LEFT])
+    by = float(st[best, cv2.CC_STAT_TOP])
+    box = (x0 + bx * cell, y_top - (by + h) * cell,
+           x0 + (bx + w) * cell, y_top - by * cell)
     gaze = 0.0
     if head_c is not None and abs(face_dir) > 0.15:
         # 시선 앞 한 칸 — 얼굴에서 얼굴이 보는 쪽으로 인물 폭의 0.6배 자리가
@@ -278,7 +286,7 @@ def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
             gaze = float(empty[max(0, gy - 2):gy + 3, max(0, gx - 2):gx + 3].mean())
     sc = _band(area, *NEG_AREA, soft=0.22) * (0.55 + 0.45 * min(1.0, fill / NEG_FILL))
     return min(1.0, sc + 0.10 * gaze), {
-        "n_area": area, "n_fill": fill, "n_gaze": gaze}
+        "n_area": area, "n_fill": fill, "n_gaze": gaze}, box
 
 
 def gesture(bl: list[dict], vc: tuple[float, float], gestures,
@@ -323,13 +331,15 @@ def critique(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
     far, mid = scales(lum, cols)
     k = max(1, _odd(FAR_FRAC * cols) // 2)
     bl = blobs(deco_alpha, mid, base_lum, room)
+    ns, ni, neg_box = negative_shape(ink, room, head_c, face_dir, cell, char_w,
+                                     x0=x0, y_top=y_top)
     parts: dict[str, float] = {}
     info: dict[str, float] = {}
     for name, (v, i) in (
             ("focal", focal(far, sil, bl, k)),
             ("macro", macro(bl, float(sil.sum()), float(room.sum()))),
             ("rhythm", rhythm(motifs)),
-            ("negative_shape", negative_shape(ink, room, head_c, face_dir, cell, char_w)),
+            ("negative_shape", (ns, ni)),
             ("gesture", gesture(bl, visual_center, gestures, cell, x0, y_top))):
         parts[name] = float(v)
         info.update({k2: float(v2) for k2, v2 in i.items()})
@@ -338,4 +348,4 @@ def critique(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
     # HERO_PULL_MIN 배에 해당하는 지점 아래) 그건 이타샤가 아니다
     if info.get("focal_ratio", 1.0) < HERO_PULL_MIN / (1.0 + HERO_PULL_MIN):
         fails.append("hero")
-    return Critique(parts=parts, info=info, fails=tuple(fails))
+    return Critique(parts=parts, info=info, fails=tuple(fails), neg_box=neg_box)

@@ -36,6 +36,7 @@ from ..render import render_plan
 from .boxes import major_axis
 from .critic import critique
 from .field import CompositionField
+from .graph import CompositionGraph, Node, relation_score
 from .roles import RolePalette
 
 
@@ -51,6 +52,8 @@ WEIGHTS = {
     # 먼저 읽히나"와 "큰 덩어리가 무게를 나눠 쥐나"다 — 자동 생성 티의 두 뿌리다.
     "focal": 2.0, "macro": 2.2, "rhythm": 1.2, "negative_shape": 1.0,
     "gesture": 0.8,
+    # 요소 사이 — 구성 그래프의 문법이 지켜졌나 (`graph.DEFAULT_GRAMMAR`)
+    "relations": 1.6,
 }
 
 
@@ -194,7 +197,8 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
                  extra: dict[str, float] | None = None,
                  extra_weights: dict[str, float] | None = None,
                  text: tuple[np.ndarray, np.ndarray] | None = None,
-                 front_raster: tuple[np.ndarray, np.ndarray] | None = None) -> ScoreCard:
+                 front_raster: tuple[np.ndarray, np.ndarray] | None = None,
+                 graph: CompositionGraph | None = None) -> ScoreCard:
     """`extra`는 다른 자(텍스트 — `textscore`)가 낸 항목들 — 같은 표에 가중합한다."""
     g = fld.grid
     comp = composite(fld, pal, cat, back, front, text=text, front_raster=front_raster)
@@ -342,6 +346,22 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
                                    fld.texture_coherence),))
     parts.update(cr.parts)
     info.update(cr.info)
+    # 17) **관계** — 구성 그래프의 문법이 이 기하에서 지켜졌나 (`graph`).
+    #     여백 노드는 여기서 붙인다 (가장 큰 빈 덩이는 비평이 찾는다).
+    if graph is not None:
+        if cr.neg_box is not None:
+            fa = max(1e-6, (fld.frame_box[2] - fld.frame_box[0])
+                     * (fld.frame_box[3] - fld.frame_box[1]))
+            nb = cr.neg_box
+            graph.add(Node(id="neg", role="negative",
+                           at=((nb[0] + nb[2]) / 2, (nb[1] + nb[3]) / 2),
+                           axis=(1.0, 0.0),
+                           extent=(nb[2] - nb[0], nb[3] - nb[1]), box=nb,
+                           weight=(nb[2] - nb[0]) * (nb[3] - nb[1]) / fa,
+                           kind="void", z=0))
+        rv, rinfo = relation_score(graph)
+        parts["relations"] = rv
+        info.update(rinfo)
     parts = {k: float(v) for k, v in parts.items()}
     info = {k: float(v) for k, v in info.items()}
     # ---- 탈락 조건 (가중합에 안 섞는다) ----

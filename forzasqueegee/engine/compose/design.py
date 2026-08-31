@@ -33,6 +33,7 @@ from .bed import bed_layers, keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field
+from .graph import Rel, derive
 from .intent import DesignIntent
 from .look import Look
 from .place import _refit_canvas
@@ -367,12 +368,18 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         if text_on:
             extra = text_parts(fld, cat, ts.poses if ts else [], tl, behind,
                                front_alpha=front_ras[1])
+        # **구성 그래프** — 지어 놓은 부품에서 역할 노드를 되읽고 계열의 문법을
+        # 건다 (`graph`). 점수가 "무엇이 있나"가 아니라 "무엇과 무엇이 어떤
+        # 사이인가"를 잴 수 있게 하는 자리다. 여백 노드는 점수기가 붙인다.
+        gr = derive(fld, back, front, stats,
+                    text_poses=(ts.poses if ts is not None else None))
+        gr.rels = tuple(Rel(k, a, b, w) for k, a, b, w in fam.rels())
         # 점수용 합성: 글자 그룹은 꾸밈 그룹 **위**·도안 아래에 선다
         card = score_design(fld, pal, cat, back, front,
                             clutter_target=fam.clutter, empty_target=fam.empty_target,
                             motifs=stats, rocker=fam.rocker,
                             extra=extra, extra_weights=TEXT_WEIGHTS,
-                            text=text_ras, front_raster=front_ras)
+                            text=text_ras, front_raster=front_ras, graph=gr)
         return Design(family=fam, pal=pal, fld=fld, back=back, front=front, score=card,
                       flow_rear=(fld.flow[0] * rear_sign) > 0, level=level,
                       keyline=keyline, text=ts, text_plan=tplan, text_style=tstyle,
