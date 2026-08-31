@@ -360,6 +360,45 @@ def dump(media: str, out: str | Path | None = None,
     return dst
 
 
+def adopt(media: str, src: str | Path) -> Path | None:
+    """편집기가 준 덤프를 **우리 자리로 들인다** (`work/geom/<미디어>.fsgeom`).
+
+    편집기는 항목마다 `--geometry <미디어>.fsgeom`을 제 작업 폴더에 떠서 준다
+    (`fls.studio`). 조회는 미디어명 하나로 도는 편이 단순하므로, 그 파일을
+    여기로 옮겨 두고 `for_car`가 늘 같은 자리를 보게 한다. 같은 내용이면
+    아무것도 안 한다.
+    """
+    p = Path(src)
+    dst = path_for(media)
+    try:
+        if not p.is_file() or p.resolve() == dst.resolve():
+            return dst if dst.exists() else None
+        if dst.exists() and dst.stat().st_size == p.stat().st_size:
+            return dst
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(p.read_bytes())
+    except OSError:
+        return dst if dst.exists() else None
+    for_car.cache_clear()
+    return dst
+
+
+def ensure(media: str | None) -> "CarGeom | None":
+    """그 차의 기하 — 없으면 **그 자리에서 뜬다** (동봉 편집기, 차당 몇 초).
+
+    편집기에서 온 길은 이미 덤프를 갖고 있으므로(`adopt`) 이 길은 CLI 쪽이다.
+    못 뜨면 None이고 부르는 쪽은 마스크 노선으로 물러난다.
+    """
+    got = for_car(media)
+    if got is not None or not media:
+        return got
+    try:
+        dump(media)
+    except Exception:                              # noqa: BLE001 — 없어도 판은 선다
+        return None
+    return for_car(media)
+
+
 @lru_cache(maxsize=8)
 def for_car(media: str | None) -> CarGeom | None:
     """차 하나의 기하 — 떠 둔 덤프가 있으면 그것. 없으면 None (안 뜬다).

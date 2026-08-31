@@ -197,6 +197,14 @@ def surfaces_for(car: str | None, media: str | None = None,
             maps.update(imaps)
             notes.append(msg("설치 파일 면 지도를 쓴다 ({media} — 면 {n}개)",
                              media=media, n=len(imaps)))
+            # **차 메시를 확보한다** — 편집기에서 온 길은 이미 갖고 있고
+            # (`fls.studio._learn_car`), CLI는 여기서 한 번 뜬다 (차당 몇 초·
+            # 2.5 MB, `work/geom`에 남아 다음부터는 공짜다). 못 뜨면 조용히
+            # 마스크 노선으로 간다.
+            from ...game import fsgeom
+            if fsgeom.ensure(media) is not None:
+                notes.append(msg("차 메시 기하를 쓴다 ({media}) — 껍질·윗면 유리",
+                                 media=media))
             # 실루엣이 아예 없는 백지 마스크(상자 전부 흰 판)는 아무것도 말해
             # 주지 않는다 — 실제 보이는 영역은 훨씬 좁을 수 있다 (CRX Mugen의
             # front가 그렇다: 마스크는 353×175 전부인데 실차는 범퍼 띠뿐이다).

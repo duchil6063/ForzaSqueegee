@@ -141,6 +141,13 @@ def _learn_car(st: Studio, geometry: str | Path | None) -> None:
             st.state["media"] = media
             st.state["car"] = None      # 차가 바뀌면 표시 이름도 다시 잡는다
         st.state["geometry"] = str(Path(geometry).resolve())
+        # 덤프를 **우리 자리로 들인다** — 구성기는 미디어명 하나로 기하를 찾는다
+        # (`game.fsgeom.for_car`). 편집기가 제 작업 폴더에 뜬 것을 그대로 두면
+        # 꾸밈이 메시를 못 보고 마스크 노선으로 물러난다.
+        if st.state.get("media"):
+            from ...game import fsgeom
+
+            fsgeom.adopt(st.state["media"], geometry)
     if not st.state.get("media") and int(st.doc.get("car_id") or 0):
         st.state["media"] = _media_of_id(int(st.doc["car_id"]))
 

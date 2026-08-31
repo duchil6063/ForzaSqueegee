@@ -15,7 +15,24 @@ r"""차량 **부품 자리** — 설치 파일의 `Locators.xml`을 면 유닛�
 XML이지만 `ElementTree`로는 못 읽는다 — `BoneName="<root>"` 속성값에 홑화살괄호가
 날것으로 들어 있어 파서가 죽는다. 그래서 정규식으로 이름·이동만 뜬다.
 
-## 미터 → 면 유닛 등록 (`register`)
+## 차 메시가 있으면 등록을 안 적합한다 (2026-08-31)
+
+기하 덤프가 떠 있으면 `Registration`이 **면마다의 닫힌 식**을 그대로 쓴다
+(`game.fsgeom` — `for_car`가 붙여 준다). 아래 적합은 덤프가 없을 때의 길이다.
+갈리는 자리 둘:
+
+- **배율이 한 자가 아니다.** 아래 등방 가정은 앞·뒤 면의 **세로**에서 안 선다 —
+  덤프 14대에서 같은 물리 높이를 두 면으로 잰 값이 56% 벌어진다 (실비아 옆면
+  204 유닛/m ↔ front 87 ↔ rear 144). 메시는 면마다 제 투영을 갖는다.
+- **아치를 안 찾아도 된다.** 아래 적합은 휠아치 두 개에 직선을 맞춰 K와 u0를
+  같이 뽑는데, 아치가 얕은 차는 범퍼 어림으로 물러나며 `uncertain`이 되고
+  정밀이 필요한 자가 통째로 물러난다 (덤프 16대 중 셋). 메시는 그 셋을 세운다.
+
+다만 **x축은 여전히 적합 쪽이다** — 덤프의 x 방향과 `fold.AXES`의 x 방향이
+갈려 있다 (`game.hull.MeshHull`). 지금 이 자를 부르는 쪽이 묻는 것은 전부
+z·y축이라(옆면 부품 자리 · 리어 범퍼 높이 · 후드 u) 다툼에 안 걸린다.
+
+## 미터 → 면 유닛 등록 (`register`) — 덤프가 없을 때
 
 면 유닛은 **한 차 안에서 등방**이고(`fold.AXES` — 636대 전부 xScale=yScale=1)
 축 배치도 표가 준다. 그래서 남는 미지수는 **배율 K(유닛/m)와 면별 원점**뿐이다.
@@ -124,17 +141,43 @@ class Registration:
     v0: dict[str, float] = field(default_factory=dict)
     uncertain: bool = False
     note: str = ""
+    # 차 메시 (`game.fsgeom.CarGeom`) — 있으면 **이것이 이긴다**. 적합이 아니라
+    # 닫힌 식이고, 면마다 제 배율이라 등방 가정도 안 쓴다.
+    geom: object = field(default=None, repr=False, compare=False)
+
+    def has(self, surface: str) -> bool:
+        """이 면의 자리를 낼 수 있나 — 메시든 적합이든."""
+        au, av = _axis_of(surface, 0), _axis_of(surface, 1)
+        if au is None or av is None:
+            return False
+        if self.geom is not None and "x" not in (au[0], av[0]) \
+                and self.geom.get(surface) is not None:
+            return True
+        return surface in self.u0 and surface in self.v0
 
     def unit(self, surface: str, xyz: tuple[float, float, float]
              ) -> tuple[float, float] | None:
-        """3D 미터 점 → 그 면의 (u, v) 유닛. 등록이 없는 면이면 None."""
-        if surface not in self.u0 or surface not in self.v0:
-            return None
-        p = {"x": xyz[0], "y": xyz[1], "z": xyz[2]}
+        """3D 미터 점 → 그 면의 (u, v) 유닛. 등록이 없는 면이면 None.
+
+        **메시가 있으면 메시가 낸다.** 적합(`register`)은 배율 하나가 차 전체에
+        통한다고 보는데, 앞·뒤 면의 세로 배율은 옆면의 절반 이하다 (덤프 14대:
+        높이축이 면끼리 56% 벌어진다). 메시는 면마다 제 투영을 갖는다.
+
+        **단 x축은 안 쓴다** — 덤프의 x 방향과 `fold.AXES`의 x 방향이 갈려 있다
+        (`hull.MeshHull`). 지금 이 자를 부르는 쪽이 묻는 것은 전부 z·y축이라
+        (옆면 부품 자리 · 리어 범퍼 높이 · 후드 u) 다툼에 안 걸린다.
+        """
         au = _axis_of(surface, 0)
         av = _axis_of(surface, 1)
         if au is None or av is None:
             return None
+        side = self.geom.get(surface) if self.geom is not None else None
+        if side is not None and "x" not in (au[0], av[0]):
+            u, v = side.to_face({"x": xyz[0], "y": xyz[1], "z": xyz[2]})
+            return (float(u), float(v))
+        if surface not in self.u0 or surface not in self.v0:
+            return None
+        p = {"x": xyz[0], "y": xyz[1], "z": xyz[2]}
         return (au[1] * self.k * p[au[0]] + self.u0[surface],
                 av[1] * self.k * p[av[0]] + self.v0[surface])
 
@@ -364,7 +407,7 @@ def avoid_points(reg: Registration | None,
     한쪽에만 있고 (`carLocator_Fuel`의 x 부호가 그쪽이다) 중앙(x≈0)이면 뒤에
     있는 차라 옆면과 무관하다.
     """
-    if reg is None or reg.uncertain or surface not in reg.u0:
+    if reg is None or reg.uncertain or not reg.has(surface):
         return []
     want = "L" if surface == "side_left" else "R"
     out: list[tuple[float, float, str]] = []
@@ -416,7 +459,7 @@ def bumper_v(reg: Registration | None,
     if surface != "rear":
         return None
     p = locs.get("carLocator_bumperR")
-    if reg is None or reg.uncertain or p is None or surface not in reg.v0:
+    if reg is None or reg.uncertain or p is None or not reg.has(surface):
         return None
     uv = reg.unit(surface, p)
     return None if uv is None else round(uv[1], 1)
@@ -439,7 +482,7 @@ def hood_u(reg: Registration | None,
     (`HOOD_MIN_FRAC`) 후드 인물이 통째로 버려진다.
     """
     p = locs.get("carLocator_hood")
-    if reg is None or reg.uncertain or p is None or "top" not in reg.u0:
+    if reg is None or reg.uncertain or p is None or not reg.has("top"):
         return None
     uv = reg.unit("top", p)
     return None if uv is None else round(uv[0], 1)
@@ -494,8 +537,12 @@ def arch_fallback(media: str, maps: dict[str, SurfaceMap]
 
 @lru_cache(maxsize=8)
 def for_car(media: str) -> tuple[Registration | None, tuple]:
-    """차 하나의 (등록, 로케이터 항목들) — 캐시. 로케이터가 없으면 (None, ())."""
-    from . import carfiles
+    """차 하나의 (등록, 로케이터 항목들) — 캐시. 로케이터가 없으면 (None, ()).
+
+    **차 메시가 있으면 등록이 그 위에 선다** (`game.fsgeom`): 배율·원점을 적합
+    대신 닫힌 식으로 받으므로 휠아치를 못 찾는 차(설치본 99대)도 자리가 선다.
+    """
+    from . import carfiles, fsgeom
 
     locs = read(media)
     if not locs:
@@ -504,4 +551,20 @@ def for_car(media: str) -> tuple[Registration | None, tuple]:
         maps = carfiles.surface_maps(media)
     except (OSError, KeyError, ValueError):
         return None, ()
-    return register(maps, locs, media=media), tuple(sorted(locs.items()))
+    reg = register(maps, locs, media=media)
+    geom = fsgeom.for_car(media)
+    if geom is not None:
+        side = geom.get("side_left") or geom.get("side_right")
+        k = side.units_per_m[0] if side is not None else None
+        if reg is None and k:
+            # 아치를 못 찾아 등록이 아예 안 서던 차 — 메시가 자리를 준다
+            reg = Registration(media=media, k=round(k, 2),
+                               note="차 메시 (아치 적합 없음)")
+        if reg is not None:
+            reg.geom = geom
+            if k:
+                reg.k = round(k, 2)
+            # 아치 적합의 미심쩍음은 이제 `unit`에 안 실린다 — 메시가 낸다
+            reg.uncertain = False
+            reg.note = (reg.note + " · " if reg.note else "") + "배율·자리는 차 메시"
+    return reg, tuple(sorted(locs.items()))
