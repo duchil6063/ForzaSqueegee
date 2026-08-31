@@ -197,13 +197,22 @@ def _lift_above_rocker(layers: list[Layer], fld: CompositionField,
 def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
                style: str, level: float,
                edge_shapes: tuple[str, ...] | None = None,
-               torn: bool = False, rocker: bool = False) -> list[Layer]:
-    """베드 레이어 (그룹 맨 아래) — 계열의 꼴 × 크기 `level`(0~1)."""
+               torn: bool = False, rocker: bool = False,
+               d_rot: float = 0.0, d_y: float = 0.0, k_len: float = 1.0) -> list[Layer]:
+    """베드 레이어 (그룹 맨 아래) — 계열의 꼴 × 크기 `level`(0~1).
+
+    `d_rot`(도)·`d_y`(인물 높이 몫)·`k_len`(길이 배수)은 **미세 조정 손잡이**다
+    (`design._refine` — 이긴 후보의 좌표하강). 기본값이면 없던 때와 같다.
+    """
     if style == "none":
         return []
     d = slab_axis(fld)
-    ang = math.degrees(math.atan2(d[1], d[0]))
+    ang = math.degrees(math.atan2(d[1], d[0])) + d_rot
+    if d_rot:
+        r0 = math.radians(ang)
+        d = (math.cos(r0), math.sin(r0))
     vcx, vcy = fld.visual_center
+    vcy += d_y * fld.char_h
     c0, half_len, half_wid = _support_extent(fld, d)
     ch = fld.char_h
     out: list[Layer] = []
@@ -215,8 +224,8 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         # 흐름 쪽으로는 프레임 끝까지 달린다 (이음새 너머로 이어지는 띠).
         cx0 = vcx + d[0] * c0
         cy0 = vcy + d[1] * c0 - 0.08 * ch
-        back = half_len * (0.9 + 0.5 * level)
-        fwd = _flow_reach(fld, d, cx0, cy0) * 0.98
+        back = half_len * (0.9 + 0.5 * level) * k_len
+        fwd = _flow_reach(fld, d, cx0, cy0) * 0.98 * k_len
         w = back + fwd
         ang, d = _tilt_for(ang, w, band_h)
         cx = cx0 + fs * d[0] * (fwd - back) / 2
@@ -234,13 +243,13 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         # 기울인 사진틀로 읽힌다 (레퍼런스의 판은 인물 뒤에서 리어 쿼터까지 간다)
         cx0 = vcx + d[0] * c0
         cy0 = vcy + d[1] * c0
-        back = half_len * (0.85 + 0.35 * level)
+        back = half_len * (0.85 + 0.35 * level) * k_len
         # 판은 **인물 크기로** 뻗는다 — 패널 끝까지 늘이면 기운 판의 세로 뻗음
         # (길이 x sin)이 밴드를 다 먹어 `_lift_above_rocker`가 높이를 깎는다.
         # 788x45로 눌린 판은 인물을 못 받치고 지나가는 띠가 된다 (실측 B0/A2:
         # 인물 뒤 받침 .50 → .68 · 판 45 → 84유닛 · 판-인물 거리 1.19 → 0.28
         # 인물폭). 이음새 너머로 잇는 몫은 쐐기의 좁은 띠·로커·슬래브가 진다.
-        fwd = half_len * k
+        fwd = half_len * k * k_len
         w = back + fwd
         ang, d = _tilt_for(ang, w, band_h)
         cx = cx0 + fs * d[0] * (fwd - back) / 2
@@ -260,8 +269,8 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         cy0 = vcy + d[1] * c0
         # 넓은 판은 짧고 가파르게 (쐐기), 좁은 띠는 길고 얕게 (흐름) — 둘의
         # 기울기가 달라야 사선이 겹치며 흐름이 난다
-        back = half_len * (0.8 + 0.3 * level)
-        fwd = half_len * k
+        back = half_len * (0.8 + 0.3 * level) * k_len
+        fwd = half_len * k * k_len
         w = back + fwd
         ang1, d1 = _tilt_for(ang, w, band_h)
         cx = cx0 + fs * d1[0] * (fwd - back) / 2
@@ -280,7 +289,7 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         out.append(_rect(cx2, cy2, w2, h2, ang2, pal.bed_alt, cat))
     elif style == "blob":
         # 덩어리 — 실루엣 후광을 품는 타원 + 흐름 쪽 작은 타원 (스플래시)
-        w = max(fld.char_w, 2 * half_len * 0.9) * (0.9 + 0.3 * level)
+        w = max(fld.char_w, 2 * half_len * 0.9) * (0.9 + 0.3 * level) * k_len
         h = ch * (0.95 + 0.25 * level)
         out.append(_ellipse(vcx + d[0] * c0 * 0.5, vcy + d[1] * c0 * 0.5, w, h, ang,
                             pal.bed, cat))

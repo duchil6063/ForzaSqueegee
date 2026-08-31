@@ -82,6 +82,42 @@ FAMILY_TOP = 4
 VARIANTS_TRIED = ("shadow", "neutral", "primary")
 
 
+@dataclass(frozen=True)
+class Tweak:
+    """미세 조정 손잡이 — 이긴 후보를 좌표하강으로 다듬는다 (`_refine`).
+
+    전부 0/1이면 손대기 전과 같다. 단위: 각은 도, `bed_dy`는 인물 높이 몫,
+    `anchor_dx`는 인물 폭 몫, 나머지는 배수.
+    """
+
+    bed_rot: float = 0.0
+    bed_dy: float = 0.0
+    bed_len: float = 1.0
+    anchor_dx: float = 0.0
+    motif_k: float = 1.0
+
+
+# 좌표하강이 도는 축과 걸음 (순서가 곧 결정성이다 — 같은 점수면 원래 값이 이긴다).
+REFINE_STEPS: tuple[tuple[str, tuple[float, ...]], ...] = (
+    ("bed_rot", (-6.0, -3.0, 3.0, 6.0)),
+    ("bed_dy", (-0.10, -0.05, 0.05, 0.10)),
+    ("bed_len", (-0.12, -0.06, 0.06, 0.12)),
+    ("anchor_dx", (-0.24, -0.12, 0.12, 0.24)),
+    ("motif_k", (-0.16, -0.08, 0.08, 0.16)),
+)
+
+
+# 배수 손잡이의 상·하한 (여러 패스가 같은 쪽으로 걸어도 판이 뒤집히지 않게).
+REFINE_CLAMP = {"bed_len": (0.70, 1.30), "motif_k": (0.70, 1.30),
+                "bed_rot": (-12.0, 12.0), "bed_dy": (-0.20, 0.20),
+                "anchor_dx": (-0.48, 0.48)}
+
+
+# 다듬을 상위 후보 수 · 좌표하강 패스 수.
+REFINE_TOP = 2
+REFINE_PASSES = 2
+
+
 @dataclass
 class Design:
     family: Family
@@ -97,6 +133,7 @@ class Design:
     text_plan: TextPlan | None = None
     text_style: str | None = None
     trimmed: int = 0                    # 면 상한 때문에 뺀 산포·에코 장수
+    tweak: "Tweak" = field(default_factory=lambda: Tweak())
     notes: list[str] = field(default_factory=list)
     ranking: list[tuple[str, float]] = field(default_factory=list)
 
@@ -129,7 +166,7 @@ class Design:
 
 def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
              vocab: tuple[str, ...], halo: tuple[int, int, int] | None,
-             over: bool, phase: float
+             over: bool, phase: float, anchor_dx: float = 0.0
              ) -> tuple[list[Layer], list[tuple[float, float, float, int]]]:
     """산포 — 자리는 필드가, 크기·층·간격은 `scatter_motifs`가 정한다."""
     fx0, fy0, fx1, fy1 = fld.frame_box
@@ -139,8 +176,8 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     ry = 0.55 * (fy1 - fy0)
     fl = fld.flow
     edge = fld.person_box[2] if fl[0] >= 0 else fld.person_box[0]
-    ax = edge + fl[0] * 0.30 * fld.char_w
-    ay = fld.visual_center[1] + fl[1] * 0.35 * ch
+    ax = edge + fl[0] * (0.30 + anchor_dx) * fld.char_w
+    ay = fld.visual_center[1] + fl[1] * (0.35 + anchor_dx) * ch
     hero = DECO_TIER_SIZE[0] * ch * fam.tier_scale / 2
     lim = max(0.0, rx - hero)
     ax = max(-lim, min(lim, ax))
@@ -258,6 +295,62 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                                        rear_sign, drawable_at=drawable_at, flow=flow)
         return fields[mode]
 
+    def _parts(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
+               tw: "Tweak") -> tuple[list[Layer], list[Layer], list[Layer], list]:
+        """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계) — 미세 조정도 이 자를 쓴다."""
+        base: list[Layer] = []
+        if fam.rocker:
+            base += _rocker(fld, lk, cat, car_rgb, edge_v)
+        base += bed_layers(fld, pal, cat, fam.bed, level, edge_shapes=edge_v,
+                           torn=fam.torn, rocker=fam.rocker,
+                           d_rot=tw.bed_rot, d_y=tw.bed_dy, k_len=tw.bed_len)
+        # 판 끝을 디더로 흩는다 — 곧게 끝나는 색면은 스티커로 읽힌다.
+        # 남는 장수가 없으면 안 한다 (도안·판이 먼저다).
+        plate = main_plate(base, cat)
+        if plate is not None:
+            room = cap - n_person - len(base) - 24
+            base += fade_layers(fld, plate, cat, 1.0 if fld.flow[0] >= 0 else -1.0,
+                                budget=max(0, min(FADE_BUDGET, room)))
+        fam_m = _replace(fam, tier_scale=fam.tier_scale * tw.motif_k)
+        sc, stats = _scatter(fld, fam_m, pal, cat, vocab, halo, False, phase,
+                             anchor_dx=tw.anchor_dx)
+        tail: list[Layer] = list(sc)
+        if fam.echo:
+            tail += echo_layers(fld, it, pal, cat, n=max(3, fam.motif_n // 3),
+                                phase=phase)
+        front, _fs = _scatter(fld, fam_m, pal, cat, vocab, None, True, phase,
+                              anchor_dx=tw.anchor_dx)
+        return base, tail, front, stats
+
+    def _card(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
+              base, tail, front, front_ras, keyl, keyline: bool, ts, stats,
+              text_ras, behind, tplan, tstyle, tw: "Tweak") -> Design:
+        """부품 한 벌 → 재고 담은 후보. 후보 루프와 미세 조정이 같은 자를 쓴다."""
+        back = list(base)
+        tl = ts.layers if ts is not None else []
+        n_text = ts.n if ts is not None else 0
+        if keyline:
+            back += keyl
+        back += tail
+        # 면 상한 — 역할이 낮은 것부터 뺀다 (도안·판·글자가 먼저다).
+        # 글자는 제 그룹이라 따로 센다.
+        room = cap - 4 - n_person - len(front) - n_text
+        back, trimmed = _fit_cap(back, room)
+        extra = None
+        if text_on:
+            extra = text_parts(fld, cat, ts.poses if ts else [], tl, behind,
+                               front_alpha=front_ras[1])
+        # 점수용 합성: 글자 그룹은 꾸밈 그룹 **위**·도안 아래에 선다
+        card = score_design(fld, pal, cat, back, front,
+                            clutter_target=fam.clutter, empty_target=fam.empty_target,
+                            motifs=stats, rocker=fam.rocker,
+                            extra=extra, extra_weights=TEXT_WEIGHTS,
+                            text=text_ras, front_raster=front_ras)
+        return Design(family=fam, pal=pal, fld=fld, back=back, front=front, score=card,
+                      flow_rear=(fld.flow[0] * rear_sign) > 0, level=level,
+                      keyline=keyline, text=ts, text_plan=tplan, text_style=tstyle,
+                      trimmed=trimmed, tweak=tw)
+
     cands: list[Design] = []
     for fname in fams:
         fam = FAMILIES[fname]
@@ -266,26 +359,7 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
             for variant in VARIANTS_TRIED:
                 pal = role_palette(it, lk, car_rgb, variant)
                 for level in (fam.bed_level, max(0.0, fam.bed_level - 0.25)):
-                    base: list[Layer] = []
-                    if fam.rocker:
-                        base += _rocker(fld, lk, cat, car_rgb, edge_v)
-                    base += bed_layers(fld, pal, cat, fam.bed, level,
-                                       edge_shapes=edge_v, torn=fam.torn,
-                                       rocker=fam.rocker)
-                    # 판 끝을 디더로 흩는다 — 곧게 끝나는 색면은 스티커로 읽힌다.
-                    # 남는 장수가 없으면 안 한다 (도안·판이 먼저다).
-                    plate = main_plate(base, cat)
-                    if plate is not None:
-                        room = cap - n_person - len(base) - 24
-                        base += fade_layers(fld, plate, cat,
-                                            1.0 if fld.flow[0] >= 0 else -1.0,
-                                            budget=max(0, min(FADE_BUDGET, room)))
-                    sc, stats = _scatter(fld, fam, pal, cat, vocab, halo, False, phase)
-                    tail: list[Layer] = list(sc)
-                    if fam.echo:
-                        tail += echo_layers(fld, it, pal, cat, n=max(3, fam.motif_n // 3),
-                                            phase=phase)
-                    front, _fs = _scatter(fld, fam, pal, cat, vocab, None, True, phase)
+                    base, tail, front, stats = _parts(fam, fld, pal, level, Tweak())
                     front_ras = raster_layers(front, fld, cat)
                     # 키라인은 후보의 한 축이다 — 짙은 판 위에서 실루엣이 읽히나를
                     # 점수(readability)가 가르고, 안 필요한 판에서는 장수만 먹는다
@@ -318,38 +392,51 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                         if text_on else None
                     for keyline in (False, True):
                         for ts in text_sets:
-                            back = list(base)
-                            tl = ts.layers if ts is not None else []
-                            n_text = ts.n if ts is not None else 0
-                            if keyline:
-                                back += keyl
-                            back += tail
-                            # 면 상한 — 역할이 낮은 것부터 뺀다 (도안·판·글자가
-                            # 먼저다). 글자는 제 그룹이라 따로 센다.
-                            room = cap - 4 - n_person - len(front) - n_text
-                            back, trimmed = _fit_cap(back, room)
-                            extra = None
-                            if text_on:
-                                extra = text_parts(fld, cat, ts.poses if ts else [],
-                                                   tl, behind, front_alpha=front_ras[1])
-                            # 점수용 합성: 글자 그룹은 꾸밈 그룹 **위**·도안 아래에 선다
-                            card = score_design(fld, pal, cat, back, front,
-                                                clutter_target=fam.clutter,
-                                                empty_target=fam.empty_target,
-                                                motifs=stats, rocker=fam.rocker,
-                                                extra=extra, extra_weights=TEXT_WEIGHTS,
-                                                text=text_ras.get(id(ts)),
-                                                front_raster=front_ras)
-                            flow_rear = (fld.flow[0] * rear_sign) > 0
-                            cands.append(Design(family=fam, pal=pal, fld=fld, back=back,
-                                                front=front, score=card,
-                                                flow_rear=flow_rear, level=level,
-                                                keyline=keyline, text=ts, text_plan=tplan,
-                                                text_style=tstyle, trimmed=trimmed))
+                            cands.append(_card(fam, fld, pal, level, base, tail, front,
+                                               front_ras, keyl, keyline, ts, stats,
+                                               text_ras.get(id(ts)), behind,
+                                               tplan, tstyle, Tweak()))
                     if fam.bed == "none":
                         break
     # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다)
-    cands.sort(key=lambda d: (len(d.score.fails), -d.score.total))
+    def _rank(d: Design) -> tuple[int, float]:
+        return (len(d.score.fails), -d.score.total)
+
+    def _refine(d: Design) -> Design:
+        """이긴 후보를 **좌표하강**으로 다듬는다 — 이산 후보 격자의 사이를 메운다.
+
+        축·걸음·순서가 못 박혀 있고(`REFINE_STEPS`) 같은 점수면 원래 값이 이긴다
+        — 난수도 전수 조합도 없다 (축마다 4걸음 × 5축 × 2패스 = 40벌).
+        """
+        keyl = keyline_layers(d.fld, _keyline_color(d.pal), cat)
+        best_d, tw = d, d.tweak
+        for _p in range(REFINE_PASSES):
+            moved = False
+            for name, steps in REFINE_STEPS:
+                cur = getattr(tw, name)
+                lo, hi = REFINE_CLAMP[name]
+                for st in steps:
+                    v = cur + st
+                    if not (lo <= v <= hi):
+                        continue
+                    cand_tw = _replace(tw, **{name: v})
+                    b2, t2, f2, s2 = _parts(d.family, d.fld, d.pal, d.level, cand_tw)
+                    cd = _card(d.family, d.fld, d.pal, d.level, b2, t2, f2,
+                               raster_layers(f2, d.fld, cat), keyl, d.keyline,
+                               None, s2, None, None, None, None, cand_tw)
+                    if _rank(cd) < _rank(best_d):
+                        best_d, tw, moved = cd, cand_tw, True
+            if not moved:
+                break
+        return best_d
+
+    cands.sort(key=_rank)
+    # 글자가 있는 판은 안 다듬는다 — 글자 벌은 판 알파에서 나오므로 손잡이마다
+    # 글자를 다시 지어야 하고, 그러면 후보 하나가 수백 ms가 된다.
+    if not text_on:
+        for i in range(min(REFINE_TOP, len(cands))):
+            cands[i] = _refine(cands[i])
+        cands.sort(key=_rank)
     best = cands[0]
     best.ranking = [(f"{'!' * len(d.score.fails)}{d.family.name}/{d.pal.variant}"
                      f"/{'rear' if d.flow_rear else 'front'}"
