@@ -62,6 +62,7 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     roof        지붕 블랙아웃 — 윗면의 후드 뒤 구간을 검정으로 덮는다.
     place       배치 — 도안을 면 어디에 얼마로 앉히나 (자리 수학과 그 밑감).
     folds       면 이음새 접기 그래프 — 꾸밈 뿌리를 이웃 면으로 투영하는 자.
+    atlas       차 한 대의 면 지도 — 이음새·차체 선, 그리고 그것을 **건너는** 자.
     autoplace   자동 자리 — 편집기가 도안을 처음 앉히는 그 자리.
     surfshapes  면에 직접 놓는 꾸밈 — 관통 띠 · 산포 모티프의 도형 명세.
     intent      도안 읽기 2단계 — 실루엣 · 머리 · 포즈 축 · 디테일 · 색 역할 씨앗.
@@ -70,6 +71,8 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     field       구성 필드 — 배치 둘레의 보호 · 지지 · 장식 · 여백 구역과 흐름.
     bed         캐릭터 베드 — 인물 뒤 큰 색면 (판 · 쐐기 · 슬래브 · 덩어리) + 키라인.
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
+    rhythm      리듬 곡선 — 조각이 원점에서 잦아들며 흘러 나오는 자리.
+    macro       매크로 기하 — 인물 뒤 큰 색면의 어휘 (띠·겹·날·화살·가름·모서리…).
     families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
     critic      구도 비평 — 같은 합성을 세 배율(멀리·중간·가까이)로 재는 자.
     score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
@@ -133,6 +136,7 @@ from .place import (
     drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_tilt,
     place_in_rect, place_xf, surface_exposure, take_layers)
 from .folds import _all_folds, _pillar_hints, seam_fold
+from .atlas import BodyLines, Seam, VehicleAtlas, build_atlas
 from .autoplace import _side_place, auto_place, mirror_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
@@ -148,6 +152,7 @@ from .graph import (
 from .bed import bed_layers, keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
+from .rhythm import Beat, RhythmCurve, beats, curve_for
 from .macro import (
     KINDS as MACRO_KINDS, MACRO_AREA_MAX, MacroSpec, macro_layers,
     plan as macro_plan)

@@ -90,7 +90,8 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
                 max_sx: float | None = None,
                 shapes: tuple[str, ...] | None = None,
                 mode: str = "rocker", center_v: float | None = None,
-                cat: Catalog | None = None) -> list[dict]:
+                cat: Catalog | None = None, rot: float = 0.0,
+                height: float | None = None) -> list[dict]:
     """**관통 요소** — 옆면의 문법을 이웃 면으로 이어 가는 도형 명세.
 
     레퍼런스의 배경 요소는 한 면에서 끝나지 않고 여러 면을 관통해 전체를
@@ -132,6 +133,26 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
     if max_sx is not None:
         cap = min(cap, max_sx)
     tiles = band_tiles(u0, u1, cap)
+    if mode == "macro":
+        # **옆면의 큰 색면이 이음새를 건너온 것** (`atlas.carry_band`).
+        #
+        # 로커 띠와 갈리는 자리 셋: 색이 판 색이고(무채 잉크가 아니다), 높이와
+        # 각을 옆면에서 받아 오며(제 면의 몫으로 잡지 않는다), 찢긴 윗선이
+        # 없다 — 이어지는 것이지 이 면에서 시작하는 것이 아니다.
+        #
+        # 조각을 나눌 때 각이 있으면 조각마다 중심 v가 달라야 한다 — 한 줄로
+        # 놓고 전부 같은 각으로 돌리면 계단이 진다.
+        hb = height if height is not None else ROCKER_FRAC * hh
+        cv = center_v if center_v is not None else (q0 + q1) / 2
+        tr = math.radians(rot)
+        out2 = []
+        for tx, tsx in tiles:
+            out2.append({"shape": "A_01", "x": rnd(tx, 1),
+                         "y": rnd(cv + (tx - fcx) * math.tan(tr), 1),
+                         "sx": rnd(tsx / max(0.2, math.cos(tr)), 3),
+                         "sy": rnd(hb / 2 / UNITS_PER_SCALE, 4),
+                         "rot": rnd(rot % 360.0, 1), "rgb": list(color)})
+        return out2
     if mode == "stripe":
         return [{"shape": "A_01", "x": rnd(tx, 1),
                  "y": rnd(q0 + f * hh, 1), "sx": rnd(tsx, 3),
