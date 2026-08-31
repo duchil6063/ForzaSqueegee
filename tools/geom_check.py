@@ -138,34 +138,45 @@ def check_k(media: str, geom: fsgeom.CarGeom, maps: dict, rows: list) -> None:
 SAME_SURFACE = 0.03
 
 
+# 견줄 면 짝 — 이웃하는 차체 면 전부. **앞·뒤 ↔ 옆·윗이 요점이다**: 그 짝의
+# 세로 배율이 서로 2배 넘게 다르므로(`[scale]`), 여기서도 맞으면 덤프의 투영이
+# 옳고 `game.fold`의 등거리 가정이 틀린 것이다.
+CROSS_PAIRS = (("side_left", "top"), ("front", "side_left"), ("front", "top"),
+               ("rear", "side_left"), ("rear", "top"))
+
+
 def check_cross(media: str, geom: fsgeom.CarGeom, rows: list,
                 n: int = 4000) -> None:
-    """옆면 → 세계 → 윗면. **둘 다 보는 표면**에서 두 면의 좌표계가 얼마나 맞나."""
-    src, dst = geom.sides.get("side_left"), geom.sides.get("top")
-    if src is None or dst is None or src.depth is None or dst.depth is None:
-        return
-    h, w = src.depth.shape
-    u0, v0, u1, v1 = src.box
-    rs, cs = np.where(np.isfinite(src.depth))
-    if len(rs) < 32:
-        return
-    step = max(1, len(rs) // n)
-    rs, cs = rs[::step], cs[::step]
-    us = u0 + cs / max(1, w - 1) * (u1 - u0)
-    vs = v1 - rs / max(1, h - 1) * (v1 - v0)
-    world = src.world(us, vs)                      # x = 깊이, y = 높이, z = 길이
-    du, dv = dst.to_face(world)
-    got = dst.at(du, dv)                           # 윗면이 말하는 높이 (y)
-    d = np.abs(got - world["y"])
-    ok = np.isfinite(d)
-    same = ok & (d <= SAME_SURFACE)
-    if same.sum() < 16:
-        rows.append((media, float(ok.mean()), 0.0, float("nan"), float("nan")))
-        return
-    upm = float(np.median(src.units_per_m))
-    med = float(np.median(d[same]))
-    rows.append((media, float(ok.mean()), float(same.sum() / max(1, ok.sum())),
-                 med, med * upm))
+    """한 면 → 세계 → 이웃 면. **둘 다 보는 표면**에서 좌표계가 얼마나 맞나."""
+    for sname, dname in CROSS_PAIRS:
+        src, dst = geom.sides.get(sname), geom.sides.get(dname)
+        if src is None or dst is None or src.depth is None or dst.depth is None:
+            continue
+        h, w = src.depth.shape
+        u0, v0, u1, v1 = src.box
+        rs, cs = np.where(np.isfinite(src.depth))
+        if len(rs) < 32:
+            continue
+        step = max(1, len(rs) // n)
+        rs, cs = rs[::step], cs[::step]
+        us = u0 + cs / max(1, w - 1) * (u1 - u0)
+        vs = v1 - rs / max(1, h - 1) * (v1 - v0)
+        world = src.world(us, vs)
+        du, dv = dst.to_face(world)
+        # 목적 면이 그 자리에서 말하는 깊이 ↔ 출발 면이 말한 그 축의 좌표
+        axis = fsgeom.AXIS_LETTER[dst.depth_axis]
+        d = np.abs(dst.at(du, dv) - world[axis])
+        ok = np.isfinite(d)
+        same = ok & (d <= SAME_SURFACE)
+        pair = f"{sname}→{dname}"
+        if same.sum() < 16:
+            rows.append((media, pair, float(ok.mean()), 0.0,
+                         float("nan"), float("nan")))
+            continue
+        upm = float(np.median(dst.units_per_m))
+        med = float(np.median(d[same]))
+        rows.append((media, pair, float(ok.mean()),
+                     float(same.sum() / max(1, ok.sum())), med, med * upm))
 
 
 # ---------- 판 ----------
@@ -256,17 +267,19 @@ def main() -> int:
             print(f"    geom 비: 중앙 {np.median(rg):.3f} · 벌어짐 "
                   f"{(rg.max() - rg.min()):.3f} (뭉치면 아치 검출의 계통 편향)")
 
-    print("[cross] 옆면 → 윗면 (풀린 몫 / 둘 다 보는 몫 / 그 자리 어긋남)")
+    print("[cross] 면 → 이웃 면 (풀린 몫 / 둘 다 보는 몫 / 그 자리 어긋남)")
     print(f"    나머지는 가림이다 — 문짝 아래는 윗면에서 안 보인다 (문턱 "
           f"{SAME_SURFACE * 100:.0f} cm)")
-    for m, frac, share, dm, du in acc["cross"]:
-        print(f"    {m:24s} 풀림 {frac:.2f}  같은면 {share:.2f}  "
-              f"어긋남 {dm * 1000:6.2f} mm / {du:5.2f} 유닛")
-    if acc["cross"]:
-        d = np.array([r[4] for r in acc["cross"]], float)
-        d = d[np.isfinite(d)]
-        if len(d):
-            print(f"    중앙 {np.median(d):.2f} 유닛 · p90 {np.percentile(d, 90):.2f}")
+    per3: dict[str, list] = {}
+    for _m, pair, frac, share, dm, du in acc["cross"]:
+        per3.setdefault(pair, []).append((frac, share, dm, du))
+    for pair in [f"{a}→{b}" for a, b in CROSS_PAIRS if f"{a}→{b}" in per3]:
+        a = np.array(per3[pair], float)
+        with np.errstate(invalid="ignore"):
+            print(f"    {pair:22s} 풀림 {np.nanmedian(a[:, 0]):.2f}  "
+                  f"같은면 {np.nanmedian(a[:, 1]):.2f}  어긋남 중앙 "
+                  f"{np.nanmedian(a[:, 3]):.2f} 유닛 · p90 "
+                  f"{np.nanpercentile(a[:, 3], 90):.2f}")
 
     print("FAIL" if FAILS else "PASS", len(FAILS))
     return 1 if FAILS else 0
