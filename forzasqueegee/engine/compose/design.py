@@ -62,6 +62,14 @@ DECO_FRAME_FILL = 0.98
 DECO_BAND_FILL = 1.0
 
 
+# 예산이 모자랄 때 **버리는 순서** — 디자인 역할의 역순이다. 판(`itasha_bed`)은
+# 여기 없다: 큰 구도는 마지막까지 남아야 장수를 줄여도 구성이 유지된다.
+# 옛 자는 산포·에코만 뺐고, 그러고도 넘치면 `build`가 꾸밈 그룹을 **통째로**
+# 버렸다 — 도안이 2,983장인 판 셋이 그래서 꾸밈 0장이 됐다.
+TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_fade", "itasha_keyline",
+              "itasha_stripe")
+
+
 # 디더 페이드의 장수 상한 (판 하나당). 40장이면 8열 x 5행의 절반쯤이 찬다.
 FADE_BUDGET = 40
 
@@ -183,6 +191,27 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     return out, stats
 
 
+def _fit_cap(layers: list[Layer], room: int) -> tuple[list[Layer], int]:
+    """`room`장에 맞게 **역할이 낮은 것부터** 뺀 목록과 뺀 장수.
+
+    같은 역할 안에서는 뒤에서부터 뺀다 (산포·에코는 뒤가 잔것이다). 판만 남는
+    자리까지 가면 그 이상은 안 뺀다 — 넘치는 판은 `build`가 잡는다.
+    """
+    n = len(layers) - max(0, room)
+    if n <= 0:
+        return layers, 0
+    drop: set[int] = set()
+    for label in TRIM_ORDER:
+        if len(drop) >= n:
+            break
+        for i in range(len(layers) - 1, -1, -1):
+            if len(drop) >= n:
+                break
+            if i not in drop and layers[i].label == label:
+                drop.add(i)
+    return [l for i, l in enumerate(layers) if i not in drop], len(drop)
+
+
 def _keyline_color(pal: RolePalette) -> tuple[int, int, int]:
     """키라인 색 — 베드의 반대 명도 (짙은 판엔 밝은 테, 연한 판엔 짙은 테)."""
     b = (0.299 * pal.bed[0] + 0.587 * pal.bed[1] + 0.114 * pal.bed[2]) / 255.0
@@ -294,15 +323,11 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                             n_text = ts.n if ts is not None else 0
                             if keyline:
                                 back += keyl
-                            back_tail = list(tail)
-                            # 면 상한 — 넘치면 산포·에코를 뒤에서부터 뺀다 (도안·
-                            # 판·글자가 먼저다). 글자는 제 그룹이라 따로 센다.
-                            trimmed = 0
-                            while (n_person + len(back) + len(back_tail) + len(front) + n_text
-                                   > cap - 4) and back_tail:
-                                back_tail.pop()
-                                trimmed += 1
-                            back += back_tail
+                            back += tail
+                            # 면 상한 — 역할이 낮은 것부터 뺀다 (도안·판·글자가
+                            # 먼저다). 글자는 제 그룹이라 따로 센다.
+                            room = cap - 4 - n_person - len(front) - n_text
+                            back, trimmed = _fit_cap(back, room)
                             extra = None
                             if text_on:
                                 extra = text_parts(fld, cat, ts.poses if ts else [],
