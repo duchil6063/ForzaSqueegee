@@ -91,6 +91,21 @@ MACRO_SPAN = (0.45, 3.2)
 PRESENCE = (0.18, 0.46)
 
 
+# **길이 방향 쏠림** — 다섯 토막 커버리지의 최대 − 최소.
+#
+# 사람 리버리와 견줄 수 있는 몇 안 되는 자다 (`work/lab/deco/bench.py`): 사진
+# 에서 덩어리 구조는 음영 때문에 못 재지만 "어느 토막이 차 있나"는 재진다.
+# 실측 넷 — ARIS [1.0 .68 .62 .48 .50] (앞이 무겁다) · 코토네 [.67 .69 .93 .99
+# .94] (뒤가 무겁다) · 히나타 [.38 .27 .30 .57 .33] (넷째 토막에 봉우리) · 린
+# [.78 .80 .76 .87 .85] (고르다). 기복이 0.14~0.52다.
+#
+# 우리 판은 0.028이었다 — **차 길이를 따라 완벽하게 고르다**. 관통하는 띠가
+# 모든 토막을 같은 몫으로 덮고 무리가 그 위에 얇게 얹히기 때문이다. 자동
+# 생성 티가 숫자 하나로 나온 자리이고, 이 자가 그것을 민다: 한쪽 끝에서
+# 끝나는 색면(split·corner·가늘어지는 날)과 한쪽에 몰린 무리가 이긴다.
+LENGTHWISE = (0.12, 0.55)
+
+
 # 여백 한 덩이의 목표 — 그릴 수 있는 면 대비 넓이와 **꼴**(상자 채움).
 # 얇고 긴 자투리는 여백이 아니라 남은 자리다.
 # (구간은 실측으로 조인다: 첫 판의 (0.10, 0.42)·채움 0.42는 33판 전부가
@@ -339,6 +354,20 @@ def presence(deco_alpha: np.ndarray, room: np.ndarray) -> tuple[float, dict]:
     return _band(v, *PRESENCE, soft=0.24), {"p_ink": v}
 
 
+def lengthwise(deco_alpha: np.ndarray, room: np.ndarray) -> tuple[float, dict]:
+    """길이를 다섯 토막으로 나눈 커버리지의 **기복** — 한쪽에 몰렸나."""
+    if not room.any():
+        return 0.5, {"l_span": 0.0}
+    w = room.shape[1]
+    f5 = []
+    for i in range(5):
+        sl = slice(i * w // 5, (i + 1) * w // 5)
+        r5 = room[:, sl]
+        f5.append(float((deco_alpha[:, sl][r5] > 0.5).mean()) if r5.any() else 0.0)
+    span = max(f5) - min(f5)
+    return _band(span, *LENGTHWISE, soft=0.14), {"l_span": span}
+
+
 def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
                    cell: float, char_w: float, x0: float = 0.0, y_top: float = 0.0
                    ) -> tuple[float, dict, tuple[float, float, float, float] | None]:
@@ -458,6 +487,7 @@ def critique(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
             ("rhythm", rhythm(motifs)),
             ("negative_shape", (ns, ni)),
             ("presence", presence(deco_alpha, room)),
+            ("lengthwise", lengthwise(deco_alpha, room)),
             ("gesture", gesture(bl, visual_center, gestures, cell, x0, y_top))):
         parts[name] = float(v)
         info.update({k2: float(v2) for k2, v2 in i.items()})

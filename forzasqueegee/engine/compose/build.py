@@ -496,6 +496,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     except Exception:                              # 지도가 모자란 차 — 이 판은 안 잇는다
         atlas = None
 
+    carried: dict = {}
+
     def _carry_macro(name: str) -> list[dict]:
         """옆면 큰 색면을 이 면으로 **이어 그린다** (없으면 빈 목록).
 
@@ -515,6 +517,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 흐름 쪽 리어는 0.225 → 0.136으로 좋아졌다).
         if name != (ROLE_REAR if flow_rear else "front"):
             return []
+        carried["from"] = deco_src
         v_s, ang_s, h_s = side_band
         if abs(ang_s) > MACRO_CARRY_TILT:
             return []
@@ -523,6 +526,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if got is None or sm is None or sm.uncertain:
             return []
         v2, ang2 = got
+        carried.update({"to": name, "v_side": round(v_s, 1),
+                        "ang_side": round(ang_s, 1), "v": round(v2, 1),
+                        "ang": round(ang2, 1)})
         # 건너온 띠는 **이 면의 몫으로 다시 재야 한다.** 옆면 밴드의 두께와
         # 기울기를 그대로 대면 리어처럼 짧은 면에서는 그것이 면의 6할을 쓸고
         # 지나간다 (실측: 실비아 리어가 통째로 판 색이 됐다). 이어짐은 "같은
@@ -842,6 +848,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # 항목이 왜 그 값인지 되짚는 원자료 (테두리 명도차·묻은 몫·커버리지…)
             "info": {k: round(v, 4) for k, v in design.score.info.items()},
             "ranking": design.ranking,
+            # 이음새를 건너간 큰 색면 — 어느 면으로, 어느 높이·각으로 (`atlas`).
+            # 비면 안 이었다는 뜻이다 (가파른 색면이거나 이음새를 못 푸는 차).
+            "carry": dict(carried),
             "palette": {k: list(getattr(design.pal, k)) for k in
                         ("base", "bed", "bed_alt", "primary", "secondary",
                          "shadow", "highlight", "dark")}}
