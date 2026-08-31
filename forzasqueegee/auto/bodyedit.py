@@ -419,21 +419,7 @@ class BodyEditor:
                 time.sleep(0.45)
             if row and not fresh:
                 return                      # 이 줄에 새것이 없다 = 다 봤다
-            # **줄 내리기는 확인하고 간다** — 전환 애니메이션이 down을 먹으면
-            # 같은 줄을 다시 걸어 "다 본 장수"만 만나고 조기 종료한다 (2026-08-31
-            # 실측: 2행의 deco 그룹을 네 번 연속 못 봤다). 라임 테두리는 행
-            # 구분이 안 될 때가 있어, **좌측 정보 패널이 바뀌었는가**로 본다 —
-            # 선택이 실제로 움직이면 패널(이름·장수·인기도)이 반드시 다시 그려진다.
-            img0 = self.cap()
-            hh, ww = img0.shape[:2]
-            box = (int(0.17 * hh), int(0.89 * hh), int(0.04 * ww), int(0.22 * ww))
-            ref = img0[box[0]:box[1], box[2]:box[3]].astype(np.int16)
-            for _try in range(3):
-                gio.press("down")
-                time.sleep(0.8)
-                now = self.cap()[box[0]:box[1], box[2]:box[3]].astype(np.int16)
-                if float(np.abs(now - ref).mean()) > 6.0:
-                    break
+            self._grid_down()
 
     def find_group(self, layers: int, max_cells: int = 40) -> None:
         """그리드에서 **레이어 수가 `layers`인** 항목을 찾아 포커스한 채로 멈춘다.
@@ -446,9 +432,47 @@ class BodyEditor:
             if got == layers:
                 return
             seen.append(got)
+        # **느린 전수 훑기 폴백** — 다운로드 그룹이 낀 줄은 정보 패널이
+        # 네트워크 지연으로 한참 늦어, 정착 판독이 앞 칸 값을 물고 "다 본
+        # 값"으로 조용함이 차 조기 종료한다 (2026-08-31 실측: 2행의 deco
+        # 그룹을 다섯 번 연속 못 찾았다). 줄마다 내려가며 칸마다 길게
+        # 기다려 읽고, 맞는 값은 한 번 더 기다려 확인한다 (패널 지연이
+        # 앞 칸 값을 이 칸에 씌우는 것을 막는다).
+        for _row in range(3):
+            for _col in range(max_cells // 2):
+                time.sleep(1.3)
+                n = self.group_layers()
+                if n is None:
+                    time.sleep(0.7)
+                    n = self.group_layers()
+                if n == layers:
+                    time.sleep(1.0)
+                    if self.group_layers() == layers:
+                        return
+                if n is not None:
+                    seen.append(n)
+                gio.press("right")
+                time.sleep(0.45)
+            self._grid_down()
         raise DriverError(
             msg("레이어 {layers:,}장짜리 비닐 그룹을 못 찾았다 "
                 "(본 것: {seen})", layers=layers, seen=sorted(set(seen))))
+
+    def _grid_down(self) -> None:
+        """그리드에서 **줄 내리기를 확인하고** 간다 — 전환 애니메이션이 down을
+        먹으면 같은 줄을 다시 걸게 된다. 라임 테두리는 행 구분이 안 될 때가
+        있어, **좌측 정보 패널이 바뀌었는가**로 본다 — 선택이 실제로 움직이면
+        패널(이름·장수·인기도)이 반드시 다시 그려진다."""
+        img0 = self.cap()
+        hh, ww = img0.shape[:2]
+        box = (int(0.17 * hh), int(0.89 * hh), int(0.04 * ww), int(0.22 * ww))
+        ref = img0[box[0]:box[1], box[2]:box[3]].astype(np.int16)
+        for _try in range(3):
+            gio.press("down")
+            time.sleep(0.8)
+            now = self.cap()[box[0]:box[1], box[2]:box[3]].astype(np.int16)
+            if float(np.abs(now - ref).mean()) > 6.0:
+                break
 
     def scan_groups(self, max_cells: int = 40) -> set[int]:
         """그리드를 훑어 저장된 비닐 그룹들의 **장수**를 모은다.
