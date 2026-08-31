@@ -323,9 +323,11 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                                                 text_style=tstyle, trimmed=trimmed))
                     if fam.bed == "none":
                         break
-    cands.sort(key=lambda d: -d.score.total)
+    # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다)
+    cands.sort(key=lambda d: (len(d.score.fails), -d.score.total))
     best = cands[0]
-    best.ranking = [(f"{d.family.name}/{d.pal.variant}/{'rear' if d.flow_rear else 'front'}"
+    best.ranking = [(f"{'!' * len(d.score.fails)}{d.family.name}/{d.pal.variant}"
+                     f"/{'rear' if d.flow_rear else 'front'}"
                      f"/{d.level:.2f}{'/key' if d.keyline else ''}"
                      + (f"/txt-{d.text.poses[0].role}-{d.text.tier_main}" if d.text else
                         ("/txt-none" if text_on else "")),

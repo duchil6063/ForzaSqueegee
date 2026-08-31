@@ -14,7 +14,8 @@
 | negative | 여백 구역이 비어 있나 |
 | flow | 장식 무게중심이 흐름 쪽으로 갔나 · 장식 장축이 흐름과 나란한가 |
 | cohesion | 모티프끼리 이어져 있나 (최근접 거리) |
-| bed | 베드가 지지 구역을 덮되 밖으로 안 나가나 · 베이스와 갈리나 |
+| integration | 판이 인물 뒤에 깔리고 포즈 축을 따르나 · 바탕과 갈리나 |
+| hierarchy | 꾸밈 덩어리의 무게가 주역/조연/잔것으로 갈리나 |
 | continuity | 로커·베드가 프레임 끝(이음새)까지 닿나 |
 | orphan | 무리에서 떨어진 중대형 조각 벌점 |
 
@@ -38,9 +39,13 @@ from .roles import RolePalette
 
 WEIGHTS = {
     "readability": 2.0, "face": 2.0, "balance": 0.8, "clutter": 1.0,
-    "negative": 0.8, "flow": 1.0, "cohesion": 0.6, "bed": 1.2,
-    "continuity": 0.5, "orphan": 0.6,
+    "negative": 0.8, "flow": 1.0, "cohesion": 0.6, "integration": 1.4,
+    "continuity": 0.5, "orphan": 0.6, "hierarchy": 1.4,
 }
+
+
+# 로커 띠의 잉크 — 판이 이것과 같은 색이면 하부와 한 덩이가 된다 (`roof.ROOF_DARK`).
+ROCKER_INK = (16, 17, 20)
 
 
 @dataclass
@@ -48,9 +53,50 @@ class ScoreCard:
     total: float = 0.0
     parts: dict[str, float] = field(default_factory=dict)
     info: dict[str, float] = field(default_factory=dict)
+    fails: tuple[str, ...] = ()          # 탈락 조건 — 하나라도 걸리면 후보가 아니다
 
     def text(self) -> str:
-        return " ".join(f"{k}={v:.2f}" for k, v in self.parts.items())
+        t = " ".join(f"{k}={v:.2f}" for k, v in self.parts.items())
+        return t + (f" [!{'/'.join(self.fails)}]" if self.fails else "")
+
+
+def _band(v: float, lo: float, hi: float, soft: float) -> float:
+    """구간 안이면 1, 밖이면 `soft`만큼 멀어지는 동안 0으로 내려간다."""
+    if v < lo:
+        return max(0.0, 1.0 - (lo - v) / max(1e-6, soft))
+    if v > hi:
+        return max(0.0, 1.0 - (v - hi) / max(1e-6, soft))
+    return 1.0
+
+
+def _de(a, b) -> float:
+    """두 RGB의 Lab 거리 — 색이 갈리나를 사람 눈에 가깝게 잰다."""
+    la, lb = (cv2.cvtColor(np.array([[list(c)]], np.uint8), cv2.COLOR_RGB2LAB)[0, 0]
+              .astype(np.float32) for c in (a, b))
+    return float(np.linalg.norm(la - lb))
+
+
+def _blob_weights(alpha: np.ndarray, rgb: np.ndarray, base, room: np.ndarray
+                  ) -> list[float]:
+    """꾸밈 덩어리의 **시각 무게** 목록 (큰 것부터) — 면적 x 바탕 대비.
+
+    사람이 만든 구도는 요소의 무게가 고르지 않다: 주역 하나, 조연 몇, 잔 것
+    여럿이다. 면적만으로는 흰 바탕의 흰 판과 검은 판이 같아지므로 대비를 곱한다.
+    """
+    m = ((alpha > 0.5) & room).astype(np.uint8)
+    if not m.any():
+        return []
+    n, lbl, st, _c = cv2.connectedComponentsWithStats(m, 8)
+    tot = float(room.sum()) or 1.0
+    out = []
+    for i in range(1, n):
+        a = float(st[i, cv2.CC_STAT_AREA])
+        if a < 0.0008 * tot:
+            continue
+        col = rgb[lbl == i].mean(axis=0).round().astype(np.uint8)
+        out.append(a / tot * min(1.0, _de(col, base) / 40.0))
+    out.sort(reverse=True)
+    return out
 
 
 def _lum(img: np.ndarray) -> np.ndarray:
@@ -228,33 +274,74 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
     linked, orphan = _cluster_stats(motifs, gap)
     parts["cohesion"] = linked
     parts["orphan"] = max(0.0, 1.0 - orphan)
-    # 8) 베드 — 지지 구역 덮음 · 밖으로 나감 · 베이스와 갈림
-    bed = [l for l in back if l.label == "itasha_bed"]
+    # 8) 배경 통합 — 판이 **인물 뒤에** 있고 포즈 축을 따르나 (+ 바탕과 갈리나)
+    #    옛 `bed` 항목(지지 구역 덮음·삐져나감)을 대신한다: 그쪽은 판이 인물을
+    #    지나가기만 해도 만점이라 "인물 뒤에 아무것도 없는" 구도를 못 걸렀다.
+    bed = [l for l in back if l.label in ("itasha_bed", "itasha_fade")]
     if bed:
         _brgb, ba = raster_layers(bed, fld, cat)
-        supp = fld.support > 0.5
-        inside = float((ba[supp] > 0.5).mean()) if supp.any() else 0.0
-        spill = float((ba[draw & ~supp] > 0.5).mean()) if (draw & ~supp).any() else 0.0
-        bl = _lum(np.array([[pal.bed]], np.uint8))[0, 0]
-        base_l = _lum(np.array([[pal.base]], np.uint8))[0, 0]
-        sep = min(1.0, abs(bl - base_l) / 0.25)
-        parts["bed"] = 0.5 * min(1.0, inside / 0.55) + 0.3 * max(0.0, 1.0 - spill / 0.30) + 0.2 * sep
-        info["bed_inside"] = inside
+        backing = float((ba[sil] > 0.5).mean()) if sil.any() else 0.0
+        spill = float((ba[draw & ~(fld.support > 0.5)] > 0.5).mean())             if (draw & ~(fld.support > 0.5)).any() else 0.0
+        sep = min(1.0, _de(pal.bed, pal.base) / 26.0)
+        # 판의 축이 포즈 축과 나란한가 — 인물이 기울면 판도 기울어야 한 덩어리다
+        ys_, xs_ = np.where(ba > 0.5)
+        align = 0.5
+        if len(xs_) > 40:
+            x_ = xs_.astype(np.float64) - xs_.mean()
+            y_ = ys_.astype(np.float64) - ys_.mean()
+            cv_ = np.array([[float((x_ * x_).sum()), float((x_ * y_).sum())],
+                            [float((x_ * y_).sum()), float((y_ * y_).sum())]]) / len(x_)
+            vals_, vecs_ = np.linalg.eigh(cv_)
+            mj_ = vecs_[:, int(np.argmax(vals_))]
+            ax_ = np.array([fld.axis[0], -fld.axis[1]])
+            fl_ = np.array([fld.flow[0], -fld.flow[1]])
+            # 포즈 축과 흐름 중 **가까운 쪽**을 따르면 된다 (누운 인물은 둘이 같다)
+            align = max(abs(float(mj_ @ ax_)), abs(float(mj_ @ fl_)))
+        parts["integration"] = (0.45 * min(1.0, backing / 0.70)
+                                + 0.20 * max(0.0, 1.0 - spill / 0.35)
+                                + 0.15 * sep + 0.20 * align)
+        info["backing"] = backing
         info["bed_spill"] = spill
     else:
-        parts["bed"] = 0.45                      # 베드 없음 — 중립 (계열이 그렇다)
+        parts["integration"] = 0.40              # 판 없음 — 인물이 맨 도색 위에 뜬다
     # 9) 이어짐 — 로커나 베드가 프레임 양 끝에 닿나
     edge_cols = np.zeros(g.cols, bool)
     edge_cols[:3] = True
     edge_cols[-3:] = True
     touch = float((balpha[:, edge_cols] > 0.5).any(axis=0).mean())
     parts["continuity"] = min(1.0, 0.5 * touch + (0.5 if rocker else 0.2))
+    # 11) 위계 — 꾸밈 덩어리의 무게가 주역/조연/잔것으로 갈리나
+    #     (전부 비슷한 무게로 흩어진 판은 기계가 뿌린 것으로 읽힌다)
+    ws = _blob_weights(balpha, comp["behind"].astype(np.uint8), pal.base, room)
+    if len(ws) >= 2:
+        tot_w = sum(ws) or 1e-9
+        h1 = ws[0] / tot_w
+        h2 = ws[1] / ws[0]
+        tail = sum(1 for w in ws if w < 0.25 * ws[0])
+        parts["hierarchy"] = (0.45 * _band(h1, 0.32, 0.66, 0.30)
+                              + 0.35 * _band(h2, 0.22, 0.66, 0.28)
+                              + 0.20 * min(1.0, tail / 3.0))
+        info["h1"] = h1
+        info["h2"] = h2
+    else:
+        parts["hierarchy"] = 0.35                # 덩어리가 하나뿐 — 위계가 없다
     parts = {k: float(v) for k, v in parts.items()}
     info = {k: float(v) for k, v in info.items()}
+    # ---- 탈락 조건 (가중합에 안 섞는다) ----
+    fails: list[str] = []
+    if info.get("face_cover", 0.0) > 0.06:
+        fails.append("face")
+    if info.get("edge_dl", 1.0) < 0.09:
+        fails.append("readability")
+    if cov > hi + 0.25:
+        fails.append("clutter")
+    # 판이 로커와 같은 색으로 붙어 한 덩이가 되나 — 하부가 통째로 치솟는 꼴
+    if rocker and bed and _de(pal.bed, ROCKER_INK) < 12.0 and info.get("bed_spill", 0) > 0.45:
+        fails.append("merge")
     weights = dict(WEIGHTS)
     if extra:
         parts.update({k: float(v) for k, v in extra.items()})
         weights.update(extra_weights or {})
     total = sum(weights.get(k, 0.5) * v for k, v in parts.items()) / sum(
         weights.get(k, 0.5) for k in parts)
-    return ScoreCard(total=float(total), parts=parts, info=info)
+    return ScoreCard(total=float(total), parts=parts, info=info, fails=tuple(fails))
