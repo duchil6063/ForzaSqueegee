@@ -782,6 +782,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             "bed_level": round(design.level, 2),
             "score": round(design.score.total, 4),
             "parts": {k: round(v, 3) for k, v in design.score.parts.items()},
+            # 항목이 왜 그 값인지 되짚는 원자료 (테두리 명도차·묻은 몫·커버리지…)
+            "info": {k: round(v, 4) for k, v in design.score.info.items()},
             "ranking": design.ranking,
             "palette": {k: list(getattr(design.pal, k)) for k in
                         ("base", "bed", "bed_alt", "primary", "secondary",
