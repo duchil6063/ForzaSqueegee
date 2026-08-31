@@ -421,14 +421,18 @@ class BodyEditor:
                 return                      # 이 줄에 새것이 없다 = 다 봤다
             # **줄 내리기는 확인하고 간다** — 전환 애니메이션이 down을 먹으면
             # 같은 줄을 다시 걸어 "다 본 장수"만 만나고 조기 종료한다 (2026-08-31
-            # 실측: 2행의 deco 그룹을 세 번 연속 못 봤다). 라임 테두리 행이
-            # 바뀔 때까지 최대 3번 누른다 (못 읽으면 한 번 누른 것으로 친다).
-            before = self.group_cell()
+            # 실측: 2행의 deco 그룹을 네 번 연속 못 봤다). 라임 테두리는 행
+            # 구분이 안 될 때가 있어, **좌측 정보 패널이 바뀌었는가**로 본다 —
+            # 선택이 실제로 움직이면 패널(이름·장수·인기도)이 반드시 다시 그려진다.
+            img0 = self.cap()
+            hh, ww = img0.shape[:2]
+            box = (int(0.17 * hh), int(0.89 * hh), int(0.04 * ww), int(0.22 * ww))
+            ref = img0[box[0]:box[1], box[2]:box[3]].astype(np.int16)
             for _try in range(3):
                 gio.press("down")
-                time.sleep(0.7)
-                now = self.group_cell()
-                if before is None or now is None or now[0] != before[0]:
+                time.sleep(0.8)
+                now = self.cap()[box[0]:box[1], box[2]:box[3]].astype(np.int16)
+                if float(np.abs(now - ref).mean()) > 6.0:
                     break
 
     def find_group(self, layers: int, max_cells: int = 40) -> None:
