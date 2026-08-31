@@ -29,7 +29,8 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..model import Layer, LayerPlan
 from .bands import stripe_layers
-from .bed import bed_layers, keyline_layers
+from .bed import bed_layers, keyline_layers, main_plate
+from .dither import fade_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field
@@ -59,6 +60,10 @@ DECO_FRAME_FILL = 0.98
 # 8.7·4.7유닛 모자라 사이드실 끝에 사각 단면이 남았다 (Evo VIII 실측).
 # 산포와 갈리는 이유: 띠는 안 기울고(rot 0), 넘친 몫은 면 마스크가 자른다.
 DECO_BAND_FILL = 1.0
+
+
+# 디더 페이드의 장수 상한 (판 하나당). 40장이면 8열 x 5행의 절반쯤이 찬다.
+FADE_BUDGET = 40
 
 
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
@@ -238,6 +243,14 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                     base += bed_layers(fld, pal, cat, fam.bed, level,
                                        edge_shapes=edge_v, torn=fam.torn,
                                        rocker=fam.rocker)
+                    # 판 끝을 디더로 흩는다 — 곧게 끝나는 색면은 스티커로 읽힌다.
+                    # 남는 장수가 없으면 안 한다 (도안·판이 먼저다).
+                    plate = main_plate(base, cat)
+                    if plate is not None:
+                        room = cap - n_person - len(base) - 24
+                        base += fade_layers(fld, plate, cat,
+                                            1.0 if fld.flow[0] >= 0 else -1.0,
+                                            budget=max(0, min(FADE_BUDGET, room)))
                     sc, stats = _scatter(fld, fam, pal, cat, vocab, halo, False, phase)
                     tail: list[Layer] = list(sc)
                     if fam.echo:

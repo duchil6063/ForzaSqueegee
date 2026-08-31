@@ -301,6 +301,24 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
     return out
 
 
+def main_plate(layers: list[Layer], cat: Catalog) -> Layer | None:
+    """베드 레이어 목록에서 **주 색면 사각** — 가장 넓은 뺄셈 아닌 사각판.
+
+    디더 페이드(`dither.fade_layers`)가 어느 판의 끝을 흐릴지 고르는 자다.
+    타원 덩어리(`blob`)는 안 고른다 — 끝이 뾰족해 상자 끝에서 시작한 디더가
+    허공에서 시작한다.
+    """
+    best = None
+    area = 0.0
+    for l in layers:
+        if l.label != LABEL or l.mask or l.shape != cat.square:
+            continue
+        a = abs(l.sx) * abs(l.sy)
+        if a > area:
+            best, area = l, a
+    return best
+
+
 def keyline_layers(fld: CompositionField, color: tuple[int, int, int], cat: Catalog,
                    width: float | None = None) -> list[Layer]:
     """실루엣 **키라인** — 인물을 도려낸 스티커의 흰 테 (아웃라인성 보조 배경).

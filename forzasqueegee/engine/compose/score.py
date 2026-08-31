@@ -174,10 +174,13 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
         info["balance_off"] = off
     else:
         parts["balance"] = 0.5
-    # 4) 어수선함 — 장식 커버리지 (밴드의 인물 밖 도색면 대비). 로커 띠는
-    #    바닥 요소라 안 센다 — 세면 로커 계열이 전부 "어수선"으로 떨어진다.
+    # 4) 어수선함 — 장식 커버리지 (밴드의 인물 밖 도색면 대비). 로커 띠와 디더
+    #    페이드는 바닥 요소라 안 센다 — 세면 로커 계열이 전부 "어수선"으로
+    #    떨어지고, 페이드는 판의 가장자리 처리인데 커버리지를 밀어 계열 고르기를
+    #    바꿔 버린다 (실측: 페이드를 세니 33벌 중 28벌이 graphic_bed로 쏠렸다).
     room = draw & ~sil
-    _mrgb, malpha = raster_layers([l for l in back if l.label != "itasha_stripe"], fld, cat)
+    _mrgb, malpha = raster_layers(
+        [l for l in back if l.label not in ("itasha_stripe", "itasha_fade")], fld, cat)
     cov = float((malpha[room] > 0.5).mean()) if room.any() else 0.0
     lo, hi = clutter_target
     if cov < lo:
