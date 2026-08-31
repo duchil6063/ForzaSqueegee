@@ -27,10 +27,9 @@ import numpy as np
 
 from ...i18n import msg
 from ..catalog import Catalog
-from ..model import Layer, LayerPlan
+from ..model import Layer, LayerPlan, rnd
 from .bands import stripe_layers
-from .bed import bed_layers, keyline_layers, main_plate
-from .dither import fade_layers
+from .bed import bed_layers, keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field
@@ -66,18 +65,13 @@ DECO_BAND_FILL = 1.0
 # 여기 없다: 큰 구도는 마지막까지 남아야 장수를 줄여도 구성이 유지된다.
 # 옛 자는 산포·에코만 뺐고, 그러고도 넘치면 `build`가 꾸밈 그룹을 **통째로**
 # 버렸다 — 도안이 2,983장인 판 셋이 그래서 꾸밈 0장이 됐다.
-TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_fade", "itasha_keyline",
-              "itasha_stripe")
+TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_keyline", "itasha_stripe")
 
 
 # 모티프가 **제 뒤 배경에서 읽히는** 최소 색차 (Lab). 이 아래면 조각이 판에
 # 묻어 없는 것과 같다 — 흰 판 위 흰 물감(07번: 아홉 중 다섯) · 흰 띠 위 흰 별
 # (11번: 열여섯 중 넷)이 실측이다.
 MOTIF_DE_MIN = 18.0
-
-
-# 디더 페이드의 장수 상한 (판 하나당). 40장이면 8열 x 5행의 절반쯤이 찬다.
-FADE_BUDGET = 40
 
 
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
@@ -93,28 +87,28 @@ class Tweak:
     """미세 조정 손잡이 — 이긴 후보를 좌표하강으로 다듬는다 (`_refine`).
 
     전부 0/1이면 손대기 전과 같다. 단위: 각은 도, `bed_dy`는 인물 높이 몫,
-    `anchor_dx`는 인물 폭 몫, 나머지는 배수.
+    `anchor_dx`는 인물 폭 몫, `motif_k`는 배수. 판의 길이는 손잡이가 아니다 —
+    판은 늘 프레임을 관통한다 (`bed`).
     """
 
     bed_rot: float = 0.0
     bed_dy: float = 0.0
-    bed_len: float = 1.0
     anchor_dx: float = 0.0
     motif_k: float = 1.0
 
 
 # 좌표하강이 도는 축과 걸음 (순서가 곧 결정성이다 — 같은 점수면 원래 값이 이긴다).
+# 축마다 4걸음 × 4축 × 2패스 = 32벌.
 REFINE_STEPS: tuple[tuple[str, tuple[float, ...]], ...] = (
     ("bed_rot", (-6.0, -3.0, 3.0, 6.0)),
     ("bed_dy", (-0.10, -0.05, 0.05, 0.10)),
-    ("bed_len", (-0.12, -0.06, 0.06, 0.12)),
     ("anchor_dx", (-0.24, -0.12, 0.12, 0.24)),
     ("motif_k", (-0.16, -0.08, 0.08, 0.16)),
 )
 
 
 # 배수 손잡이의 상·하한 (여러 패스가 같은 쪽으로 걸어도 판이 뒤집히지 않게).
-REFINE_CLAMP = {"bed_len": (0.70, 1.30), "motif_k": (0.70, 1.30),
+REFINE_CLAMP = {"motif_k": (0.70, 1.30),
                 "bed_rot": (-12.0, 12.0), "bed_dy": (-0.20, 0.20),
                 "anchor_dx": (-0.48, 0.48)}
 
@@ -149,10 +143,8 @@ class Design:
 
     @property
     def text_layers(self) -> list[Layer]:
-        """옆면 텍스트 그룹의 레이어 (커스텀 층만 — 층 D 흉내 그림은 뺀다)."""
-        if self.text is None:
-            return []
-        return [l for l in self.text.layers if not l.label.startswith("game")]
+        """옆면 텍스트 그룹의 레이어 (없으면 빈 목록)."""
+        return list(self.text.layers) if self.text is not None else []
 
     def plan(self, src: LayerPlan, cat: Catalog, front: bool = False) -> LayerPlan | None:
         layers = self.front if front else self.back
@@ -161,8 +153,8 @@ class Design:
         # 수치는 넷째 자리에서 끊는다 — 게임 입력 스텝(이동 0.5 · 스케일 0.01 ·
         # 회전 0.1°)보다 훨씬 잘고, 부동소수 꼬리가 파일에 실려 같은 판이
         # 다른 파일로 보이는 일을 막는다
-        rounded = [replace(l, x=round(l.x, 4), y=round(l.y, 4), sx=round(l.sx, 4),
-                           sy=round(l.sy, 4), rot=round(l.rot % 360.0, 4))
+        rounded = [replace(l, x=rnd(l.x, 4), y=rnd(l.y, 4), sx=rnd(l.sx, 4),
+                           sy=rnd(l.sy, 4), rot=rnd(l.rot % 360.0, 4))
                    for l in layers]
         return _refit_canvas(LayerPlan(source_image=src.source_image,
                                        image_size=src.image_size,
@@ -337,19 +329,14 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
     def _parts(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
                tw: "Tweak") -> tuple[list[Layer], list[Layer], list[Layer], list]:
         """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계) — 미세 조정도 이 자를 쓴다."""
-        base: list[Layer] = []
+        # 판이 먼저, 로커가 그 위다 — 판은 프레임을 관통해 로커 속으로도 내려가고
+        # (`bed`), 로커 띠가 그 아랫단을 덮어 하부 투톤이 판을 자른다 (레퍼런스의
+        # 검은 하부는 판 위에 얹힌 층이다 — Evo IX·EVELYNE).
+        base: list[Layer] = bed_layers(fld, pal, cat, fam.bed, level, edge_shapes=edge_v,
+                                       torn=fam.torn, rocker=fam.rocker,
+                                       d_rot=tw.bed_rot, d_y=tw.bed_dy)
         if fam.rocker:
             base += _rocker(fld, lk, cat, car_rgb, edge_v)
-        base += bed_layers(fld, pal, cat, fam.bed, level, edge_shapes=edge_v,
-                           torn=fam.torn, rocker=fam.rocker,
-                           d_rot=tw.bed_rot, d_y=tw.bed_dy, k_len=tw.bed_len)
-        # 판 끝을 디더로 흩는다 — 곧게 끝나는 색면은 스티커로 읽힌다.
-        # 남는 장수가 없으면 안 한다 (도안·판이 먼저다).
-        plate = main_plate(base, cat)
-        if plate is not None:
-            room = cap - n_person - len(base) - 24
-            base += fade_layers(fld, plate, cat, 1.0 if fld.flow[0] >= 0 else -1.0,
-                                budget=max(0, min(FADE_BUDGET, room)))
         fam_m = _replace(fam, tier_scale=fam.tier_scale * tw.motif_k)
         sc, stats = _scatter(fld, fam_m, pal, cat, vocab, halo, False, phase,
                              anchor_dx=tw.anchor_dx)
@@ -424,6 +411,9 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                         text_sets += build_text_sets(
                             fld, pal, cat, main=text.main or "", sub=text.sub, style=tstyle,
                             plan=tplan, rocker=fam.rocker, bed_alpha=bed_a)
+                    # 게임 글꼴 글리프는 후보당 수십 장이라 도형 맞춤(수백 장)과 달리
+                    # 다듬기를 막을 이유가 없다 — 다만 판을 흔들면 글자 자리도 흔들려
+                    # 다시 지어야 하므로 `_refine`은 여전히 글자 없는 판만 돈다.
                     # 글자 래스터는 (배치 후보 × 이 팔레트)마다 한 번만 — 키라인·
                     # 베드 크기 변종이 같은 것을 나눠 쓴다
                     text_ras = {id(ts): raster_layers(ts.layers, fld, cat)
@@ -438,15 +428,23 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                                                tplan, tstyle, Tweak()))
                     if fam.bed == "none":
                         break
-    # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다)
+    # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다).
+    #
+    # 총점은 **여섯째 자리에서 끊어** 견준다. 점수 항목 몇은 LAPACK을 거치는데
+    # (`np.linalg.eigh` — 판·장식의 장축), 거기서 나오는 마지막 비트가 스레드 수에
+    # 따라 흔들린다. 상위 후보가 0.001 안에 몰리는 것이 흔한 판이라(베드 크기
+    # 변종 둘은 점수가 같기 일쑤다) 그 흔들림이 순위를 뒤집어 **같은 입력이 다른
+    # 파일**을 냈다 (실측: deco.json 해시가 판마다 갈렸다). 끊으면 진짜로 같은
+    # 후보들이 동점이 되고, 파이썬 정렬이 안정적이라 먼저 지은 것이 이긴다 —
+    # 후보를 짓는 순서는 못 박혀 있으므로 그것으로 결정성이 선다.
     def _rank(d: Design) -> tuple[int, float]:
-        return (len(d.score.fails), -d.score.total)
+        return (len(d.score.fails), -round(d.score.total, 6))
 
     def _refine(d: Design) -> Design:
         """이긴 후보를 **좌표하강**으로 다듬는다 — 이산 후보 격자의 사이를 메운다.
 
         축·걸음·순서가 못 박혀 있고(`REFINE_STEPS`) 같은 점수면 원래 값이 이긴다
-        — 난수도 전수 조합도 없다 (축마다 4걸음 × 5축 × 2패스 = 40벌).
+        — 난수도 전수 조합도 없다 (`REFINE_STEPS`).
         """
         keyl = keyline_layers(d.fld, _keyline_color(d.pal), cat)
         best_d, tw = d, d.tweak

@@ -10,12 +10,12 @@
 | readability | 실루엣 테두리 안팎의 명도차 (베드·베이스 위에서 인물이 읽히나) |
 | face | 전경 조각이 보호 구역(얼굴)을 덮는 몫의 벌점 |
 | balance | 전체 잉크 무게중심의 가로 치우침 |
-| clutter | 장식 커버리지가 계열 목표 구간 안인가 · 조각 수 |
-| negative | 여백 구역이 비어 있나 |
+| clutter | 모티프 커버리지가 계열 목표 구간 안인가 (판·로커는 바닥 요소라 안 센다) |
+| negative | 여백 구역에 모티프가 없나 |
 | flow | 장식 무게중심이 흐름 쪽으로 갔나 · 장식 장축이 흐름과 나란한가 |
 | cohesion | 모티프끼리 이어져 있나 (최근접 거리) |
 | integration | 판이 인물 뒤에 깔리고 포즈 축을 따르나 · 바탕과 갈리나 |
-| hierarchy | 꾸밈 덩어리의 무게가 주역/조연/잔것으로 갈리나 |
+| hierarchy | 모티프 덩어리의 무게가 주역/조연/잔것으로 갈리나 |
 | continuity | 로커·베드가 프레임 끝(이음새)까지 닿나 |
 | orphan | 무리에서 떨어진 중대형 조각 벌점 |
 
@@ -33,6 +33,7 @@ import numpy as np
 from ..catalog import Catalog
 from ..model import Layer, LayerPlan
 from ..render import render_plan
+from .boxes import major_axis
 from .field import CompositionField
 from .roles import RolePalette
 
@@ -46,6 +47,12 @@ WEIGHTS = {
 
 # 로커 띠의 잉크 — 판이 이것과 같은 색이면 하부와 한 덩이가 된다 (`roof.ROOF_DARK`).
 ROCKER_INK = (16, 17, 20)
+
+
+# **바닥 요소** — 프레임을 관통하는 판·띠와 로커. 구도의 뼈대라 어수선·여백·위계
+# 자로는 안 잰다 (그 셋은 **모티프**의 자다). 세면 판이 서는 계열이 전부
+# "어수선"으로 떨어지고 여백이 늘 차 있다.
+GROUND = ("itasha_bed", "itasha_stripe")
 
 
 @dataclass
@@ -220,13 +227,11 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
         info["balance_off"] = off
     else:
         parts["balance"] = 0.5
-    # 4) 어수선함 — 장식 커버리지 (밴드의 인물 밖 도색면 대비). 로커 띠와 디더
-    #    페이드는 바닥 요소라 안 센다 — 세면 로커 계열이 전부 "어수선"으로
-    #    떨어지고, 페이드는 판의 가장자리 처리인데 커버리지를 밀어 계열 고르기를
-    #    바꿔 버린다 (실측: 페이드를 세니 33벌 중 28벌이 graphic_bed로 쏠렸다).
+    # 4) 어수선함 — **모티프** 커버리지 (밴드의 인물 밖 도색면 대비). 판·로커는
+    #    바닥 요소라 안 센다 (`GROUND`) — 관통하는 판은 여백의 절반을 덮는 것이
+    #    정상이고, 어수선은 그 위에 흩은 조각이 낸다.
     room = draw & ~sil
-    _mrgb, malpha = raster_layers(
-        [l for l in back if l.label not in ("itasha_stripe", "itasha_fade")], fld, cat)
+    mrgb, malpha = raster_layers([l for l in back if l.label not in GROUND], fld, cat)
     cov = float((malpha[room] > 0.5).mean()) if room.any() else 0.0
     lo, hi = clutter_target
     if cov < lo:
@@ -257,14 +262,8 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
         side = max(0.0, min(1.0, 0.5 + proj))
         ys, xs = np.where(dm > 0.5)
         if len(xs) > 8:
-            x = xs.astype(np.float64) - xs.mean()
-            y = ys.astype(np.float64) - ys.mean()
-            cov_ = np.array([[float((x * x).sum()), float((x * y).sum())],
-                             [float((x * y).sum()), float((y * y).sum())]]) / len(x)
-            vals, vecs = np.linalg.eigh(cov_)
-            mj = vecs[:, int(np.argmax(vals))]
-            fl = np.array([fld.flow[0], -fld.flow[1]])
-            par = abs(float(mj @ fl))
+            mj, _e = major_axis(xs, ys)
+            par = abs(mj[0] * fld.flow[0] + mj[1] * -fld.flow[1])
         else:
             par = 0.5
         parts["flow"] = 0.6 * side + 0.4 * par
@@ -277,31 +276,24 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
     # 8) 배경 통합 — 판이 **인물 뒤에** 있고 포즈 축을 따르나 (+ 바탕과 갈리나)
     #    옛 `bed` 항목(지지 구역 덮음·삐져나감)을 대신한다: 그쪽은 판이 인물을
     #    지나가기만 해도 만점이라 "인물 뒤에 아무것도 없는" 구도를 못 걸렀다.
-    bed = [l for l in back if l.label in ("itasha_bed", "itasha_fade")]
+    #    판이 지지 구역 밖으로 나가는 몫은 안 잰다 — 판은 프레임을 관통하는
+    #    것이 문법이다 (`bed`).
+    bed = [l for l in back if l.label == "itasha_bed"]
     if bed:
         _brgb, ba = raster_layers(bed, fld, cat)
         backing = float((ba[sil] > 0.5).mean()) if sil.any() else 0.0
-        spill = float((ba[draw & ~(fld.support > 0.5)] > 0.5).mean())             if (draw & ~(fld.support > 0.5)).any() else 0.0
         sep = min(1.0, _de(pal.bed, pal.base) / 26.0)
         # 판의 축이 포즈 축과 나란한가 — 인물이 기울면 판도 기울어야 한 덩어리다
         ys_, xs_ = np.where(ba > 0.5)
         align = 0.5
         if len(xs_) > 40:
-            x_ = xs_.astype(np.float64) - xs_.mean()
-            y_ = ys_.astype(np.float64) - ys_.mean()
-            cv_ = np.array([[float((x_ * x_).sum()), float((x_ * y_).sum())],
-                            [float((x_ * y_).sum()), float((y_ * y_).sum())]]) / len(x_)
-            vals_, vecs_ = np.linalg.eigh(cv_)
-            mj_ = vecs_[:, int(np.argmax(vals_))]
-            ax_ = np.array([fld.axis[0], -fld.axis[1]])
-            fl_ = np.array([fld.flow[0], -fld.flow[1]])
+            mj_, _e = major_axis(xs_, ys_)
             # 포즈 축과 흐름 중 **가까운 쪽**을 따르면 된다 (누운 인물은 둘이 같다)
-            align = max(abs(float(mj_ @ ax_)), abs(float(mj_ @ fl_)))
-        parts["integration"] = (0.45 * min(1.0, backing / 0.70)
-                                + 0.20 * max(0.0, 1.0 - spill / 0.35)
-                                + 0.15 * sep + 0.20 * align)
+            align = max(abs(mj_[0] * fld.axis[0] + mj_[1] * -fld.axis[1]),
+                        abs(mj_[0] * fld.flow[0] + mj_[1] * -fld.flow[1]))
+        parts["integration"] = (0.55 * min(1.0, backing / 0.70)
+                                + 0.20 * sep + 0.25 * align)
         info["backing"] = backing
-        info["bed_spill"] = spill
     else:
         parts["integration"] = 0.40              # 판 없음 — 인물이 맨 도색 위에 뜬다
     # 9) 이어짐 — 로커나 베드가 프레임 양 끝에 닿나
@@ -310,9 +302,10 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
     edge_cols[-3:] = True
     touch = float((balpha[:, edge_cols] > 0.5).any(axis=0).mean())
     parts["continuity"] = min(1.0, 0.5 * touch + (0.5 if rocker else 0.2))
-    # 11) 위계 — 꾸밈 덩어리의 무게가 주역/조연/잔것으로 갈리나
-    #     (전부 비슷한 무게로 흩어진 판은 기계가 뿌린 것으로 읽힌다)
-    ws = _blob_weights(balpha, comp["behind"].astype(np.uint8), pal.base, room)
+    # 11) 위계 — 모티프 덩어리의 무게가 주역/조연/잔것으로 갈리나
+    #     (전부 비슷한 무게로 흩어진 판은 기계가 뿌린 것으로 읽힌다). 바닥 요소는
+    #     안 센다 — 관통하는 판은 모든 조각과 한 덩이로 이어져 위계를 지운다.
+    ws = _blob_weights(malpha, mrgb, pal.base, room)
     if len(ws) >= 2:
         tot_w = sum(ws) or 1e-9
         h1 = ws[0] / tot_w
@@ -335,8 +328,9 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
         fails.append("readability")
     if cov > hi + 0.25:
         fails.append("clutter")
-    # 판이 로커와 같은 색으로 붙어 한 덩이가 되나 — 하부가 통째로 치솟는 꼴
-    if rocker and bed and _de(pal.bed, ROCKER_INK) < 12.0 and info.get("bed_spill", 0) > 0.45:
+    # 판이 로커와 같은 색이면 한 덩이가 된다 — 관통하는 판은 늘 로커에 닿으므로
+    # 색만 본다 (하부가 통째로 치솟는 꼴)
+    if rocker and bed and _de(pal.bed, ROCKER_INK) < 12.0:
         fails.append("merge")
     weights = dict(WEIGHTS)
     if extra:

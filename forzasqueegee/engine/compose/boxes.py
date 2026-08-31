@@ -6,6 +6,8 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
+
 from ...game import surface as gsurf
 
 
@@ -18,6 +20,39 @@ DEFAULT_GROUP_UNIT = 1.0
 # 값을 쓴다 — 도안의 `units_per_px`도 긴 변을 900에 맞춘다). 캔버스 밖에 앉은
 # 레이어는 저장·불러오기 뒤에 **게임이 안 그린다.**
 CANVAS_UNITS = 900.0
+
+
+def major_axis(xs: np.ndarray, ys: np.ndarray) -> tuple[tuple[float, float], float]:
+    """점 구름의 **장축 단위벡터와 장/단축 비** — 2차 모멘트의 닫힌 식.
+
+    ## 왜 `np.linalg.eigh`를 안 쓰나
+
+    LAPACK은 스레드 수에 따라 마지막 비트가 흔들린다. 구도 점수는 상위 후보가
+    0.001 안에 몰리는 일이 흔해서 그 흔들림이 그대로 **순위를 뒤집고**, 같은
+    입력이 프로세스마다 다른 파일을 냈다 (2026-09-01 실측: 한 프로세스 안에서는
+    세 번 다 같은데 프로세스를 새로 뜨면 `deco.json` 해시가 두 값 사이를 오갔다.
+    옛 주석이 공분산을 명시적 합으로 쌓으라 한 것과 같은 사정이고, 남은 구멍이
+    고윳값 분해였다).
+
+    2×2 대칭 행렬은 고윳값 분해에 닫힌 식이 있다 — 각 θ = ½·atan2(2b, a−c)가
+    장축이고 고윳값은 (a+c)/2 ± √(((a−c)/2)² + b²)다. 정확하고, 더 싸고,
+    스레드와 무관하다.
+
+    점이 모자라면 세로축 `(0, 1)`과 비 1.0.
+    """
+    n = len(xs)
+    if n < 3:
+        return (0.0, 1.0), 1.0
+    x = xs.astype(np.float64) - xs.mean()
+    y = ys.astype(np.float64) - ys.mean()
+    a = float((x * x).sum()) / n
+    b = float((x * y).sum()) / n
+    c = float((y * y).sum()) / n
+    th = 0.5 * math.atan2(2.0 * b, a - c)
+    mid = 0.5 * (a + c)
+    rad = math.hypot(0.5 * (a - c), b)
+    hi, lo = mid + rad, max(mid - rad, 1e-12)
+    return (math.cos(th), math.sin(th)), math.sqrt(hi / lo)
 
 
 def _union(a: tuple[float, float, float, float],

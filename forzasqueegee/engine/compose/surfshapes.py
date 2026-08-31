@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from ...game import surface as gsurf
 from ..catalog import Catalog
-from ..model import UNITS_PER_SCALE
+from ..model import UNITS_PER_SCALE, rnd
 from .vocabulary import _RING8
 from .scatter import (
     DECO_ANCHOR_GAP, DECO_GAP_MAX, DECO_HERO_CAP, DECO_TIER_SIZE, HALO_GROW,
@@ -133,9 +133,9 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
         cap = min(cap, max_sx)
     tiles = band_tiles(u0, u1, cap)
     if mode == "stripe":
-        return [{"shape": "A_01", "x": round(tx, 1),
-                 "y": round(q0 + f * hh, 1), "sx": round(tsx, 3),
-                 "sy": round(0.055 * hh / 2 / UNITS_PER_SCALE, 4),
+        return [{"shape": "A_01", "x": rnd(tx, 1),
+                 "y": rnd(q0 + f * hh, 1), "sx": rnd(tsx, 3),
+                 "sy": rnd(0.055 * hh / 2 / UNITS_PER_SCALE, 4),
                  "rot": 0.0, "rgb": list(color)}
                 for f in (0.42, 0.58) for tx, tsx in tiles]
     # 하부 밴드 — **도색 상자 안에서** 잡는다. 상자 아래로 빼면 도형 중심이
@@ -151,9 +151,9 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
     else:
         top = q0 + FACE_ROCKER_FRAC * hh
         lo = q0 - 0.10 * hh      # 상자 아래를 조금 물어 범퍼 밑선까지 덮는다
-    out = [{"shape": "A_01", "x": round(tx, 1), "y": round((lo + top) / 2, 1),
-            "sx": round(tsx, 3),
-            "sy": round((top - lo) / 2 / UNITS_PER_SCALE, 4),
+    out = [{"shape": "A_01", "x": rnd(tx, 1), "y": rnd((lo + top) / 2, 1),
+            "sx": rnd(tsx, 3),
+            "sy": rnd((top - lo) / 2 / UNITS_PER_SCALE, 4),
             "rot": 0.0, "rgb": list(color)} for tx, tsx in tiles]
     # 찢긴 윗선 — 옆면 로커와 **같은 자**다 (`_teeth`): 가로는 이웃과 겹칠 만큼,
     # 세로는 밴드의 몇 할만. 등방으로 재던 옛 자는 면 높이의 0.39배짜리 조각을
@@ -166,13 +166,13 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
         reach = (cat.shapes[name].reach
                  if cat is not None and name in cat.shapes else 1.0)
         out.append({"shape": name,
-                    "x": round(u0 + (u1 - u0) * (i + 0.5) / FLOW_TEETH, 1),
-                    "y": round(top - 0.38 * band * ((i * 3 % 5) / 4.0), 1),
-                    "sx": round(TEETH_OVERLAP * ((u1 - u0) / FLOW_TEETH) / 2 * k
+                    "x": rnd(u0 + (u1 - u0) * (i + 0.5) / FLOW_TEETH, 1),
+                    "y": rnd(top - 0.38 * band * ((i * 3 % 5) / 4.0), 1),
+                    "sx": rnd(TEETH_OVERLAP * ((u1 - u0) / FLOW_TEETH) / 2 * k
                                 / UNITS_PER_SCALE / reach, 3),
-                    "sy": round(TEETH_AMP * band / 2 * k
+                    "sy": rnd(TEETH_AMP * band / 2 * k
                                 / UNITS_PER_SCALE / reach, 4),
-                    "rot": round((17.0 * i) % 24.0 - 12.0, 1),
+                    "rot": rnd((17.0 * i) % 24.0 - 12.0, 1),
                     "rgb": list(color)})
     return out
 
@@ -316,15 +316,15 @@ def surface_deco_shapes(colors: tuple[tuple[int, int, int], ...],
             vocab=shapes or (cat.circle,), cat=cat, colors=colors,
             anchor_at=at, avoid=avoid, over=over, place_ok=_ok, phase=phase,
             gap=None if over else DECO_GAP_MAX):
-        spec = {"shape": mo.shape, "x": round(mo.x, 1), "y": round(mo.y, 1),
-                "sx": round(mo.half, 3), "sy": round(mo.half, 3),
-                "rot": round(mo.rot, 1), "rgb": list(mo.color)}
+        spec = {"shape": mo.shape, "x": rnd(mo.x, 1), "y": rnd(mo.y, 1),
+                "sx": rnd(mo.half, 3), "sy": rnd(mo.half, 3),
+                "rot": rnd(mo.rot, 1), "rgb": list(mo.color)}
         # 후광은 캔버스 산포와 같은 자다 (`deco_layers`) — 다만 **최대형 하나**
         # 뒤에만 깐다. 면 도형은 한 장이 폐루프 일곱이라 캔버스처럼 두 층에 다
         # 두르면 면마다 넷씩, 차 한 대에 스무 장이 붙는다. 무리를 차체에서
         # 떼어 놓는 일은 구도를 쥔 큰 것 하나가 거의 다 한다.
         if halo is not None and mo.tier == 0:
-            out.append(dict(spec, sx=round(mo.half * HALO_GROW, 3),
-                            sy=round(mo.half * HALO_GROW, 3), rgb=list(halo)))
+            out.append(dict(spec, sx=rnd(mo.half * HALO_GROW, 3),
+                            sy=rnd(mo.half * HALO_GROW, 3), rgb=list(halo)))
         out.append(spec)
     return out

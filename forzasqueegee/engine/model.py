@@ -26,8 +26,19 @@ from pathlib import Path
 UNITS_PER_SCALE = 64.0
 
 
+def rnd(v: float, n: int) -> float:
+    """`round`인데 **음의 0을 안 남긴다**.
+
+    `-0.0`은 `0.0`과 값이 같지만 json에는 다른 글자로 실린다 — 같은 판이 다른
+    파일로 보이고 해시 대조가 거짓 경보를 낸다 (2026-09-01 실측: 한 프로세스에서
+    스물네 번 구운 `deco.json` 중 하나가 로커 띠의 `x`만 `-0.0`이었다. 부동소수
+    합의 결합 순서가 흔들려 −1e−18이 나온 자리다). `+ 0.0`이 부호만 지운다.
+    """
+    return round(v, n) + 0.0
+
+
 def _q(v: float, step: float) -> float:
-    return round(round(v / step) * step, 4)
+    return rnd(round(v / step) * step, 4)
 
 
 @dataclass

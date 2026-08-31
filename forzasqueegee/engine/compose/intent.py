@@ -21,6 +21,7 @@ import numpy as np
 from ..catalog import Catalog
 from ..model import LayerPlan, rgb_to_hsb
 from ..render import render_plan
+from .boxes import major_axis
 from .look import Look
 from .palette import is_skin
 
@@ -141,16 +142,9 @@ def _pca_axis(mask: np.ndarray) -> tuple[tuple[float, float], float]:
     ys, xs = np.where(mask)
     if len(xs) < 16:
         return (0.0, -1.0), 1.0
-    x = xs.astype(np.float64) - xs.mean()
-    y = ys.astype(np.float64) - ys.mean()
-    # 공분산은 **명시적 합**으로 — `pts.T @ pts`는 BLAS 스레드 분할에 따라
-    # 반올림이 달라져 같은 도안에서 축이 1e-11씩 흔들리고 결정성이 깨진다
-    cov = np.array([[float((x * x).sum()), float((x * y).sum())],
-                    [float((x * y).sum()), float((y * y).sum())]]) / len(x)
-    vals, vecs = np.linalg.eigh(cov)
-    major = vecs[:, int(np.argmax(vals))]
-    lo, hi = float(max(vals.min(), 1e-6)), float(vals.max())
-    return (float(major[0]), float(major[1])), math.sqrt(hi / lo)
+    # 2차 모멘트는 **명시적 합 + 닫힌 식**이다 (`boxes.major_axis`) — BLAS·LAPACK을
+    # 거치면 스레드 수에 따라 마지막 비트가 흔들려 결정성이 깨진다
+    return major_axis(xs, ys)
 
 
 def _head_box(rgb: np.ndarray, alpha: np.ndarray, lk: Look

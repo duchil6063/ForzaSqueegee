@@ -144,12 +144,23 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
     rows = int(math.ceil((y_hi - y_lo) / CELL))
     g = FieldGrid(x0=fx0, y_top=y_hi, cols=cols, rows=rows)
     X, Y = g.centers()
-    # 프레임 → 면 유닛 → 캔버스(도안) 좌표
-    Q = np.stack([X * u + frame_center[0], Y * u + frame_center[1]], -1)
-    Li = np.linalg.inv(L)
-    P = (Q - t) @ Li.T
-    pc = (P[..., 0] - it.origin[0]) / it.upp
-    pr = (it.origin[1] - P[..., 1]) / it.upp
+    # 프레임 → 면 유닛 → 캔버스(도안) 좌표.
+    #
+    # **행렬 곱도 역행렬도 안 쓴다.** 둘 다 BLAS·LAPACK을 거치는데 거기서 나오는
+    # 마지막 비트가 스레드 수에 따라 흔들리고, 그 흔들림이 필드 래스터 한 칸을
+    # 뒤집어 점수 순위를 바꾼다 — 같은 입력이 프로세스마다 다른 `deco.json`을
+    # 냈다 (2026-09-01 실측 · `boxes.major_axis`에 같은 사정을 적었다).
+    # 2×2는 닫힌 식이 정확하고 더 싸다.
+    det = float(L[0, 0]) * float(L[1, 1]) - float(L[0, 1]) * float(L[1, 0])
+    det = det if abs(det) > 1e-12 else math.copysign(1e-12, det or 1.0)
+    i00, i01 = float(L[1, 1]) / det, -float(L[0, 1]) / det
+    i10, i11 = -float(L[1, 0]) / det, float(L[0, 0]) / det
+    qx = X * u + (frame_center[0] - float(t[0]))
+    qy = Y * u + (frame_center[1] - float(t[1]))
+    px_ = qx * i00 + qy * i01
+    py_ = qx * i10 + qy * i11
+    pc = (px_ - it.origin[0]) / it.upp
+    pr = (it.origin[1] - py_) / it.upp
     char = _sample(it.alpha, pc, pr)
     detail = _sample(it.detail, pc, pr)
     char_rgb = np.stack([_sample(it.rgb[..., k].astype(np.float32), pc, pr)

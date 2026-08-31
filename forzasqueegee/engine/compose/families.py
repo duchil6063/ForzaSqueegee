@@ -26,7 +26,7 @@ class Family:
     top_stripe: bool            # 윗면 레이싱 스트라이프
     front_n: int                # 인물 위에 얹는 전경 모티프 수
     empty_target: float         # 여백 구역이 비어야 하는 몫 (점수 목표)
-    clutter: tuple[float, float]   # 장식 커버리지 목표 구간 (밴드 빈 면적 대비)
+    clutter: tuple[float, float]   # 모티프 커버리지 목표 구간 (밴드 빈 면적 대비 — 판·로커는 안 센다)
     echo: bool                  # 그래픽 에코 (결 조각·샤드·블록)
     flows: tuple[str, ...]      # 흐름 후보 — auto · rear · front
     other_density: float        # 다른 면 모티프 수 배율
@@ -38,27 +38,27 @@ FAMILIES: dict[str, Family] = {
     # 비움 — 큰 베드 없이 얇은 슬래브 하나와 잔 모티프 몇, 여백이 주역
     "minimal": Family("minimal", bed="slab", bed_level=0.35, motif_n=7,
                       tier_scale=0.75, rocker=False, top_stripe=False, front_n=1,
-                      empty_target=0.92, clutter=(0.04, 0.16), echo=False,
+                      empty_target=0.92, clutter=(0.03, 0.12), echo=False,
                       flows=("auto",), other_density=0.45, text_budget=0.5),
     # 그래픽 베드 — 인물 뒤 큰 색면이 구도를 잡고 모티프는 그 가장자리에
     "graphic_bed": Family("graphic_bed", bed="plate", bed_level=0.75, motif_n=14,
                           tier_scale=0.95, rocker=True, top_stripe=False, front_n=2,
-                          empty_target=0.75, clutter=(0.18, 0.42), echo=True,
+                          empty_target=0.75, clutter=(0.10, 0.28), echo=True,
                           flows=("auto", "rear", "front"), other_density=0.8),
     # 사선 흐름 — 대각 판 둘이 인물을 지나 흐르고 모티프가 그 결을 따른다
     "diagonal_flow": Family("diagonal_flow", bed="wedge", bed_level=0.65, motif_n=16,
                             tier_scale=0.9, rocker=True, top_stripe=True, front_n=3,
-                            empty_target=0.65, clutter=(0.22, 0.48), echo=True,
+                            empty_target=0.65, clutter=(0.12, 0.32), echo=True,
                             flows=("auto", "rear"), other_density=1.0),
     # 모터스포츠 — 로커·스트라이프 등 직선 요소, 베드는 낮은 슬래브, 모티프는 적게
     "motorsport": Family("motorsport", bed="slab", bed_level=0.55, motif_n=9,
                          tier_scale=0.8, rocker=True, top_stripe=True, front_n=1,
-                         empty_target=0.80, clutter=(0.12, 0.30), echo=True,
+                         empty_target=0.80, clutter=(0.08, 0.24), echo=True,
                          flows=("rear", "front"), other_density=0.6, text_budget=0.8),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
     "splash": Family("splash", bed="blob", bed_level=0.8, motif_n=22,
                      tier_scale=1.05, rocker=True, top_stripe=False, front_n=4,
-                     empty_target=0.5, clutter=(0.30, 0.60), echo=True,
+                     empty_target=0.5, clutter=(0.18, 0.45), echo=True,
                      flows=("auto",), other_density=1.25, torn=True),
 }
 

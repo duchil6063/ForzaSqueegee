@@ -6,7 +6,7 @@ import numpy as np
 
 from ...game import surface as gsurf
 from ..catalog import Catalog
-from ..model import UNITS_PER_SCALE
+from ..model import UNITS_PER_SCALE, rnd
 from .bands import TEETH_OVERLAP
 from .surfshapes import band_tiles, surface_sx_cap
 
@@ -105,8 +105,8 @@ def roof_blackout(smap: gsurf.SurfaceMap,
         sy = min(1.18 * (bv1 - bv0) / 2 / UNITS_PER_SCALE, cap_v)
         for tx, tsx in band_tiles(pu0, pu1, cap_u):
             out.append({"shape": "A_01",
-                        "x": round(tx, 1), "y": round((bv0 + bv1) / 2, 1),
-                        "sx": round(tsx, 3), "sy": round(sy, 3),
+                        "x": rnd(tx, 1), "y": rnd((bv0 + bv1) / 2, 1),
+                        "sx": rnd(tsx, 3), "sy": rnd(sy, 3),
                         "rot": 0.0, "rgb": list(ROOF_DARK)})
         if not first:
             continue
@@ -123,14 +123,14 @@ def roof_blackout(smap: gsurf.SurfaceMap,
             reach = (cat.shapes[name].reach
                      if cat is not None and name in cat.shapes else 1.0)
             out.append({"shape": name,
-                        "x": round(bu0 + 0.06 * (bu1 - bu0)
+                        "x": rnd(bu0 + 0.06 * (bu1 - bu0)
                                    * ((i * 3 % 5) / 4.0), 1),
-                        "y": round(bv0 + step * (i + 0.5), 1),
-                        "sx": round(ROOF_TEETH_AMP * (bu1 - bu0) / 2 * k
+                        "y": rnd(bv0 + step * (i + 0.5), 1),
+                        "sx": rnd(ROOF_TEETH_AMP * (bu1 - bu0) / 2 * k
                                     / UNITS_PER_SCALE / reach, 3),
-                        "sy": round(TEETH_OVERLAP * step / 2 * k
+                        "sy": rnd(TEETH_OVERLAP * step / 2 * k
                                     / UNITS_PER_SCALE / reach, 3),
-                        "rot": round((17.0 * i) % 24.0 - 12.0, 1),
+                        "rot": rnd((17.0 * i) % 24.0 - 12.0, 1),
                         "rgb": list(ROOF_DARK)})
     return out
 
