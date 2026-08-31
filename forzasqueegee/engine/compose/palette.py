@@ -64,7 +64,9 @@ def base_paint(lk: Look) -> tuple[tuple[int, int, int], tuple[float, float, floa
     # 유채 후보의 **면적** 무게 (`Look.weights`). 순위 가중(1/(1+0.35·i))으로
     # 어림하던 자리다 — 면적이 곧 "지배 색조 몫"의 정의라 어림할 이유가 없다.
     cand: list[tuple[tuple[float, float, float], float]] = []
-    for c, w in zip(lk.palette, lk.weights or [1.0] * len(lk.palette)):
+    # **상위 12색만** 본다 — 베이스는 "지배 색조가 있나"를 넓은 면적의 비로
+    # 재는 자리라 꼬리 색을 넣으면 분모가 흔들린다 (액센트 쪽과 다른 자다).
+    for c, w in zip(lk.palette[:12], (lk.weights or [1.0] * len(lk.palette))[:12]):
         h, s, b = rgb_to_hsb(*c)
         if s >= BASE_SAT_MIN and b >= 0.15:
             cand.append(((h, s, b), w))
@@ -161,9 +163,14 @@ def accent_color(lk: Look,
     """
     ch = rgb_to_hsb(*car) if car is not None else None
     best, score = None, -1e9
-    for c in lk.palette:
+    ws = lk.weights or [1.0] * len(lk.palette)
+    for c, w in zip(lk.palette, ws):
         h, s, b = rgb_to_hsb(*c)
         if s < ACCENT_SRC_MIN:                      # 흐린 색 — 테마색이 아니다
+            continue
+        if w < ACCENT_AREA_MIN:                     # 티끌 색 — 상징색이 아니다
+            continue
+        if is_skin(h, s, b):                        # 살색은 액센트가 아니다
             continue
         v = s * min(1.0, b * 1.4)
         if ch is not None and ch[1] > 0.2:          # 차가 유채색일 때만 색조를 견준다
@@ -197,6 +204,13 @@ ACCENT_S_MIN = 0.42
 # 팔레트 색이 **액센트 후보가 되는** 채도 하한. 이 아래는 테마색이 아니라 살색·
 # 머리색·하이라이트라 끌어오면 안 된다 (`accent_color`).
 ACCENT_SRC_MIN = 0.35
+
+
+# 액센트 후보의 **면적 하한** (도안 잉크 대비). 상징색은 면적이 작다 — 시로코의
+# 청록 후광 1.6% · 아리스의 하늘색 1.2% — 그래서 팔레트를 32색까지 보지만,
+# 그 아래로 내려가면 안티앨리어싱 부스러기와 그림자 색이 상징색 행세를 한다
+# (11번 도안: 0.09%짜리 하늘색 한 점이 팔레트 135위에 있다).
+ACCENT_AREA_MIN = 0.008
 
 
 # 이보다 흐리면 **일부러 고른 무채**로 본다 — 채도 하한을 안 먹인다.
@@ -404,7 +418,9 @@ def theme_color(lk: Look) -> tuple[int, int, int] | None:
     한 칸씩 보면 어느 것도 넓어 보이지 않는다. 묶으면 27%다.
     """
     cand = []
-    for c, w in zip(lk.palette, lk.weights or [1.0] * len(lk.palette)):
+    # **상위 12색만** 본다 — 계열은 넓은 색이 정한다 (액센트와 다른 자다: 상징색은
+    # 작아도 되지만 문양 계열까지 꼬리 색이 정하면 도안과 무관해진다).
+    for c, w in zip(lk.palette[:12], (lk.weights or [1.0] * len(lk.palette))[:12]):
         h, s, b = rgb_to_hsb(*c)
         if s < ACCENT_SRC_MIN or b < 0.20 or is_skin(h, s, b):
             continue

@@ -18,14 +18,18 @@ class Look:
     """도안의 **생김새** — 구성이 이걸 보고 자리·크기를 정한다."""
 
     box: tuple[float, float, float, float]     # 잉크 상자 (캔버스 유닛)
-    palette: list[tuple[int, int, int]]        # 넓은 면적 순 색
+    # 넓은 면적 순 색 (상위 32). **12가 아니라 32인 이유**: 캐릭터의 상징색은
+    # 면적이 작다 — 시로코의 청록 후광은 잉크의 1.6%로 12위 바로 밖이었고, 그래서
+    # 액센트가 근검정으로 떨어져 차가 통째로 흑백이 됐다. 면적 문턱은 색을 쓰는
+    # 쪽이 건다 (`palette.ACCENT_AREA_MIN`).
+    palette: list[tuple[int, int, int]]
     layers: int
     # 잉크의 **볼록 껍질** (캔버스 유닛, N×2). 기울여 앉힐 때 크기를 이걸로 잰다 —
     # 사각형 공식(`w·|cos|+h·|sin|`)은 그림이 상자를 다 안 채우기 때문에 회전한
     # 그림을 과대평가한다 (실측: 65° 근방에서 폭 1.46배·높이 1.76배). 과대평가는
     # 그대로 축소로 이어져 인물이 작아진다.
     hull: np.ndarray | None = None
-    # `palette`와 **짝 맞춘 면적 몫** (합이 1은 아니다 — 팔레트가 상위 12색이다).
+    # `palette`와 **짝 맞춘 면적 몫** (합이 1은 아니다 — 팔레트가 상위 32색이다).
     # 색이 도안에서 얼마나 넓은가는 순위보다 훨씬 많은 것을 말한다: 2위가 1위의
     # 절반인 도안과 1위와 맞먹는 도안은 "지배색이 있나"가 서로 다르다.
     weights: list[float] = field(default_factory=list)
@@ -112,8 +116,8 @@ def look(plan: LayerPlan, cat: Catalog | None = None,
         all_pts = np.concatenate(cloud, 0).astype(np.float32)
         hull = cv2.convexHull(all_pts.reshape(-1, 1, 2)).reshape(-1, 2)
     return Look(box=(float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])),
-                palette=pal[:12], layers=len(plan.layers), hull=hull,
-                weights=[a / total for _c, a in ranked[:12]],
+                palette=pal[:32], layers=len(plan.layers), hull=hull,
+                weights=[a / total for _c, a in ranked[:32]],
                 pale=sum(a for c, a in area.items()
                          if _is_pale(c)) / total)
 
