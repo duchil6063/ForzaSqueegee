@@ -6,7 +6,7 @@
 
 exe 호출·라이브 프리뷰 스냅샷 승격·중단 파일은 원본 그대로이고, I/O가
 우리 것이다: 진행 줄(`[n/stop] ...`)을 콜백으로 돌리고 콜백 예외(창의
-취소 = pipeline.Cancelled)를 프로세스 종료 후 그대로 전파한다.
+취소 = engine.stop.Cancelled)를 프로세스 종료 후 그대로 전파한다.
 """
 
 from __future__ import annotations

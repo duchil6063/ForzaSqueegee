@@ -35,6 +35,7 @@ import numpy as np
 
 from .. import modelstore
 from ..i18n import msg
+from .stop import stop_here
 
 _TILE, _OVER = 240, 16
 _SCALE = 4
@@ -95,6 +96,7 @@ def _run(rgb: np.ndarray) -> np.ndarray:
     out = np.zeros((h * _SCALE, w * _SCALE, 3), np.uint8)
     for y0 in range(0, h, _TILE):
         for x0 in range(0, w, _TILE):
+            stop_here()          # SR이 앞단 시간의 태반이다 — 타일마다 묻는다
             y1, x1 = min(y0 + _TILE, h), min(x0 + _TILE, w)
             # 겹침을 물려 자른 뒤 결과에서 겹침만큼 다시 떼어낸다
             py0, px0 = max(0, y0 - _OVER), max(0, x0 - _OVER)

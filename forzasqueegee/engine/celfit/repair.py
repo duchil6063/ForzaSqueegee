@@ -13,6 +13,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
+from ..stop import stop_here
 from .geometry import _layer, _mask_px, _poly_px
 from .vocabulary import _FILL_SHAPE
 
@@ -123,6 +124,7 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
     added = {"fill": [], "over": [], "line": []}
     n = 0
     for _score, y0, x0, kind, rem0 in groups:
+        stop_here()
         if n >= max_layers:
             break
         rem = rem0.copy()

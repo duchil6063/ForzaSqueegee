@@ -49,20 +49,13 @@ import numpy as np
 
 from ..i18n import msg
 from ..paths import find_run_file, run_file
+from .stop import Cancelled, stop_here, stopping
 
 # 작업 해상도 — **짧은 변** 기준. 긴 변 기준이면 세로로 긴 구도에서 인물의 폭이
 # 몇백 px로 줄어 얼굴이 무너진다
 WORK_SIZE = 1200
 MAX_SHAPES = 3000     # 인게임 레이어 상한 (남은 용량이 모자라면 통째로 거부된다)
 ROUTES = ("painter", "cel", "line")
-
-
-class Cancelled(RuntimeError):
-    """진행 콜백이 올려 중단을 알린다 (창의 취소 단추).
-
-    엔진은 이 예외를 **안 잡는다** — 긴 반복문마다 `progress`를 부르므로 거기서
-    바로 풀려 나온다. 그 단계까지 쓴 파일은 남고 report는 안 생긴다.
-    """
 
 
 def _say(s: str = "") -> None:
@@ -121,11 +114,19 @@ def _crop_to_subject(rgba: np.ndarray) -> tuple[np.ndarray, list[int] | None]:
 def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
          shapes: int = MAX_SHAPES, size: int = WORK_SIZE, log=_say,
          progress=None, keep_bg: bool = False,
-         no_crop: bool = False) -> dict:
+         no_crop: bool = False, should_stop=None) -> dict:
     """도안 하나를 끝까지 만든다. 반환값은 `report.json`과 같은 딕셔너리.
 
-    `progress(0~1, 단계 이름)`은 창의 진행 막대용이다. 콜백이 `Cancelled`를
-    올리면 그대로 밖으로 나간다 — 엔진에 중단 플래그를 따로 두지 않는다.
+    `progress(0~1, 단계 이름)`은 창의 진행 막대용이다.
+
+    중단은 **`should_stop`이 맡는다** — 참을 돌려주면 다음 검사점에서
+    `Cancelled`가 올라 그대로 밖으로 나간다 (`engine.stop` 문서). 진행 콜백이
+    예외를 올려도 같은 결과지만, 그쪽은 빽빽한 반복문에만 걸려 있어 혼자서는
+    분 단위로 늦는다.
+
+    **다 만든 판은 안 버린다** — 노선이 끝난 뒤(KFPS·FLS·report 쓰기)로는
+    검사점이 없고, 맨 끝 진행 콜백이 올리는 취소도 여기서 삼킨다. 그 자리에서
+    멈춰 봐야 몇 초 아끼자고 완성된 도안을 실패로 닫는 셈이다.
     """
     if route not in ROUTES:
         raise SystemExit(msg("모르는 노선: {route} ({routes})",
@@ -139,51 +140,54 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    # 전처리 (요구사항 §4: 배경 제거·크롭) — 실패·미발동은 경고만 (한 버튼 원칙)
-    # ① 배경 제거: 알파 없는 입력(사진·JPG)은 배경까지 도형으로 그려지므로
-    #    신경망 알파(isnet-anime)로 인물만 딴다. keep_bg = 배경도 도안에 담는다
-    src = Path(image)
-    bgcut = False
-    rgba = read_rgba(src)
-    if not keep_bg and bool(rgba[..., 3].min() >= 250):
-        from .bgremove import matte
+    with stopping(should_stop):
+        # 전처리 (요구사항 §4: 배경 제거·크롭) — 실패·미발동은 경고만 (한 버튼 원칙)
+        # ① 배경 제거: 알파 없는 입력(사진·JPG)은 배경까지 도형으로 그려지므로
+        #    신경망 알파(isnet-anime)로 인물만 딴다. keep_bg = 배경도 도안에 담는다
+        src = Path(image)
+        bgcut = False
+        rgba = read_rgba(src)
+        if not keep_bg and bool(rgba[..., 3].min() >= 250):
+            from .bgremove import matte
 
-        log(msg("배경 제거 중… (신경망 알파)"))
-        if progress:
-            progress(0.0, msg("배경 제거"))
-        a = matte(rgba[..., :3], log=log)
-        if a is not None:
-            rgba[..., 3] = a
-            bgcut = True
-            log(msg("  인물 알파 생성"))
-    # ② 크롭: 인물 bbox + 여백으로 잘라 작업 해상도를 인물에 몰아준다 —
-    #    프레임 구석의 인물이 작게 뭉개지는 것을 막는다. 알파가 프레임을 다
-    #    채우면(표준 검증 이미지 포함) 미발동이라 기존 도안과 같다
-    crop = None
-    if not no_crop and not os.environ.get("FS_NO_CROP"):
-        oh, ow = rgba.shape[:2]
-        rgba, crop = _crop_to_subject(rgba)
-        if crop is not None:
-            log(msg("  크롭: {ow}×{oh} → {cw}×{ch} (인물 bbox + 여백 2%)",
-                    ow=ow, oh=oh, cw=crop[2], ch=crop[3]))
-    if bgcut or crop is not None:
-        src = run_file(out, "cutout.png")
-        write_png(src, np.dstack(
-            [cv2.cvtColor(rgba[..., :3], cv2.COLOR_RGB2BGR), rgba[..., 3]]))
-        log(msg("  전처리 결과 → {name}", name=src.name))
-    # 노선 본체는 여기서 부른다 — 노선 모듈이 이 파일의 공용 헬퍼를 쓰므로
-    # 임포트를 함수 안에 둔다 (모듈 수준이면 서로 물린다)
-    from .route_cel import _make_cel
-    from .route_line import _make_line
-    from .route_painter import _make_painter
+            log(msg("배경 제거 중… (신경망 알파)"))
+            if progress:
+                progress(0.0, msg("배경 제거"))
+            a = matte(rgba[..., :3], log=log)
+            if a is not None:
+                rgba[..., 3] = a
+                bgcut = True
+                log(msg("  인물 알파 생성"))
+        # ② 크롭: 인물 bbox + 여백으로 잘라 작업 해상도를 인물에 몰아준다 —
+        #    프레임 구석의 인물이 작게 뭉개지는 것을 막는다. 알파가 프레임을 다
+        #    채우면(표준 검증 이미지 포함) 미발동이라 기존 도안과 같다
+        crop = None
+        if not no_crop and not os.environ.get("FS_NO_CROP"):
+            oh, ow = rgba.shape[:2]
+            rgba, crop = _crop_to_subject(rgba)
+            if crop is not None:
+                log(msg("  크롭: {ow}×{oh} → {cw}×{ch} (인물 bbox + 여백 2%)",
+                        ow=ow, oh=oh, cw=crop[2], ch=crop[3]))
+        if bgcut or crop is not None:
+            src = run_file(out, "cutout.png")
+            write_png(src, np.dstack(
+                [cv2.cvtColor(rgba[..., :3], cv2.COLOR_RGB2BGR), rgba[..., 3]]))
+            log(msg("  전처리 결과 → {name}", name=src.name))
+        # 노선 본체는 여기서 부른다 — 노선 모듈이 이 파일의 공용 헬퍼를 쓰므로
+        # 임포트를 함수 안에 둔다 (모듈 수준이면 서로 물린다)
+        from .route_cel import _make_cel
+        from .route_line import _make_line
+        from .route_painter import _make_painter
 
-    rep = (_make_painter(src, out, shapes, size, log, progress) if route == "painter"
-           else _make_line(src, out, shapes, size, log, progress) if route == "line"
-           else _make_cel(src, out, shapes, size, log, progress))
+        rep = (_make_painter(src, out, shapes, size, log, progress) if route == "painter"
+               else _make_line(src, out, shapes, size, log, progress) if route == "line"
+               else _make_cel(src, out, shapes, size, log, progress))
+        rep["input"]["bgcut"] = bgcut
+        rep["input"]["crop"] = crop
+    # 여기부터는 취소 밖이다 — 노선이 끝났으니 판은 완성이고, 게임이 읽는
+    # 파일을 안 굽고 닫으면 그 판은 쓸모가 없다 (몇 초짜리다)
     rep["kfps"] = _write_kfps_json(out, log)
     rep["fls"] = _write_fls(out, log)
-    rep["input"]["bgcut"] = bgcut
-    rep["input"]["crop"] = crop
     rep["route"] = route
     rep["shapes"] = shapes
     rep["source"] = str(image)
@@ -194,7 +198,10 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     log(msg("\n총 {sec:.0f}s → {out}", sec=rep["sec"], out=out))
     log(rep["verdict"])
     if progress:
-        progress(1.0, msg("완료"))
+        try:
+            progress(1.0, msg("완료"))
+        except Cancelled:                  # 다 만들었다 — 취소로 닫지 않는다
+            pass
     return rep
 
 
@@ -322,13 +329,17 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         return (z["big"], z["line"] if "line" in z else None,
                 z["detail"] if "detail" in z else None,
                 z["native"] if "native" in z else None)
+    stop_here()
     big = upscale.prepare(rgba, size, log=log)
+    stop_here()
     detail = native = None
     sel = big[..., 3] >= 128
     rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
     line = lineart.extract(rgb, log=log, cap=True)
+    stop_here()
     if line is not None and lineart.available("detail"):
         detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
+        stop_here()
         if detail is not None:
             log(msg("  선화 detail 판도 증거로 얹는다"))
     if line is not None and big.shape[:2] != rgba.shape[:2]:
@@ -339,6 +350,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         rgb0 = (_fill_bg_nearest(rgba[..., :3], sel0) if not sel0.all()
                 else rgba[..., :3])
         nat = lineart.extract(rgb0, log=log, cap=True)
+        stop_here()
         if nat is not None:
             native = cv2.resize(nat, (big.shape[1], big.shape[0]),
                                 interpolation=cv2.INTER_LINEAR)

@@ -16,6 +16,7 @@ from ..celart import CelArt
 from ..model import Layer, LayerPlan
 from ..celart.marks import _MARK_DE
 from ..price import _HOLE_PRICE
+from ..stop import stop_here
 from .geometry import (_SUB_BITS, _layer, _mask_px, _min_span,
                        _poly_px, poly_bbox, poly_mask)
 from .vocabulary import _FILL_SHAPE
@@ -180,6 +181,7 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
     for _ in range(passes):
         changed = 0
         for i, lay in enumerate(plan.layers):
+            stop_here()
             if not _growable(cat, lay, ink_long):
                 continue
             cur = _poly_px(cat, lay, upp, w, h)   # 후보 셋이 함께 쓴다
@@ -316,6 +318,7 @@ def fill_holes(plan: LayerPlan, cel: CelArt, cat: Catalog,
     todo = int((gsz >= min_px).sum())
     done = 0
     for gi in order:
+        stop_here()
         if n >= max_layers:
             log(msg("  경고: 구멍 메움 상한 — 군집 {n}개 남음", n=todo - done))
             break

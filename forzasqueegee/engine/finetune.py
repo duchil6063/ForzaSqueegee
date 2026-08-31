@@ -37,6 +37,7 @@ from .celart import CelArt
 from .celfit import _poly_px
 from .celfit.chain import _GAP_TOL, placed_line
 from .model import Layer, LayerPlan
+from .stop import stop_here
 
 # 비용 상수 (제곱 RGB 오차 단위, 채널당 최대 255² × 3 = 195,075)
 # 실루엣 밖(캔버스) 침범 px당 상수 — 인게임 배경은 흰 프리뷰가 아니라 차체
@@ -332,6 +333,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     for p in range(max_passes):
         pass_accepts = 0
         for si, i in enumerate(todo):
+            stop_here()
             if progress and si % 250 == 0:
                 progress((p + si / len(todo)) / max_passes,
                          msg("미세 조정 {p}/{total}", p=p + 1, total=max_passes))

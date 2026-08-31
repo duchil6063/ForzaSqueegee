@@ -39,6 +39,7 @@ import numpy as np
 
 from ...i18n import msg
 from ..price import price_of
+from ..stop import stop_here
 from . import atoms, dense, inkfill, palette, prep
 from .model import _ALPHA_OPAQUE, CelArt
 from .prep import _fill_bg_nearest
@@ -88,15 +89,18 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         log(msg("  선화: 선 픽셀 {n:,}개", n=int(line_mask.sum())))
         src = inkfill.complete(src, sel, line_mask, log)[0]
 
+    stop_here()
     # 1) 평활 — mean-shift가 부드러운 음영을 톤 면으로 뭉친다
     sm = prep.smooth(src)
     lab = cv2.cvtColor(sm, cv2.COLOR_RGB2LAB).astype(np.float32)
 
+    stop_here()
     # 2) 팔레트 — 색 표현만 맡는다 (§5)
     K, lbl, _ctr, pstats = palette.quantize(lab, sel, log)
     trace.update(pstats)
     lbl = prep._smooth_labels(lbl, K, sel)
 
+    stop_here()
     # 3) 원자 — 선화가 있으면 watershed가 경계를 정한다 (§2)
     guide = sm
     if line_mask is not None:
@@ -108,10 +112,12 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         labels = atoms.watershed_atoms(lbl, K, sel, guide, barrier, log)
     else:
         labels = atoms.cc_atoms(lbl, K, sel)
+    stop_here()
     labels = atoms.oversegment(labels, lab, sel, guide, log)
     if debug:
         trace["atom_labels"] = labels.copy()
 
+    stop_here()
     # 4) 병합 — 무엇이 한 덩어리인가 (§3·§4)
     lam = price if price > 0.0 else price_of(
         value if value is not None else np.ones((h, w), np.float32))
@@ -120,6 +126,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     g = RegionGraph(labels, lab, sel, ink=line_mask, imp=value, feat=feat)
     if debug:
         trace["marks_before"] = g.mark_ids()
+    stop_here()
     labels = g.merge(lam, max_regions, log)
     trace.update(g.stats)
     trace["dense"] = feat is not None

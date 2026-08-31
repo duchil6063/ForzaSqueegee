@@ -67,6 +67,7 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self._editor_seen_ns = 0           # 이미 문 편집기 Export 마커 시각
         self.t0 = 0.0
         self._stage_text = ""
+        self._cancelling = False           # 취소를 접수했다 (`_MakeOps._cancel`)
         self._restart = False              # 언어 변경 — `run`의 재시작 루프가 본다
 
         self.drop = _Drop()
@@ -268,6 +269,8 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
 
     @Slot(float, str)
     def _step(self, frac: float, stage: str) -> None:
+        if self._cancelling:      # 취소 접수 뒤 — 표시는 "취소하는 중…"이 지킨다
+            return
         self.bar.setValue(int(max(0.0, min(1.0, frac)) * 1000))
         self._stage_text = stage
         self._tick_clock()

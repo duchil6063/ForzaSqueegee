@@ -85,6 +85,7 @@ class _MakeOps:
         self.open.setVisible(False)
         self._set_plan(None)
         self.t0 = time.time()
+        self._cancelling = False
         self.clock.start()
 
         route = self._route()
@@ -101,14 +102,27 @@ class _MakeOps:
         self.thread.start()
 
     def _cancel(self) -> None:
+        """취소 접수 — **표시가 남아 있어야 한다.**
+
+        `stage` 한 줄에 문구만 쓰면 0.5초 뒤 시계(`_tick_clock`)가 덮어써
+        "안 눌렸다"로 보인다. 그래서 단계 이름 자체를 "취소하는 중…"으로
+        바꾸고(시계는 그 뒤에 경과를 붙여 계속 돈다 — 살아 있다는 표시다)
+        엔진이 보내는 새 단계 이름은 `_step`이 무시한다.
+
+        막대는 **미정**으로 돌린다 — 취소한 뒤의 관심사는 어디까지 갔나가
+        아니라 아직 도는가다."""
         if self.job:
             self.job.stop = True
             self.stop.setEnabled(False)
-            self.stage.setText(tr("gui.cancelling"))
+            self._cancelling = True
+            self._stage_text = tr("gui.cancelling")
+            self.bar.setRange(0, 0)
+            self._tick_clock()
 
     def _finish(self) -> None:
         self.clock.stop()
-        self.bar.setRange(0, 1000)       # 적용이 미정 막대로 돌려놨을 수 있다
+        self._cancelling = False
+        self.bar.setRange(0, 1000)       # 취소·적용이 미정 막대로 돌려놨을 수 있다
         if self.thread:
             self.thread.quit()
             self.thread.wait()

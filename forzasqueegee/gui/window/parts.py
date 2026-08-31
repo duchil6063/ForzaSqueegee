@@ -14,7 +14,8 @@ from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QVBoxLayout
 
-from ...engine.pipeline import Cancelled, make
+from ...engine.pipeline import make
+from ...engine.stop import Cancelled
 from ...i18n import tr
 from ...paths import data_root, out_root
 
@@ -69,7 +70,8 @@ class _Job(QObject):
         try:
             rep = make(self.image, self.out, route=self.route,
                        shapes=self.shapes, log=self.line.emit,
-                       progress=self._progress, keep_bg=self.keep_bg)
+                       progress=self._progress, keep_bg=self.keep_bg,
+                       should_stop=lambda: self.stop)
         except Cancelled:
             self.failed.emit(tr("gui.cancelled"))
         except SystemExit as e:              # 엔진이 막은 것 (모델 없음 등)
@@ -80,7 +82,11 @@ class _Job(QObject):
             self.done.emit(rep, str(self.out))
 
     def _progress(self, frac: float, stage: str) -> None:
-        """엔진의 긴 반복문마다 불린다 — 중단은 여기서 예외로 알린다."""
+        """엔진의 빽빽한 반복문(획·영역)에서 불린다 — 여기서도 중단을 본다.
+
+        **취소의 주 통로는 `should_stop`이다** (`engine.stop`) — 이 콜백은 진행
+        막대가 걸린 자리에만 있어서, 혼자 두면 콜백이 안 오는 단에서 취소가
+        분 단위로 늦는다. 여기 검사는 이미 도는 반복문에서 공짜로 얹히는 몫이다."""
         if self.stop:
             raise Cancelled
         f = float(frac)

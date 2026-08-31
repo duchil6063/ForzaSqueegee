@@ -25,6 +25,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import LayerPlan
+from ..stop import stop_here
 from . import candidates as C
 from . import chain
 from . import intent as I
@@ -215,6 +216,7 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
     order = np.argsort(-cstats[1:, cv2.CC_STAT_AREA]) + 1
     ker = _smooth_kernel()
     for ci in order:
+        stop_here()
         if cstats[ci, cv2.CC_STAT_AREA] < 6:
             break
         x0 = max(0, int(cstats[ci, cv2.CC_STAT_LEFT]) - 4)
