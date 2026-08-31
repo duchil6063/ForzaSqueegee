@@ -67,6 +67,23 @@ def _arch_fallback(media: str | None, maps: dict[str, gsurf.SurfaceMap]
         return {}
 
 
+def _mesh_glass(media: str | None) -> list[tuple[float, float]]:
+    """윗면 유리 띠를 **차 메시**로 읽는다 — 기하 덤프가 떠 있을 때만 (없으면 빈 목록)."""
+    if not media:
+        return []
+    try:
+        from ...game import carfiles, fsgeom
+
+        geom = fsgeom.for_car(media)
+        side = geom.get("top") if geom is not None else None
+        top = carfiles.surface_maps(media).get("top")
+        if side is None or side.depth is None or top is None:
+            return []
+        return gseam.top_glass_mesh(top, side.depth, side.box)
+    except Exception:                              # noqa: BLE001 — 보조 근거다
+        return []
+
+
 def _place_for(name: str, lk: Look, maps: dict[str, gsurf.SurfaceMap],
                preset: dict[str, dict[str, float]], *, anchor: str,
                bias_x: float, fill: float, group_unit: float,
@@ -133,9 +150,12 @@ def surfaces_for(car: str | None, media: str | None = None,
     90~100%). 실측 지도는 화면 warp가 필요한 자(오토핏·프로브)만 쓴다 —
     그쪽은 제 파일을 따로 읽는다. `media`를 주면 매칭을 건너뛰고 그 차를 쓴다.
 
-    **실측이 하나 더 있다**: 설치 마스크가 "칠할 수 있다"고 말하는 자리 중
-    윗면 앞·뒷유리는 게임이 안 그린다. 그 자리는 설치 파일에 없고 프로브만
-    안다 (`game.seam.top_glass`) — 잰 차면 `top` 지도에 `drawn`으로 달아 둔다.
+    **실측이 둘 더 있다**: 설치 마스크가 "칠할 수 있다"고 말하는 자리 중
+    윗면 앞·뒷유리는 게임이 안 그린다. 그 자리를 아는 것은 프로브
+    (`game.seam.top_glass`)와 **차 메시**다 (`top_glass_mesh` — 메시에 유리가
+    없으므로 깊이 래스터의 빈칸이 곧 유리다). 둘 중 하나가 알면 `top` 지도에
+    `drawn`으로 달아 둔다. 설치 마스크에 유리 구멍이 있는 차는 드물다
+    (덤프 14대 중 하나) — 그래서 이 자가 윗면 문법 전부를 쥔다.
     """
     notes = notes if notes is not None else []
     probe = gsurf.load(car) if car and probe_ok(car, media) else {}
@@ -197,10 +217,18 @@ def surfaces_for(car: str | None, media: str | None = None,
                          error=e))
     top = maps.get("top")
     if top is not None:
+        why = msg("프로브")
         bands = gseam.top_glass(top, probe.get("top"))
+        if not bands:
+            # **차 메시에는 유리가 없다** — 윗면 깊이 래스터의 빈칸이 곧 유리
+            # 자리다 (`game.seam.top_glass_mesh`). 설치 마스크가 유리 구멍을
+            # 안 가진 차가 대다수라(덤프 14대 중 13대) 프로브 없는 차에서
+            # 유리를 아는 길은 지금 이것뿐이다.
+            bands, why = _mesh_glass(media), msg("차 메시")
         if bands:
             top.drawn = gseam.top_body(top, bands)
-            notes.append(msg("윗면 유리를 실측으로 뺀다 (프로브): {bands}",
+            notes.append(msg("윗면 유리를 실측으로 뺀다 ({why}): {bands}",
+                             why=why,
                              bands=" · ".join(f"u {a:.0f}~{b:.0f}"
                                               for a, b in bands)))
         elif probe.get("top") is not None:

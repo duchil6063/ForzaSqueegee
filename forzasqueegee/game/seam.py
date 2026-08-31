@@ -395,6 +395,61 @@ def top_glass(install: SurfaceMap, probe: SurfaceMap | None
     return out
 
 
+# ---- 메시로 읽는 윗면 유리 ----
+# 차 메시에는 유리가 없다 (`liveryProjectionMeshes`는 차체다). 그래서 윗면 깊이
+# 래스터의 **빈 칸**이 곧 유리 자리다 — 프로브가 없는 차에서 이 자가 선다.
+# 실측 14대: 프로파일이 0.00/1.00으로 딱 갈린다 (실비아 윗면 — 후드 −458~−202 ·
+# 빈칸 −170~−42 · 지붕 −10~183 · 빈칸 215~279 · 데크 311~439).
+TOP_MESH_LIVE = 0.25        # 이 몫부터 "차체가 있다"
+# 유리로 인정할 최대 폭 (면 길이의 몫). 이보다 넓은 빈칸은 유리가 아니라
+# **메시가 통째로 없는 것**이다 (실측: NSX 윗면 빈칸 57% · 줄리아 GTAm은 윗면
+# 래스터가 거의 비어 있다). 실제 유리는 훨씬 좁다 (실비아 14%·7% · 미아타 13%·6%).
+TOP_MESH_GLASS_MAX = 0.30
+# 설치가 칠한다는 칸 중 메시가 차체를 보는 몫 — 이보다 낮으면 그 차의 윗면
+# 래스터를 안 믿는다 (줄리아 GTAm 0.05).
+TOP_MESH_MIN_LIVE = 0.35
+
+
+def top_glass_mesh(install: SurfaceMap, depth: np.ndarray,
+                   box: tuple[float, float, float, float]
+                   ) -> list[tuple[float, float]]:
+    """윗면 유리 띠 — **차 메시의 빈칸**으로 읽는다 (`game.fsgeom`의 깊이 래스터).
+
+    `top_glass`(프로브)와 같은 것을 다른 근거로 낸다: 차체 덩어리들 **사이**만
+    유리로 본다 (앞뒤 끝의 여백은 유리가 아니다). 근거가 못 미더우면 빈 목록이고
+    부르는 쪽은 윗면을 통째로 쓴다.
+    """
+    if depth is None or depth.size <= 1 or install.mask.size <= 1:
+        return []
+    u0, _v0, u1, _v1 = box
+    if u1 - u0 <= 1.0:
+        return []
+    h, w = depth.shape
+    band = depth[int(h * TOP_BAND[0]):int(h * TOP_BAND[1])]
+    if band.size <= 1:
+        return []
+    live = np.isfinite(band).mean(0)
+    us = u0 + np.arange(w) / max(1, w - 1) * (u1 - u0)
+    # 설치가 그 열을 칠하나 — 메시 격자와 **같은 띠**에서 본다
+    H = max(60, h)
+    vs = np.linspace(install.paint[3], install.paint[1], H)
+    ins = _cols(install, us, vs)[int(H * TOP_BAND[0]):int(H * TOP_BAND[1])]
+    painted = ins.mean(0) > TOP_SOLID
+    if painted.sum() < w * 0.2 or float(live[painted].mean()) < TOP_MESH_MIN_LIVE:
+        return []
+    upp = (u1 - u0) / max(1, w - 1)
+    solid = _runs_of(live >= TOP_MESH_LIVE, TOP_RUN_MIN * (u1 - u0) / upp)
+    out: list[tuple[float, float]] = []
+    for (_, a), (b, _) in zip(solid, solid[1:]):
+        span = (b - a) * upp
+        if not TOP_GLASS_MIN * (u1 - u0) <= span <= TOP_MESH_GLASS_MAX * (u1 - u0):
+            continue
+        if float(painted[a:b].mean()) < 0.5:
+            continue                              # 설치도 안 칠하는 구간 (구멍)
+        out.append((round(float(us[a]), 1), round(float(us[b - 1]), 1)))
+    return out
+
+
 def _runs_of(flag: np.ndarray, min_len: float) -> list[tuple[int, int]]:
     """참인 구간 [시작, 끝) 색인 — 짧은 것은 버린다."""
     out: list[tuple[int, int]] = []

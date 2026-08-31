@@ -249,7 +249,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                  surface=ROLE_EXTRA))
         elif (ts is not None and not ts.uncertain
                 and len(plan.layers) <= (ts.cap or 3000)):
-            hood = _hood_place(ts, lk, group_unit, hood_u)
+            hood = _hood_place(ts, lk, group_unit, hood_u,
+                               glass=maps[ROLE_EXTRA].drawn is not None)
             if hood is not None:
                 hx, hy, hs, hrot, hwhy = hood
                 hand.append(ManualPlace(plan=Path(main_plan), surface=ROLE_EXTRA,
@@ -777,6 +778,16 @@ HOOD_TILT = 25.0
 # 후드 덩어리가 도색 상자의 이 몫보다 작으면 인물을 안 얹는다 (좁은 후드에
 # 인물을 구겨 넣으면 유리·펜더로 넘쳐 파편으로 읽힌다) — 기존 보조 아트로.
 HOOD_MIN_FRAC = 0.22
+# **유리를 아는 차의 자는 따로다.** 위 값은 후드 덩어리가 윈드실드를 삼킨
+# 상자에서 잰 것이다 — 윗면 유리를 빼고 나면 같은 차의 몫이 미아타 0.600 →
+# 0.302 · 챌린저 0.384 → 0.231로 내려앉는다 (덤프 14대). 상자의 뜻이 바뀌었으니
+# 자도 같이 옮긴다: 0.22를 그대로 대면 종전에 통과하던 차 셋(두랑고·시빅
+# 타입R·에보 VIII)이 조용히 인물을 잃는다. 0.18은 14대 전부를 종전과 같은
+# 판정으로 되돌린다 (그때 최저가 0.231이었다).
+#
+# 막으려던 실패(유리로 넘침)는 애초에 상자가 유리를 담고 있어서 났다 — 상자가
+# 후드 그 자체인 지금은 그 넘침이 구조적으로 안 난다.
+HOOD_MIN_FRAC_GLASS = 0.18
 
 
 # 회전 규약 (2026-08-19 챌린저 캡처로 검증): 게임 회전값 r에서 캔버스 +y(머리)는
@@ -786,7 +797,7 @@ HOOD_ROT_SIGN = 1.0
 
 
 def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,
-                hood_u: float | None = None
+                hood_u: float | None = None, glass: bool = False
                 ) -> tuple[float, float, float, float, str] | None:
     """윗면 최대 덩어리(후드)에 인물 합성을 **기울여** 앉힌다 (HINATA 문법).
 
@@ -798,6 +809,10 @@ def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,
     후드 상자는 **u-프로파일 첫 구간**이 우선이다 — 설치 마스크는 A필러가
     후드와 지붕을 이어 한 덩어리라 blob으로는 윗면 전체를 문다 (인테그라
     실측). 구간이 안 나뉘는 차만 blob으로 물러난다.
+
+    `glass`는 이 지도가 **유리를 뺀 것인가**이다 (`game.seam.top_body`) — 그때는
+    후드 상자가 윈드실드를 안 삼키므로 좁다는 자도 같이 옮긴다
+    (`HOOD_MIN_FRAC_GLASS`).
     """
     segs = top_segments(smap)
     blob = segs[hood_index(segs, hood_u)] if len(segs) >= 2 else smap.blob_box()
@@ -805,7 +820,8 @@ def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,
     if blob is None or m.size <= 1:
         return None
     bw, bh = blob[2] - blob[0], blob[3] - blob[1]
-    if bw * bh < HOOD_MIN_FRAC * smap.width * smap.height:
+    frac = HOOD_MIN_FRAC_GLASS if glass else HOOD_MIN_FRAC
+    if bw * bh < frac * smap.width * smap.height:
         return None
     bcx, bcy = (blob[0] + blob[2]) / 2, (blob[1] + blob[3]) / 2
     # 머리는 **차 뒤쪽** — 앞에 선 사람이 후드/지붕을 볼 때 그림이 바로 서려면
