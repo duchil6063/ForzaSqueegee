@@ -36,6 +36,8 @@ def cmd_itasha(args) -> int:
     from ..game import carfiles
 
     if args.list_cars:
+        from .info import _list_cars
+
         return _list_cars(carfiles, args.media or args.car)
     media = args.media
     if media:
