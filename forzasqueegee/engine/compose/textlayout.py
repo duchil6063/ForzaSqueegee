@@ -115,16 +115,23 @@ def pose_fit(fld: CompositionField, p: TextPose, avoid: np.ndarray | None = None
              ) -> tuple[float, float, float]:
     """(그려지는 몫, 인물이 덮는 몫, 보호구역 몫) — 포즈 상자 안에서.
 
+    **격자 밖은 안 그려지는 자리로 센다.** 상자가 프레임을 넘으면 넘은 몫은
+    마스크에 아예 안 담기므로, 담긴 칸만 보면 "면 밖으로 반쯤 나간 글자"가
+    만점을 받는다 (실측: 미아타 옆면의 인물 뒤 워드마크가 리어 범퍼 너머로
+    나가 'RIN SHIBUY'로 잘렸는데 그려지는 몫이 1.00이었다). 상자가 덮어야 할
+    칸 수를 넓이로 따로 세어 분모에 둔다.
+
     `avoid`(다른 글자 상자 마스크)를 주면 보호구역처럼 센다 — 서브가 메인 위에
     올라앉는 것을 막는다 (실측: 휠아치를 피하려다 메인 안으로 들어갔다)."""
     m = pose_mask(fld, p)
     n = int(m.sum())
     if n == 0:
         return 0.0, 1.0, 1.0
+    want = max(float(n), p.w * p.h / (fld.grid.cell ** 2))
     prot = fld.protected > 0.5
     if avoid is not None:
         prot = prot | avoid
-    return (float((fld.drawable[m] > 0.5).mean()),
+    return (float((fld.drawable[m] > 0.5).sum()) / want,
             float((fld.char[m] > 0.5).mean()),
             float(prot[m].mean()))
 

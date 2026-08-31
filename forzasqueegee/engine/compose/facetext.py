@@ -3,7 +3,9 @@
 옆면 글자는 후보 루프 안에서 필드가 자리를 정한다 (`textlayout`). 사람이
 자리를 리어·후드·지붕·유리로 못 박으면 그 면에는 인물이 없으므로 (또는
 후드 인물뿐) 필드가 없다 — 면 도색 상자에 **가운데 정렬**로 앉히고, 층은 그
-면의 남은 장수가 정한다. 그룹 좌표는 면 유닛 그대로다 (스케일 1/group_unit).
+면의 남은 장수가 정한다. 글자는 그 면의 그룹 한 장(`text-<면>.json`)이다 —
+게임 글꼴 글리프든 도형 맞춤이든 레이어라 같은 그룹에 실린다. 그룹 좌표는 면
+유닛 그대로다 (스케일 1/group_unit).
 """
 
 from __future__ import annotations
@@ -14,13 +16,12 @@ from pathlib import Path
 from ...game import surface as gsurf
 from ...i18n import msg
 from ..catalog import Catalog
-from ..model import LayerPlan
-from .. import textglyph as tg
+from ..model import LayerPlan, rnd
 from .boxes import _rel
 from .place import ROLE_EXTRA, ROLE_REAR, _refit_canvas, drawable
 from .roof import ROOF_DARK, hood_index, top_segments
 from .textbudget import plan_tiers
-from .textbuild import pose_layers
+from .textbuild import pose_layers, text_box
 from .textlayout import TextPose
 from .textstyle import choose_style
 
@@ -62,28 +63,17 @@ def _box_for(placement: str, sm: gsurf.SurfaceMap, hood_u: float | None, aspect:
 def face_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Catalog,
               out_dir: Path, plan: LayerPlan, *, group_unit: float, hood_u: float | None,
               notes: list[str], written: list[Path]) -> dict | None:
-    """못 박은 면에 글자 그룹(또는 게임 글자 명세)을 더한다.
+    """못 박은 면에 글자 그룹을 더한다.
 
     되돌림: 구성 기록용 요약 (`itasha.json`의 `design.text`) — 없으면 None."""
     style = design.text_style or choose_style(spec.style, design.family, None) \
         if spec.style != "auto" else (design.text_style or "minimal")
-    if style == "game":
-        style = "minimal"
-    ras = tg.render_mask(spec.main, style)
-    aspect, hratio = ras.aspect, ras.hratio
     done: list[str] = []
     summary: dict = {}
     for name in _target_faces(spec.placement):
         sm = drawable(name, maps, rigs)
         if sm is None or (sm.uncertain and name != ROLE_EXTRA):
             continue
-        box, rot = _box_for(spec.placement, sm, hood_u, aspect)
-        if box is None:
-            continue
-        bw, bh = box[2] - box[0], box[3] - box[1]
-        if spec.placement in ("hood", "roof"):
-            bw, bh = bh, bw                        # 글자가 v를 따라 달린다
-        h = max(4.0, min(FACE_H_FRAC * bh, FACE_W_FRAC * bw / max(0.5, aspect)) / hratio)
         item = next((it for it in items if it["surface"] == name), None)
         if item is None:
             item = {"surface": name, "fit": False}
@@ -96,28 +86,30 @@ def face_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Cata
         notes += tplan.notes
         if tplan.tier_main == "E":
             continue
+        # 상자 비율은 **그 층이 실제로 그릴 글꼴**의 것이다 (게임 글꼴과 OFL 글꼴의
+        # 폭이 다르다 — 남의 비율로 재면 글자가 자리보다 넓거나 좁게 선다)
+        aspect, hratio = text_box(spec.main, style, tplan, cat)
+        box, rot = _box_for(spec.placement, sm, hood_u, aspect)
+        if box is None:
+            continue
+        bw, bh = box[2] - box[0], box[3] - box[1]
+        if spec.placement in ("hood", "roof"):
+            bw, bh = bh, bw                        # 글자가 v를 따라 달린다
+        h = max(4.0, min(FACE_H_FRAC * bh, FACE_W_FRAC * bw / max(0.5, aspect)) / hratio)
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         pose = TextPose(role="face", text=spec.main, x=0.0, y=0.0, rot=0.0, height=h,
                         aspect=aspect, hratio=hratio, on_bed=(spec.placement == "roof"))
         pal = design.pal
         if spec.placement == "roof":
             pal = replace(pal, bed=ROOF_DARK)      # 블랙아웃 위 — 판 위 색 규칙
-        layers, job = pose_layers(pose, pal, cat, style=style, plan=tplan)
-        if tplan.tier_main == "D" and job is not None:
-            item.setdefault("text", [])
-            item["text"] = list(item["text"]) + [{
-                "text": job["text"], "font": job["font"],
-                "center": [round(cx, 1), round(cy, 1)], "height": round(h, 1),
-                "rot": round(rot, 1), "color": job["color"],
-                **({"outline": job["outline"]} if job.get("outline") else {})}]
-            done.append(f"{name}=D")
-            summary = {"style": style, "tier": "D", "role": "face", "layers": 0, "faces": [name]}
+        layers = pose_layers(pose, pal, cat, style=style, plan=tplan)
+        if not layers:
             continue
         tp = LayerPlan(source_image=plan.source_image, image_size=plan.image_size,
                        units_per_px=plan.units_per_px,
-                       layers=[replace(l, x=round(l.x, 4), y=round(l.y, 4),
-                                       sx=round(l.sx, 4), sy=round(l.sy, 4),
-                                       rot=round(l.rot % 360.0, 4)) for l in layers])
+                       layers=[replace(l, x=rnd(l.x, 4), y=rnd(l.y, 4),
+                                       sx=rnd(l.sx, 4), sy=rnd(l.sy, 4),
+                                       rot=rnd(l.rot % 360.0, 4)) for l in layers])
         tp = _refit_canvas(tp, cat)
         tpath = out_dir / f"text-{name}.json"
         tp.save(tpath)

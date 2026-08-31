@@ -24,18 +24,24 @@ FAMILY_STYLES: dict[str, tuple[str, ...]] = {
 }
 
 
-# 게임 글꼴 폴백 짝 (`textvinyl.FONTS`)
+# 스타일 → 게임 글꼴 (`textvinyl.FONTS`). 글자의 기본 엔진이다 — 게임 글꼴은
+# 실제 타이포(Impact·Brush Script·Century Gothic…)이고 한 글자가 한 장이라
+# 레퍼런스의 이름 글자도 이것으로 서 있다 (RIN SHIBUYA의 굵은 사선 글자).
 GAME_FONT: dict[str, str] = {
-    "script": "script", "brush": "italic", "graffiti": "gothic",
-    "racing": "condensed", "techno": "wide", "minimal": "sans2",
+    "script": "pristina", "brush": "brushscript", "graffiti": "oldenglish",
+    "racing": "impact", "techno": "centurygothic", "minimal": "arial",
 }
 
 
-def choose_style(requested: str, fam: Family, it: DesignIntent) -> str:
-    """`auto`면 계열 × 인상으로 고른다. 커스텀 6종 중 하나를 되돌린다 (`game`은 층 D의 일)."""
+def choose_style(requested: str, fam: Family, it: DesignIntent | None) -> str:
+    """`auto`면 계열 × 인상으로 고른다. 여섯 스타일 중 하나를 되돌린다.
+
+    `it`가 없으면(옆면 밖 — `facetext`) 계열의 첫 후보다."""
     if requested in tg.STYLES:
         return requested
     cands = FAMILY_STYLES.get(fam.name, ("minimal",))
+    if it is None:
+        return cands[0]
     if it.impression == "sharp" and "techno" in cands:
         return "techno"
     if it.impression == "soft" and "script" in cands:

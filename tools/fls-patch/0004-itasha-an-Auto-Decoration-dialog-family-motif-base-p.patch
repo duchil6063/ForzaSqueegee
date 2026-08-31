@@ -338,8 +338,8 @@ index 6058e7d..ad07a38 100644
 +    textGroup->setChecked(textState.value(QStringLiteral("enabled")).toBool(false));
 +    textGroup->setToolTip(i18n::t(
 +        "Put the character's name (and a title) into the decoration as a "
-+        "wordmark - a custom decal from bundled fonts, or the game font when "
-+        "layers run short"));
++        "wordmark - the game's own font, or shapes fitted to a bundled font "
++        "when that engine is asked for"));
 +    auto *textLayout = new QVBoxLayout(textGroup);
 +    auto *textIntro = new QLabel(i18n::t(
 +        "Spaces, case and punctuation are kept as typed; \\n breaks a line."),
@@ -373,7 +373,7 @@ index 6058e7d..ad07a38 100644
 +    style->setToolTip(i18n::t(
 +        "auto lets the composition family choose - script for soft beds, racing "
 +        "and techno for diagonal and motorsport, brush and graffiti for splash. "
-+        "game uses the game's own font vinyl."));
++        "Each style picks the game font that matches it."));
 +    form->addRow(i18n::t("Style:"), style);
 +    QComboBox *placement = combo(kTextPlacements, int(std::size(kTextPlacements)),
 +                                 "placement");
@@ -397,12 +397,12 @@ index 6058e7d..ad07a38 100644
 +    maxLayers->setValue(textState.value(QStringLiteral("max_layers")).toInt(
 +        settings.value(QStringLiteral("maxLayers"), 0).toInt()));
 +    maxLayers->setToolTip(i18n::t(
-+        "Layers the text may use. 0 lets the panel budget decide - the engine "
-+        "steps down from a full custom decal to a simpler one, then to the game "
-+        "font, then drops the text."));
++        "Layers the text may use. 0 lets the panel budget decide - the game "
++        "font is one layer per letter, and the text goes only when even that "
++        "does not fit."));
 +    form->addRow(i18n::t("Layer cap:"), maxLayers);
 +    auto *fallback = new QCheckBox(
-+        i18n::t("Fall back to the game font when layers run short"), textGroup);
++        i18n::t("Fall back to the game font when shape decals do not fit"), textGroup);
 +    fallback->setChecked(textState.value(QStringLiteral("allow_fallback_to_game_text"))
 +                             .toBool(settings.value(QStringLiteral("fallback"), true).toBool()));
 +    textLayout->addWidget(fallback);
@@ -544,10 +544,10 @@ index e00074e..4053a55 100644
 +     "뜯긴 가장자리의 덩어리 받침판과 많은 무늬 — 일부는 그림 위로"},
 +    {"Character Name &Text...", "캐릭터 이름 글자(&T)..."},
 +    {"Put the character's name (and a title) into the decoration as a "
-+     "wordmark - a custom decal from bundled fonts, or the game font when "
-+     "layers run short",
-+     "캐릭터 이름(과 작품명)을 워드마크로 꾸밈에 넣습니다 — 동봉 글꼴로 만든 "
-+     "커스텀 데칼이고, 레이어가 모자라면 게임 글꼴로 물러납니다"},
++     "wordmark - the game's own font, or shapes fitted to a bundled font "
++     "when that engine is asked for",
++     "캐릭터 이름(과 작품명)을 워드마크로 꾸밈에 넣습니다 — 게임 글꼴이 "
++     "기본이고, 부르면 동봉 글꼴을 도형으로 되지은 데칼을 씁니다"},
 +    {"Remove Text", "글자 빼기"},
 +    {"Take the name text out of the decoration", "꾸밈에서 이름 글자를 뺍니다"},
 +    {"Character Name Text", "캐릭터 이름 글자"},
@@ -559,9 +559,9 @@ index e00074e..4053a55 100644
 +    {"Title / tagline (optional):", "작품명 / 태그라인 (선택):"},
 +    {"auto lets the composition family choose - script for soft beds, racing "
 +     "and techno for diagonal and motorsport, brush and graffiti for splash. "
-+     "game uses the game's own font vinyl.",
++     "Each style picks the game font that matches it.",
 +     "auto는 구성 계열이 고릅니다 — 부드러운 받침판엔 필기체, 사선·모터스포츠엔 "
-+     "레이싱·테크노, 스플래시엔 붓·그래피티. game은 게임 자체 글꼴 비닐을 씁니다."},
++     "레이싱·테크노, 스플래시엔 붓·그래피티. 스타일마다 짝인 게임 글꼴이 섭니다."},
 +    {"Style:", "스타일:"},
 +    {"auto puts the wordmark beside the character on the sides; rear, hood, "
 +     "roof and window pin it to that panel instead.",
@@ -576,15 +576,15 @@ index e00074e..4053a55 100644
 +    {"Outline:", "테두리:"},
 +    {"Shadow:", "그림자:"},
 +    {"no cap", "상한 없음"},
-+    {"Layers the text may use. 0 lets the panel budget decide - the engine "
-+     "steps down from a full custom decal to a simpler one, then to the game "
-+     "font, then drops the text.",
-+     "글자가 쓸 수 있는 레이어 수. 0이면 구획 예산이 정합니다 — 엔진이 온전한 "
-+     "커스텀 데칼에서 단순한 것으로, 다음 게임 글꼴로 내려가고, 그래도 안 되면 "
-+     "글자를 뺍니다."},
++    {"Layers the text may use. 0 lets the panel budget decide - the game "
++     "font is one layer per letter, and the text goes only when even that "
++     "does not fit.",
++     "글자가 쓸 수 있는 레이어 수. 0이면 구획 예산이 정합니다 — 게임 글꼴은 "
++     "글자당 한 장이고, 그것마저 안 들면 글자를 뺍니다 (도형 데칼은 안 들 때 "
++     "게임 글꼴로 물러납니다)."},
 +    {"Layer cap:", "레이어 상한:"},
-+    {"Fall back to the game font when layers run short",
-+     "레이어가 모자라면 게임 글꼴로 물러나기"},
++    {"Fall back to the game font when shape decals do not fit",
++     "도형 데칼이 안 들면 게임 글꼴로 물러나기"},
 +    {"Type a character name first.", "먼저 캐릭터 이름을 입력하세요."},
 +    {"script", "필기체"},
 +    {"brush", "붓글씨"},
@@ -592,7 +592,7 @@ index e00074e..4053a55 100644
 +    {"racing", "레이싱"},
 +    {"techno", "테크노"},
 +    {"minimal", "미니멀"},
-+    {"game", "게임 글꼴"},
++    {"game", "자동(옛 이름)"},
 +    {"side", "옆면"},
 +    {"rear", "뒷면"},
 +    {"hood", "보닛"},

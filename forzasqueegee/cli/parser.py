@@ -18,8 +18,12 @@ def _text_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--subtext", default=None, metavar=msg("작품명"),
                    help=msg("보조 글자 — 작품명·별칭·팀명 (메인 밑에 작게)"))
     p.add_argument("--text-style", default=None, dest="text_style",
-                   help=msg("auto · script · brush · graffiti · racing · techno · "
-                            "minimal · game (기본 auto: 구성 계열이 고른다)"))
+                   help=msg("auto · script · brush · graffiti · racing · techno · minimal "
+                            "(기본 auto: 구성 계열이 고른다. 스타일이 글꼴을 고른다)"))
+    p.add_argument("--text-engine", default=None, dest="text_engine",
+                   choices=["font", "shapes"],
+                   help=msg("font(기본: 게임 글꼴 글리프, 한 글자 한 장) · "
+                            "shapes(동봉 OFL 글꼴을 도형으로 되짓기 — 고운 층이 예산에 들 때만)"))
     p.add_argument("--text-placement", default=None, dest="text_placement",
                    help=msg("auto · side · rear · hood · roof · window (기본 auto = 옆면)"))
     p.add_argument("--text-priority", default=None, dest="text_priority",

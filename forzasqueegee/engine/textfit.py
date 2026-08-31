@@ -16,8 +16,8 @@ IoU 0.54 · 카운터 침범 68%). 이 모듈은 **래스터를 정답으로 두
    이득이 있는 것만 받는다.
 
 정책(`FitPolicy`)이 곡선 허용 오차·최소 조각 크기·잔여 패스 수를 정하고,
-`frontier`가 정책 여러 벌의 (장수, 품질)을 재서 지배당한 것을 걷어낸다 —
-층 A/B/C의 고정 세 단 대신 예산에 맞는 판을 고른다 (`textglyph.build_text`).
+사다리(`LADDER`)가 고운 것부터 거친 것까지 네 칸을 준다 — 예산에 드는 가장
+고운 칸을 고른다 (`textglyph.plan_for_budget`).
 
 전부 결정적이다 (난수 없음, 후보 순서는 좌표 정렬).
 """
@@ -58,29 +58,23 @@ class FitPolicy:
     round_ends: bool = True      # 자유 끝이 둥글면(잉크가 원을 받으면) 원으로 마감
 
 
-# 층 이름 → 정책. 예산 탐색(`frontier`)은 이 사이를 잇는 사다리를 쓴다.
+# 층 이름 → 정책. 층 B가 사다리의 끝이다 — 그보다 거친 정책은 곡선을 막대 몇
+# 개로 깎아 글자가 상자 덩어리로 읽힌다 (사용자 판정 2026-08-31). 예산이 층 B에도
+# 안 들면 게임 글꼴 글리프가 맡는다 (`compose.textbudget`).
 TIER_POLICY: dict[str, FitPolicy] = {
     "A": FitPolicy(),
     "B": FitPolicy(eps_bar=0.22, disc_gap=0.8, bar_spill=0.10, residual_area=0.12,
                    residual_passes=2, join_deg=30.0),
-    "C": FitPolicy(eps_bar=0.40, disc_gap=1.1, bar_spill=0.18, residual_area=0.25,
-                   residual_passes=1, join_deg=45.0),
 }
 
 
-# 예산 사다리 — 고운 것부터 거친 것까지. `frontier`가 이 전부를 재서 지배당한
-# 것을 버리고, 남은 장수에 드는 것 중 가장 고운 판을 고른다.
+# 예산 사다리 — 고운 것부터 층 B까지 네 칸. 예산에 드는 것 중 가장 고운 칸을 쓴다.
 LADDER: tuple[FitPolicy, ...] = (
     FitPolicy(eps_bar=0.08, disc_gap=0.45, bar_spill=0.03, residual_area=0.04, residual_passes=3),
     TIER_POLICY["A"],
     FitPolicy(eps_bar=0.16, disc_gap=0.65, bar_spill=0.07, residual_area=0.08, residual_passes=3,
               join_deg=26.0),
     TIER_POLICY["B"],
-    FitPolicy(eps_bar=0.30, disc_gap=0.95, bar_spill=0.14, residual_area=0.18, residual_passes=2,
-              join_deg=36.0),
-    TIER_POLICY["C"],
-    FitPolicy(eps_bar=0.55, disc_gap=1.3, bar_spill=0.25, residual_area=0.4, residual_passes=1,
-              join_deg=55.0),
 )
 
 
@@ -421,28 +415,6 @@ def fit_mask(mask: np.ndarray, cap_px: float, cat: Catalog, pol: FitPolicy = Fit
         prims += more
     fit = Fit(prims, w, policy=pol)
     return measure(fit, mask, cat, ctr) if measure_it else fit
-
-
-def frontier(mask: np.ndarray, cap_px: float, cat: Catalog,
-             ladder: tuple[FitPolicy, ...] = LADDER, visible: np.ndarray | None = None
-             ) -> list[Fit]:
-    """사다리 전부를 재서 **지배당하지 않은** 판만 — 장수 오름차순.
-
-    판 p가 q를 지배 = 장수가 같거나 적으면서 품질이 같거나 높다."""
-    fits = [fit_mask(mask, cap_px, cat, pol, visible) for pol in ladder]
-    fits.sort(key=lambda f: (f.n, -f.quality))
-    out: list[Fit] = []
-    for f in fits:
-        if out and out[-1].quality >= f.quality:
-            continue
-        out.append(f)
-    return out
-
-
-def pick(fits: list[Fit], budget: int | None) -> Fit | None:
-    """예산에 드는 것 중 품질이 가장 높은 판. 하나도 안 들면 None."""
-    ok = [f for f in fits if budget is None or f.n <= budget]
-    return max(ok, key=lambda f: (f.quality, -f.n)) if ok else None
 
 
 # ---------------------------------------------------------------- 밑벌 (테두리·그림자)

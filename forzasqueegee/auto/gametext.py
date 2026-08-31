@@ -78,7 +78,7 @@ class TextJob:
     """게임에 넣을 글자 한 줄. 좌표·크기는 **캔버스 유닛**이다."""
 
     text: str
-    font: str = "sans"
+    font: str = "arial"
     x: float = 0.0
     y: float = 0.0
     scale: float = 1.0                       # 게임 스케일 값 (글자 상자 배율)

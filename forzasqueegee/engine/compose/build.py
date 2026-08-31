@@ -11,7 +11,7 @@ from ...game import fold as gfold, seam as gseam, surface as gsurf
 from ...i18n import msg
 from ...paths import run_file
 from ..catalog import Catalog, default_catalog_path
-from ..model import UNITS_PER_SCALE, LayerPlan, rgb_to_hsb
+from ..model import UNITS_PER_SCALE, LayerPlan, rgb_to_hsb, rnd
 from .boxes import (
     CANVAS_UNITS, _clamp_box, _face_phase, _gap, _group_unit, _overlap, _rel,
     _union)
@@ -115,10 +115,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
 
     기본은 **안 넣는다** (이타샤 어휘에 글자가 없다는 규칙은 그대로다). 스펙
     (`textspec.TextSpec` 또는 그 dict)을 켜서 주면 캐릭터 이름(+작품명)이 꾸밈의
-    한 요소로 후보에 들어간다 — 커스텀 텍스트 도안(동봉 OFL 글꼴, `engine.textglyph`)
-    이 기본이고 면 예산이 모자라면 층을 낮추다 게임 글꼴 비닐로 물러나고 그래도
-    안 되면 뺀다 (`textbudget`). 옆면 글자는 면마다 제 그룹(`text-<면>.json`)이다
-    — 꾸밈 그룹은 좌우를 미러로 나눠 쓰지만 글자는 뒤집히면 안 된다.
+    한 요소로 후보에 들어간다 — **게임 글꼴 글리프**(한 글자 한 장, `engine.textvinyl`)
+    가 기본 엔진이고, 사람이 `engine: shapes`를 고르면 동봉 OFL 글꼴을 도형으로
+    되짓는 커스텀 도안(`engine.textglyph`)을 고운 층이 예산에 들 때만 쓴다
+    (`textbudget`). 옆면 글자는 면마다 제 그룹(`text-<면>.json`)이다 — 꾸밈 그룹은
+    좌우를 미러로 나눠 쓰지만 글자는 뒤집히면 안 된다.
     """
     text_spec = (text if isinstance(text, TextSpec) else TextSpec.from_dict(text)) \
         if text is not None else TextSpec()
@@ -303,8 +304,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     deco_plan = deco_place = deco_front = front_place = None
     design: Design | None = None
     face_summary: dict | None = None
-    text_groups: dict[str, dict] = {}         # 면 → 글자 그룹 항목 (커스텀 층)
-    text_jobs: dict[str, list[dict]] = {}     # 면 → 게임 글자 명세 (층 D)
+    text_groups: dict[str, dict] = {}         # 면 → 글자 그룹 항목
     if not deco:
         notes.append(msg("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다"))
     if deco and side0 is not None and not side0.uncertain:
@@ -392,41 +392,31 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                              n=len(deco_front.layers)))
         else:
             deco_front = None
-        # ---- 옆면 글자 — 면마다 제 그룹 (미러 금지) 또는 게임 글자 명세 ----
+        # ---- 옆면 글자 — 면마다 제 그룹 (미러 금지) ----
         if design.text is not None and deco_place is not None:
             sets = {deco_src: design.text}
             other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)), None)
             if other is not None:
                 sets[other] = mirrored_set(design.text, design.pal, cat, design.text_plan)
             for sname, tset in sets.items():
-                if tset.game_jobs:
-                    text_jobs[sname] = [
-                        {"text": j["text"], "font": j["font"],
-                         "center": [round(fcu + u * j["x"], 1), round(fcv + u * j["y"], 1)],
-                         "height": round(u * j["height"], 1), "rot": round(j["rot"], 1),
-                         "color": j["color"],
-                         **({"outline": j["outline"]} if j.get("outline") else {}),
-                         **({"shadow": j["shadow"],
-                             "shadow_shift": [round(0.06 * u * j["height"], 1),
-                                              round(-0.06 * u * j["height"], 1)]}
-                            if j.get("shadow") else {})}
-                        for j in tset.game_jobs]
-                custom = [l for l in tset.layers if not l.label.startswith("game")]
-                if not custom:
+                if not tset.layers:
                     continue
                 tp = design.plan(plan, cat)          # 캔버스 메타는 도안의 것
-                tp.layers = [replace(l, x=round(l.x, 4), y=round(l.y, 4), sx=round(l.sx, 4),
-                                     sy=round(l.sy, 4), rot=round(l.rot % 360.0, 4))
-                             for l in custom]
+                tp.layers = [replace(l, x=rnd(l.x, 4), y=rnd(l.y, 4), sx=rnd(l.sx, 4),
+                                     sy=rnd(l.sy, 4), rot=rnd(l.rot % 360.0, 4))
+                             for l in tset.layers]
                 tpath = out_dir / f"text-{sname}.json"
                 tp.save(tpath)
                 written.append(tpath)
                 text_groups[sname] = {"plan": _rel(tpath, out_dir), "x": round(fcu, 1),
                                       "y": round(fcv, 1), "scale": round(ds, 3),
                                       "rot": 0.0, "mirror": False}
-            notes.append(msg("옆면 글자 그룹 {n}벌 — {what}", n=len(sets),
-                             what=(msg("게임 글꼴 비닐 (층 D)") if design.text.tier_main == "D"
-                                   else msg("커스텀 도안 {m:,}장", m=design.text.n))))
+            notes.append(msg(
+                "옆면 글자 그룹 {n}벌 — {what} {m:,}장", n=len(sets),
+                what=(msg("게임 글꼴 {font}", font=design.text_plan.font)
+                      if design.text.tier_main == "D"
+                      else msg("도형 맞춤 (층 {tier})", tier=design.text.tier_main)),
+                m=design.text.n))
 
     # ---- 예산 사다리 — 넘치면 꾸밈부터 버린다 (도안이 주역이다) ----
     # 기준은 **가장 무거운 옆면**이다 (한 면에 여러 장을 올릴 수 있다). 장수는
@@ -620,8 +610,6 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # 글자 그룹은 꾸밈 위·도안 아래, 면마다 제 것 (미러 안 한다)
             if name in text_groups:
                 item["pre_groups"].append(text_groups[name])
-            if name in text_jobs:
-                item["text"] = text_jobs[name]
         if mps:
             item["groups"] = [
                 _hand_group_job(m, hand_ix, hand_group, out_dir) for m in mps]

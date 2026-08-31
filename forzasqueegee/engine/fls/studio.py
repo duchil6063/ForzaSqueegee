@@ -100,6 +100,7 @@ def _blank_state() -> dict:
             # 글자 — 기본 꺼짐. 켜면 캐릭터 이름(+작품명)이 꾸밈의 한 요소로
             # 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져 있으면 안 선다.
             "text": {"enabled": False, "main": None, "sub": None, "style": "auto",
+                     "engine": "font",
                      "placement": "auto", "priority": "normal",
                      "allow_fallback_to_game_text": True, "max_layers": None,
                      "outline": "auto", "shadow": "auto"}}

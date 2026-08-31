@@ -48,49 +48,49 @@ from .model import UNITS_PER_SCALE, Layer, LayerPlan
 UPPER_ORDER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!?@&"
 LOWER_ORDER = "abcdefghijklmnopqrstuvwxyz$£¥€æ^ß@#+%;:/"
 
-# 글꼴 이름 → (대문자 그룹, 소문자 그룹). 이름은 라스터를 본 눈대중 이름표다.
+# 글꼴 이름 → (대문자 그룹, 소문자 그룹). 이름은 게임 에셋의 글꼴 이름이다
+# (FLS `shape_names.json` — `catalog/fls_shape_ids.json`의 pages). 열한 글꼴이
+# 전부다 — 글꼴 탭의 칸 11개(`catalog/font_cells.json`)와 같은 벌.
 FONTS: dict[str, tuple[str, str]] = {
-    "sans": ("S", "T"),            # 굵은 산세리프 — 기본
-    "sans2": ("SS", "TT"),
-    "condensed": ("OO", "PP"),     # 좁고 굵다 (레이싱 넘버 느낌)
-    "gothic": ("KK", "LL"),        # 블랙레터
-    "script": ("MM", "NN"),        # 손글씨 흘림
-    "italic": ("K", "L"),          # 두꺼운 이탤릭
-    "italic_light": ("M", "N"),
-    "serif": ("QQ", "RR"),
-    "round": ("O", "P"),
-    "slab": ("Q", "R"),
-    "narrow": ("UU", "VV"),
-    "wide": ("WW", "XX"),
+    "arial": ("S", "T"),               # 산세리프 — 기본
+    "times": ("SS", "TT"),             # 세리프
+    "impact": ("OO", "PP"),            # 좁고 굵다 — 레이싱 워드마크
+    "oldenglish": ("KK", "LL"),        # 블랙레터
+    "brushscript": ("MM", "NN"),       # 붓글씨 흘림
+    "magneto": ("M", "N"),             # 크롬 배지풍 흘림
+    "freestyle": ("O", "P"),           # 가벼운 손글씨
+    "pristina": ("Q", "R"),            # 가는 캘리그래피
+    "playbill": ("QQ", "RR"),          # 서부극 슬래브
+    "elephant": ("UU", "VV"),          # 뚱뚱한 세리프
+    "centurygothic": ("WW", "XX"),     # 기하 산세리프
 }
-DEFAULT_FONT = "sans"
+DEFAULT_FONT = "arial"
 # 글자 사이 간격 (대문자 높이의 몫). **게임이 쓰는 값을 실측으로 맞췄다** —
 # 이 값이 맞아야 구성 설계가 "이 이름이 문짝에 들어가나"를 옳게 계산하고,
 # 중심 배치의 앵커(첫 글리프 원점) 역산이 안 밀린다. 글꼴마다 다르다:
 #
-# - `sans` 0.23 (2026-08-17, 'HIH' 스케일 1.0 = 315유닛 · 2026-08-18 재검 0.2271)
-# - `condensed` 0.298 (2026-08-18, 'HIH' 스케일 1.5,
+# - `arial` 0.23 (2026-08-17, 'HIH' 스케일 1.0 = 315유닛 · 2026-08-18 재검 0.2271)
+# - `impact` 0.298 (2026-08-18, 'HIH' 스케일 1.5,
 #   전체 문구 검증에서 스케일 0.5까지 선형이 확인됐다). 0.23으로 두면 예측 폭이
 #   **과소**해 배너·리어 이름이 상자를 넘쳐 A필러·패널 경계에서 잘린다.
-# - `script` 0.122 (2026-08-20, 'HIH' 스케일 1.4 — 같은 판의 sans 검산 0.2271로
+# - `brushscript` 0.122 (2026-08-20, 'HIH' 스케일 1.4 — 같은 판의 arial 검산 0.2271로
 #   방법이 서 있음을 확인했다). **기본값의 절반**이다: 필기체는 글자가 서로
 #   기울어 파고들어 전진폭이 짧다. 0.23으로 두면 예측 폭이 **과대**해 백드롭
 #   타이포가 실제보다 크게 계산돼 필요 없이 줄어들고, 중심 앵커 역산이 오른쪽으로
 #   밀려 이름이 인물 뒤에서 치우친다.
 #
-# 공백 전진폭도 실측이다: condensed 'HATSUNE MIKU'의 틈 합이 정확히
+# 공백 전진폭도 실측이다: impact 'HATSUNE MIKU'의 틈 합이 정확히
 # 10×tracking이었다 — **단어 틈이 글자 틈과 같다.** 우리 펜은 글자 뒤에 이미
-# tracking을 더하므로 space 몫은 0이다 (sans의 0.34는 실측 전 값 — condensed만
-# 쓰는 이타샤 경로에는 안 들어온다).
+# tracking을 더하므로 space 몫은 0이다 (arial의 0.34는 실측 전 값).
 #
-# **script의 공백은 못 쟀다** (측정판이 'H H'에서 죽었다 — 2026-08-20). 기본값
+# **brushscript의 공백은 못 쟀다** (측정판이 'H H'에서 죽었다 — 2026-08-20). 기본값
 # 0.34를 쓴다: 0을 주면 tracking이 0.122로 좁아 단어가 붙어 버린다 (뒷유리
 # 사인이 'HatsuneMiku'로 찍혔다 — 미리보기 판정). 백드롭은 단어를 **줄로 쪼개**
 # 앉히므로 이 값을 안 쓴다 — 영향은 한 줄짜리 사인·배너뿐.
 GAME_TRACKING = 0.23
-FONT_TRACKING: dict[str, float] = {"sans": 0.23, "condensed": 0.298,
-                                   "script": 0.122}
-FONT_SPACE: dict[str, float] = {"sans": 0.34, "condensed": 0.0}
+FONT_TRACKING: dict[str, float] = {"arial": 0.23, "impact": 0.298,
+                                   "brushscript": 0.122}
+FONT_SPACE: dict[str, float] = {"arial": 0.34, "impact": 0.0}
 
 # 글자 테두리 한 벌 = **같은 크기 4벌을 대각 오프셋**으로 깐 것 (대문자 높이의
 # 몫). 블록 확대 1벌은 이동량이 블록 폭에 비례해 긴 문구의 끝 글자가 분리된
@@ -254,17 +254,116 @@ def cap_height(cat: Catalog, font: str = DEFAULT_FONT) -> float:
     return glyph_box(cat, f"{up}_08").h        # 'H'
 
 
+# ---------------------------------------------------------------- 광학 커닝
+# 글리프 비닐에는 **사이드베어링이 없다** — em 상자 표식은 글자마다 같은 ±1
+# 상자라 설계 전진폭을 안 실어 준다 (`_group_marks`). 그래서 우리 펜은 잉크
+# 상자를 맞대고 `tracking`만큼 띄운다. 곧은 글자끼리는 그것이 맞지만 **사선
+# 쌍**에서는 눈에 띄게 벌어진다: 'Y'는 밑동이 좁고 'A'는 윗머리가 좁아서,
+# 잉크 상자 틈이 같아도 실제로 보이는 흰 자리가 두 배가 된다 ('SHIBUY A'로
+# 읽힌다 — 2026-08-31 미리보기 판정).
+#
+# 두 글자의 **옆모습**(행마다 잉크의 좌·우 끝)을 재서 가장 가까운 두 점의 틈이
+# `tracking`이 되도록 당긴다. 순수 최소거리 커닝은 사선 쌍을 0.4em 넘게 당겨
+# 글자가 서로 올라타므로 상한을 둔다 — 눈에 벌어짐이 지워지는 데까지만.
+KERN_MAX = 0.25            # 당길 수 있는 상한 (대문자 높이 대비)
+KERN_ROWS = 32             # 옆모습을 재는 행 수
+
+
+_PROFILE: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, float, float]] = {}
+
+
+def glyph_profile(cat: Catalog, name: str
+                  ) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """글리프의 **옆모습** — (왼쪽 x, 오른쪽 x, y0, y1). 잉크 상자 세로를 `KERN_ROWS`
+    칸으로 나눈 행마다 그 높이에서 잉크가 닿는 좌·우 끝이다 (정규화 좌표).
+
+    폴리곤 변과 수평선의 교점으로 정확히 잰다 (래스터 없음). 카운터는 좌우 끝에
+    영향을 안 주므로 고리를 통째로 훑는다.
+    """
+    key = (id(cat), name)
+    got = _PROFILE.get(key)
+    if got is not None:
+        return got
+    loops = ink_loops(cat, name)
+    pts = np.concatenate(loops, axis=0)
+    y0, y1 = float(pts[:, 1].min()), float(pts[:, 1].max())
+    ys = y0 + (np.arange(KERN_ROWS) + 0.5) * (y1 - y0) / KERN_ROWS
+    lo = np.full(KERN_ROWS, np.nan)
+    hi = np.full(KERN_ROWS, np.nan)
+    for loop in loops:
+        a = loop
+        b = np.roll(loop, -1, axis=0)
+        ay, by = a[:, 1], b[:, 1]
+        ax, bx = a[:, 0], b[:, 0]
+        dy = by - ay
+        for i, y in enumerate(ys):
+            # 변 하나가 이 높이를 지나나 (아래 끝은 포함, 위 끝은 제외 — 꼭짓점 중복 방지)
+            hit = ((ay <= y) & (by > y)) | ((by <= y) & (ay > y))
+            if not hit.any():
+                continue
+            t = (y - ay[hit]) / dy[hit]
+            xs = ax[hit] + t * (bx[hit] - ax[hit])
+            lo[i] = np.nanmin([lo[i], xs.min()])
+            hi[i] = np.nanmax([hi[i], xs.max()])
+    out = (lo, hi, y0, y1)
+    if len(_PROFILE) > 4096:
+        _PROFILE.clear()
+    _PROFILE[key] = out
+    return out
+
+
+_KERN: dict[tuple[int, str, str], float] = {}
+
+
+def pair_kern(cat: Catalog, left: str, right: str) -> float:
+    """두 글리프를 잉크 상자 맞댐에서 **얼마나 더 당길 수 있나** (정규화 좌표, ≥ 0).
+
+    되돌리는 값은 잉크 틈에서 빼는 몫이다 — 0이면 상자 맞댐 그대로다. 세로로
+    겹치는 행이 없으면 0 (당길 근거가 없다).
+    """
+    key = (id(cat), left, right)
+    got = _KERN.get(key)
+    if got is not None:
+        return got
+    (_ll, lr, ly0, ly1) = glyph_profile(cat, left)
+    (rl, _rr, ry0, ry1) = glyph_profile(cat, right)
+    lb = glyph_box(cat, left)
+    rb = glyph_box(cat, right)
+    # 두 글리프의 행 격자가 다르므로(제 잉크 상자 기준) 겹치는 높이에서 다시 잰다
+    y0, y1 = max(ly0, ry0), min(ly1, ry1)
+    val = 0.0
+    if y1 > y0:
+        ys = y0 + (np.arange(KERN_ROWS) + 0.5) * (y1 - y0) / KERN_ROWS
+        li = np.clip(((ys - ly0) / max(1e-9, ly1 - ly0) * KERN_ROWS).astype(int), 0, KERN_ROWS - 1)
+        ri = np.clip(((ys - ry0) / max(1e-9, ry1 - ry0) * KERN_ROWS).astype(int), 0, KERN_ROWS - 1)
+        a = lr[li] - lb.x0          # 왼 글자 오른끝 (제 잉크 왼끝 기준)
+        b = rl[ri] - rb.x0          # 오른 글자 왼끝 (제 잉크 왼끝 기준)
+        ok = ~(np.isnan(a) | np.isnan(b))
+        if ok.any():
+            # 상자 맞댐에서 두 잉크의 최소 틈 = min(b + w_left - a) — 이만큼이 여유다
+            val = max(0.0, float(np.min(b[ok] + lb.w - a[ok])))
+    if len(_KERN) > 8192:
+        _KERN.clear()
+    _KERN[key] = val
+    return val
+
+
 def text_layers(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
                 color: tuple[int, int, int] = (255, 255, 255),
                 outline: tuple[int, int, int] | None = None,
                 outline_grow: float = 0.14, tracking: float | None = None,
                 space: float | None = None, cat: Catalog | None = None,
-                label: str = "text") -> tuple[list[Layer], Box]:
+                kern: bool = False, label: str = "text") -> tuple[list[Layer], Box]:
     """문자열 → (레이어 목록, 캔버스 유닛 상자). 원점은 글자 블록의 가운데다.
 
     `height`는 **대문자 높이**(캔버스 유닛)다. `tracking`·`space`는 그 높이의 몫 —
     안 주면 글꼴별 실측값이다. `outline`을 주면 글자마다 뒤에 조금 큰 사본을
     깔아 테두리를 만든다.
+
+    `kern`을 켜면 사선 쌍을 옆모습으로 당긴다 (`pair_kern`). **기본은 꺼짐**이다:
+    게임 글자 도구가 내는 조판을 예측하는 자리(`auto.gametext`·미리보기의 `text`
+    명세)는 그 도구를 따라야 하고, 커닝은 우리가 글리프를 직접 앉히는 자리
+    (`compose.textbuild`)의 몫이다.
     """
     cat = cat or Catalog(default_catalog_path())
     tracking = font_tracking(font) if tracking is None else tracking
@@ -279,13 +378,19 @@ def text_layers(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
     pen = 0.0
     x0 = y0 = 1e9
     x1 = y1 = -1e9
+    prev: str | None = None                          # 바로 앞 글리프 (커닝용, 공백이면 끊긴다)
     for ch in text:
         if ch.isspace():
             pen += space * height
+            prev = None
             continue
         name = glyph_name(ch, font, cat)
         assert name is not None
         gb = glyph_box(cat, name)
+        if kern and prev is not None:
+            pen -= min(pair_kern(cat, prev, name) * UNITS_PER_SCALE * s,
+                       KERN_MAX * height)
+        prev = name
         gx = pen - gb.x0 * UNITS_PER_SCALE * s          # 상자 왼쪽 끝을 펜에 맞춘다
         if outline is not None:
             # 테두리 사본: 같은 **글리프 가운데**를 중심으로 키운다
@@ -344,7 +449,7 @@ def preview(plan: LayerPlan, cat: Catalog | None = None, bg: int = 90,
 
 def text_metrics(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
                  tracking: float | None = None, space: float | None = None,
-                 cat: Catalog | None = None) -> dict[str, float]:
+                 cat: Catalog | None = None, kern: bool = False) -> dict[str, float]:
     """조판했을 때의 **크기와 기준점 오프셋** (캔버스 유닛). 게임 텍스트 배치용.
 
     반환: `w`·`h` = 잉크 상자 크기, `cx`·`cy` = **펜 원점에서 잉크 중심까지**.
@@ -359,14 +464,20 @@ def text_metrics(text: str, *, font: str = DEFAULT_FONT, height: float = 180.0,
     pen = 0.0
     x0 = y0 = 1e9
     x1 = y1 = -1e9
+    prev: str | None = None
     for ch in text:
         if ch.isspace():
             pen += space * height
+            prev = None
             continue
         name = glyph_name(ch, font, cat)
         if name is None:
             continue
         gb = glyph_box(cat, name)
+        if kern and prev is not None:
+            pen -= min(pair_kern(cat, prev, name) * UNITS_PER_SCALE * s,
+                       KERN_MAX * height)
+        prev = name
         x0 = min(x0, pen)
         x1 = max(x1, pen + gb.w * UNITS_PER_SCALE * s)
         y0 = min(y0, gb.y0 * UNITS_PER_SCALE * s)
