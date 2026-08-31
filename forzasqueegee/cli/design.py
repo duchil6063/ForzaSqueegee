@@ -10,7 +10,7 @@ def cmd_make(args) -> int:
     from ..engine.pipeline import make
 
     make(args.image, args.out, route=args.route, shapes=args.shapes,
-         size=args.size, keep_bg=args.keep_bg, no_crop=args.no_crop)
+         size=args.size, cut_bg=args.cut_bg, no_crop=args.no_crop)
     return 0
 
 
@@ -199,6 +199,7 @@ def cmd_flsedit(args) -> int:
             if args.text:
                 text_fields = {
                     "main": args.text, "sub": args.subtext, "style": args.text_style,
+                    "engine": args.text_engine,
                     "placement": args.text_placement, "priority": args.text_priority,
                     "allow_fallback_to_game_text": (
                         None if args.game_text_fallback is None
@@ -215,6 +216,7 @@ def cmd_flsedit(args) -> int:
                 return 2
             said = studio.act_text(st, {
                 "main": args.text, "sub": args.subtext, "style": args.text_style,
+                "engine": args.text_engine,
                 "placement": args.text_placement, "priority": args.text_priority,
                 "allow_fallback_to_game_text": (
                     None if args.game_text_fallback is None

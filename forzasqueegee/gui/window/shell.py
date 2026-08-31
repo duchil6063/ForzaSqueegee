@@ -73,10 +73,10 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self.drop = _Drop()
         self.drop.picked.connect(self.set_image)
 
-        # 배경 자동 제거 — 알파 없는 입력에만 발동하는 전처리라 평소엔 무해하지만,
-        # 배경까지 그리려는 사용자는 여기서만 끌 수 있다 (CLI --keep-bg와 같다)
+        # 배경 제거 — 부를 때만 돈다 (CLI --cut-bg와 같다). 기본이 꺼짐인 것은
+        # 시키지 않은 전처리가 원화를 바꿔 놓지 않게 하려는 것이다
         self.bgcut = QCheckBox(tr("gui.bgcut"))
-        self.bgcut.setChecked(True)
+        self.bgcut.setChecked(False)
         self.bgcut.setToolTip(tr("gui.bgcut.tip"))
 
         self.r_painter = QRadioButton(tr("gui.route.painter"))

@@ -113,7 +113,7 @@ def _crop_to_subject(rgba: np.ndarray) -> tuple[np.ndarray, list[int] | None]:
 
 def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
          shapes: int = MAX_SHAPES, size: int = WORK_SIZE, log=_say,
-         progress=None, keep_bg: bool = False,
+         progress=None, cut_bg: bool = False,
          no_crop: bool = False, should_stop=None) -> dict:
     """도안 하나를 끝까지 만든다. 반환값은 `report.json`과 같은 딕셔너리.
 
@@ -143,11 +143,12 @@ def make(image: str | Path, out_dir: str | Path, *, route: str = "cel",
     with stopping(should_stop):
         # 전처리 (요구사항 §4: 배경 제거·크롭) — 실패·미발동은 경고만 (한 버튼 원칙)
         # ① 배경 제거: 알파 없는 입력(사진·JPG)은 배경까지 도형으로 그려지므로
-        #    신경망 알파(isnet-anime)로 인물만 딴다. keep_bg = 배경도 도안에 담는다
+        #    신경망 알파(isnet-anime)로 인물만 딴다. **부를 때만 돈다** —
+        #    cut_bg가 참일 때뿐이고, 기본은 프레임을 그대로 도안에 담는다
         src = Path(image)
         bgcut = False
         rgba = read_rgba(src)
-        if not keep_bg and bool(rgba[..., 3].min() >= 250):
+        if cut_bg and bool(rgba[..., 3].min() >= 250):
             from .bgremove import matte
 
             log(msg("배경 제거 중… (신경망 알파)"))

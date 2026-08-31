@@ -91,7 +91,7 @@ class _MakeOps:
         route = self._route()
         shapes = self.shapes.value() if route == "painter" else MAX_SHAPES
         self.job = _Job(self.image, self.out, route, shapes,
-                        keep_bg=not self.bgcut.isChecked())
+                        cut_bg=self.bgcut.isChecked())
         self.thread = QThread(self)
         self.job.moveToThread(self.thread)
         self.thread.started.connect(self.job.go)

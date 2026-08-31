@@ -65,8 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
                                "(면 채움 없음 — 차 도색 위에 선화만 얹는 도안)"))
     p_mk.add_argument("--shapes", type=int, default=3000, help=msg("레이어 상한 (≤3000)"))
     p_mk.add_argument("--size", type=int, default=1200, help=msg("[디버그] 작업 해상도"))
-    p_mk.add_argument("--keep-bg", action="store_true",
-                      help=msg("배경 제거 전처리를 끈다 (알파 없는 입력도 전체를 도안에 담는다)"))
+    p_mk.add_argument("--cut-bg", action="store_true",
+                      help=msg("배경 제거 전처리를 켠다 (알파 없는 입력에서 신경망으로 인물만 딴다)"))
     p_mk.add_argument("--no-crop", action="store_true",
                       help=msg("크롭 전처리를 끈다 (인물 bbox로 안 자르고 프레임 그대로 쓴다)"))
 

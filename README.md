@@ -77,7 +77,7 @@ python -m forzasqueegee models --verify  # 받아 둔 파일 SHA-256 검증
 python -m forzasqueegee make 그림.png -o out/내도안 --route line --shapes 1200
 ```
 
-노선, 레이어 수, 배경 제거(`--keep-bg`), 크롭(`--no-crop`)은 **사람이 직접 고르는
+노선, 레이어 수, 배경 제거(`--cut-bg`, 기본 꺼짐), 크롭(`--no-crop`)은 **사람이 직접 고르는
 값입니다.** 그림체와 의도에 따라 답이 갈리는 부분이라 자동으로 정할 수가 없습니다.
 
 결과물은 `out/내도안/`에 들어가고, 파일 이름 앞에는 폴더 이름이 붙습니다.

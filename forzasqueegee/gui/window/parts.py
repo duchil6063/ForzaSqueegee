@@ -58,10 +58,10 @@ class _Job(QObject):
     failed = Signal(str)
 
     def __init__(self, image: Path, out: Path, route: str, shapes: int,
-                 keep_bg: bool):
+                 cut_bg: bool):
         super().__init__()
         self.image, self.out, self.route, self.shapes = image, out, route, shapes
-        self.keep_bg = keep_bg
+        self.cut_bg = cut_bg
         self.stop = False
         self._last = -1.0
 
@@ -70,7 +70,7 @@ class _Job(QObject):
         try:
             rep = make(self.image, self.out, route=self.route,
                        shapes=self.shapes, log=self.line.emit,
-                       progress=self._progress, keep_bg=self.keep_bg,
+                       progress=self._progress, cut_bg=self.cut_bg,
                        should_stop=lambda: self.stop)
         except Cancelled:
             self.failed.emit(tr("gui.cancelled"))
