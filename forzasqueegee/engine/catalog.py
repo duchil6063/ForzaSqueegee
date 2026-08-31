@@ -124,13 +124,30 @@ class Catalog:
                 best, best_iou = sh.name, iou
         return best
 
+    @property
+    def _solid(self) -> list[CatShape]:
+        """**꽉 차게 그려지는** 도형만 — 그라데이션 도형은 뺀다.
+
+        `square`·`circle`을 묻는 쪽은 전부 **단색 채움**을 원한다 (판·띠·키라인
+        원·모티프 폴백). 그라데이션 도형은 실루엣 안 픽셀마다 알파가 달라
+        (`CatShape.gradient`) 같은 자리에 놓아도 흐린 얼룩으로 그려진다.
+
+        거르지 않으면 그라데이션 표가 늘어날 때마다 **아무 말 없이** 다른 도형이
+        뽑힌다: 실측으로 `B_26`이 그랬다 — 원래 단색 도형이라 `circle`이 그것을
+        골랐는데, 그라데이션 표가 자리표시 이름(`G_DISC` 등)에서 실제 게임
+        id로 바뀌면서 같은 이름이 그라데이션 판으로 덮여, 키라인 원이 solid
+        디스크에서 알파 0짜리 방사 그라데이션이 됐다.
+        """
+        return [s for s in self.shapes.values() if s.gradient is None]
+
     @cached_property
     def square(self) -> str:
         """꽉 찬 정사각형 도형 이름 (얇은 직사각형/스트로크용으로도 사용)."""
         size = 128
         ideal = np.ones((size, size), bool)
-        cands = [s for s in self.shapes.values() if len(s.loops) == 1 and abs(s.area - 4.0) < 0.2]
-        return self._best_iou(ideal, cands) if cands else self._best_iou(ideal, list(self.shapes.values()))
+        solid = self._solid
+        cands = [s for s in solid if len(s.loops) == 1 and abs(s.area - 4.0) < 0.2]
+        return self._best_iou(ideal, cands or solid)
 
     @cached_property
     def circle(self) -> str:
@@ -139,12 +156,13 @@ class Catalog:
         yy, xx = np.mgrid[0:size, 0:size]
         c = (size - 1) / 2
         ideal = (xx - c) ** 2 + (yy - c) ** 2 <= c**2
+        solid = self._solid
         cands = [
             s
-            for s in self.shapes.values()
+            for s in solid
             if len(s.loops) == 1 and len(s.loops[0]) >= 12 and 2.8 < s.area < 3.5
         ]
-        return self._best_iou(ideal, cands) if cands else self._best_iou(ideal, list(self.shapes.values()))
+        return self._best_iou(ideal, cands or solid)
 
 
 def default_catalog_path() -> Path:
