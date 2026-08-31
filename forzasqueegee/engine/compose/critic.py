@@ -82,7 +82,13 @@ MACRO_SPAN = (0.45, 3.2)
 #
 # 구간의 위 끝은 옛 판의 실측(0.44)이 이미 과했다는 판정에서, 아래 끝은
 # 레퍼런스 밴드 크롭에서 인물을 뺀 어림(히나타 0.37)에서 왔다.
-PRESENCE = (0.14, 0.40)
+#
+# 위 끝은 한 번 늘렸다. (0.18, 0.40)·부드러움 0.16으로 두니 0.56에서 0으로
+# 떨어지는데, 큰 색면을 쓰는 계열은 여기 걸려 **한 판도 못 이겼다** (33판 중
+# graphic_bed 1 · diagonal_flow 0). 가중치 1.4짜리 항목이 0이 되는 것은 총점
+# 0.074고, 그것만으로 순위가 뒤집혔다. 막으려던 것은 "판을 통째로 덮은 것"
+# (옛 실측 0.7~0.8)이지 큰 색면 자체가 아니다.
+PRESENCE = (0.18, 0.46)
 
 
 # 여백 한 덩이의 목표 — 그릴 수 있는 면 대비 넓이와 **꼴**(상자 채움).
@@ -330,7 +336,7 @@ def presence(deco_alpha: np.ndarray, room: np.ndarray) -> tuple[float, dict]:
     if not room.any():
         return 0.5, {"p_ink": 0.0}
     v = float((deco_alpha[room] > 0.5).mean())
-    return _band(v, *PRESENCE, soft=0.16), {"p_ink": v}
+    return _band(v, *PRESENCE, soft=0.24), {"p_ink": v}
 
 
 def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,

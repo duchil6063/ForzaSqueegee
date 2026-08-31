@@ -41,7 +41,12 @@ from .roles import RolePalette
 
 
 WEIGHTS = {
-    "readability": 2.0, "face": 2.0, "balance": 1.8, "clutter": 1.0,
+    # `readability`는 **제약이지 목표가 아니다.** 가중치 2.0으로 두면 그 자를
+    # 최대로 만드는 길이 "판을 아예 안 깔고 인물을 맨 도색 위에 두는 것"이라
+    # 큰 색면을 쓰는 계열이 한 판도 못 이긴다 (33판 중 graphic_bed 1 ·
+    # diagonal_flow 0). 대신 탈락 문턱을 0.09 → 0.16으로 올려 **정말 안 읽히는
+    # 판**을 거르고, 그 위에서는 구도가 정하게 둔다.
+    "readability": 1.3, "face": 2.0, "balance": 1.8, "clutter": 1.0,
     "negative": 0.8, "flow": 1.0, "cohesion": 0.6, "integration": 1.4,
     "continuity": 0.5, "orphan": 0.6, "hierarchy": 1.4,
     # ---- 배율별 자 (`critic`) ----
@@ -55,6 +60,12 @@ WEIGHTS = {
     # 요소 사이 — 구성 그래프의 문법이 지켜졌나 (`graph.DEFAULT_GRAMMAR`)
     "relations": 1.6,
 }
+
+
+# 실루엣이 **읽히는** 최소 테두리 명도차 — 이 아래면 인물이 배경에 묻는다.
+# 0.09는 너무 낮아 아무 후보도 안 걸렸고(실측 33판 최저 0.31), 그래서 가독성이
+# 탈락 조건이 아니라 사실상 순위 자로만 돌았다.
+READ_FLOOR = 0.16
 
 
 # 로커 띠의 잉크 — 판이 이것과 같은 색이면 하부와 한 덩이가 된다 (`roof.ROOF_DARK`).
@@ -368,7 +379,7 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
     fails: list[str] = list(cr.fails)
     if info.get("face_cover", 0.0) > 0.06:
         fails.append("face")
-    if info.get("edge_dl", 1.0) < 0.09:
+    if info.get("edge_dl", 1.0) < READ_FLOOR:
         fails.append("readability")
     if cov > hi + 0.25:
         fails.append("clutter")

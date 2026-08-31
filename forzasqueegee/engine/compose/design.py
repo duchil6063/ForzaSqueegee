@@ -41,7 +41,8 @@ from .place import _refit_canvas
 from dataclasses import replace as _replace
 from .roles import RolePalette, role_palette
 from .scatter import (
-    DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, scatter_motifs)
+    DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, rhythm_motifs,
+    scatter_motifs)
 from .score import ScoreCard, _de, composite, raster_layers, score_design
 from .textbudget import TextPlan, plan_tiers
 from .textbuild import TextSet, build_text_sets
@@ -74,6 +75,18 @@ TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_keyline", "itasha_stripe")
 # 묻어 없는 것과 같다 — 흰 판 위 흰 물감(07번: 아홉 중 다섯) · 흰 띠 위 흰 별
 # (11번: 열여섯 중 넷)이 실측이다.
 MOTIF_DE_MIN = 18.0
+
+
+# 리듬의 최대형 조각이 **차체 밴드 높이**에서 차지할 수 있는 몫. 크기 자는
+# 인물이지만(`DECO_TIER_SIZE`) 그 자는 넓은 옆면에서 잰 것이라 좁은 밴드에
+# 그대로 쓰면 첫 조각이 밴드를 가로막는다 (`scatter.DECO_HERO_CAP`과 같은 사정).
+RHYTHM_HERO_CAP = 0.62
+
+
+# 리듬이 자리 검사를 이만큼도 못 통과하면 **옛 산포로 물러난다** — 곡선 하나는
+# 휠아치 구멍이나 좁은 필드에 걸리면 통째로 죽을 수 있고, 그때 무리가 아예
+# 없는 것보다는 뿌린 것이라도 있는 편이 낫다.
+RHYTHM_MIN_KEEP = 0.34
 
 
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
@@ -179,9 +192,10 @@ class Design:
 
 def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
              vocab: tuple[str, ...], halo: tuple[int, int, int] | None,
-             over: bool, phase: float, anchor_dx: float = 0.0
+             over: bool, phase: float, anchor_dx: float = 0.0,
+             angularity: float = 0.5
              ) -> tuple[list[Layer], list[tuple[float, float, float, int]]]:
-    """산포 — 자리는 필드가, 크기·층·간격은 `scatter_motifs`가 정한다."""
+    """무리 — 자리는 필드가, 크기·간격·꺾임은 리듬 곡선이 정한다 (`rhythm`)."""
     fx0, fy0, fx1, fy1 = fld.frame_box
     ch = fld.char_h
     cx, cy = (fx0 + fx1) / 2, (fy0 + fy1) / 2
@@ -225,12 +239,31 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     stats: list[tuple[float, float, float, int]] = []
     if n <= 0:
         return out, stats
-    for mo in scatter_motifs(center=(cx, cy), radii=(rx, ry), ref=ref, n=n,
+    # ---- 배경 무리는 **리듬**이 놓는다 (`rhythm`) ----
+    # 뭉치는 자리에서 흐름 쪽으로 곡선 하나를 걸으며 큰 것 → 잔것으로 잦아든다.
+    # 황금각 산포는 자리가 크기와 무관해 "뿌린 것"으로 읽혔다. 전경 벌은 몇 장이
+    # 인물을 스치는 것이 전부라 리듬이 없고, 옛 산포가 그 자를 그대로 쥔다.
+    mos: list = []
+    if not over:
+        fdir = fld.flow
+        # 갈 수 있는 거리 — 뭉치는 자리에서 흐름 쪽 프레임 변까지
+        reach = abs((fx1 if fdir[0] >= 0 else fx0) - ax) / max(0.35, abs(fdir[0]))
+        mos = rhythm_motifs(
+            origin=(ax, ay), direction=fdir, reach=max(1.0, reach), ref=ref, n=n,
+            vocab=vocab, cat=cat, colors=pal.motif_trio, avoid=fld.person_box,
+            place_ok=_ok, phase=phase, angularity=angularity,
+            strands=2 if n >= 12 else 1,
+            size_max=RHYTHM_HERO_CAP * (fy1 - fy0))
+    # 리듬이 자리 검사에 다 걸리는 판(휠아치 위에 핵이 앉은 옆면·좁은 필드)에서는
+    # 옛 산포로 물러난다 — 황금각은 결정적 폴백으로 남는다
+    if over or len(mos) < max(2, int(RHYTHM_MIN_KEEP * n)):
+        mos = scatter_motifs(center=(cx, cy), radii=(rx, ry), ref=ref, n=n,
                              vocab=vocab, cat=cat, colors=pal.motif_trio,
                              anchor_at=(ax, ay), avoid=fld.person_box, over=over,
                              place_ok=_ok, phase=phase,
                              gap=None if over else DECO_GAP_MAX,
-                             pool=max(n * 6, 160)):
+                             pool=max(n * 6, 160))
+    for mo in mos:
         if halo is not None and mo.tier <= 1 and not over:
             out.append(Layer(shape=mo.shape, x=mo.x, y=mo.y, sx=mo.half * HALO_GROW,
                              sy=mo.half * HALO_GROW, rot=mo.rot, color=halo,
@@ -391,14 +424,14 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         base = _base(fam, fld, pal, level, kinds, tw)
         fam_m = _replace(fam, tier_scale=fam.tier_scale * tw.motif_k)
         sc, stats = _scatter(fld, fam_m, pal, cat, vocab, halo, False, phase,
-                             anchor_dx=tw.anchor_dx)
+                             anchor_dx=tw.anchor_dx, angularity=it.angularity)
         tail: list[Layer] = list(sc)
         if fam.echo:
             tail += echo_layers(fld, it, pal, cat, n=max(3, fam.motif_n // 3),
                                 phase=phase)
         tail = _readable_motifs(tail, fld, pal, cat, base)
         front, _fs = _scatter(fld, fam_m, pal, cat, vocab, None, True, phase,
-                              anchor_dx=tw.anchor_dx)
+                              anchor_dx=tw.anchor_dx, angularity=it.angularity)
         return base, tail, front, stats
 
     def _card(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
@@ -465,7 +498,23 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                     if fam.bed == "none":
                         break
     seeds.sort(key=lambda s: s[0])
-    del seeds[BEAM_MACRO:]
+    # **계열마다 하나는 살려 보낸다.** 점수순으로만 자르면 자를 느슨하게 잡은
+    # 계열(minimal의 `clutter` 0.03~0.12)이 빔을 통째로 차지한다 — 실측 P4에서
+    # 33판 중 스물일곱이 minimal·motorsport였고 graphic_bed는 한 판도 못 이겼다.
+    # 큰 색면이 다른 구도는 조각까지 얹어 봐야 견줄 수 있으므로, 계열마다 가장
+    # 좋은 기하 하나를 먼저 넣고 남는 자리를 점수순으로 채운다.
+    keep: list = []
+    seen: set[str] = set()
+    for sd in seeds:
+        if sd[1].name not in seen:
+            seen.add(sd[1].name)
+            keep.append(sd)
+    for sd in seeds:
+        if len(keep) >= BEAM_MACRO:
+            break
+        if sd not in keep:
+            keep.append(sd)
+    seeds = keep[:max(BEAM_MACRO, len(seen))]
 
     # ---- 단계 B: 살아남은 기하에 팔레트·키라인·글자를 붙인다 -------------------
     cands: list[Design] = []

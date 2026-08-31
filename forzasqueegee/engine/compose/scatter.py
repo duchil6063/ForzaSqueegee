@@ -346,3 +346,54 @@ def deco_layers(lk: Look, colors: tuple[tuple[int, int, int], ...],
                          sy=mo.half, rot=mo.rot, color=mo.color,
                          alpha=mo.alpha, label="itasha_deco"))
     return out
+
+
+def rhythm_motifs(*, origin: tuple[float, float], direction: tuple[float, float],
+                  reach: float, ref: float, n: int, vocab: tuple[str, ...],
+                  cat: Catalog, colors: tuple[tuple[int, int, int], ...],
+                  avoid: tuple[float, float, float, float] | None = None,
+                  place_ok=None, phase: float = 0.0, angularity: float = 0.5,
+                  strands: int = 1, size_max: float | None = None) -> list[Motif]:
+    """**리듬 문법 한 벌** — 곡선 하나를 걸으며 조각을 놓는다 (`rhythm`).
+
+    산포(`scatter_motifs`)와 갈리는 자리는 하나다: 자리와 크기가 **같은 걸음**
+    에서 나온다. 첫 걸음이 가장 크고 멀어질수록 잦아들며, 간격은 벌어지고
+    곡선은 조금씩 꺾인다 — 조각이 어디서 나와 어디로 가는지가 그림에 남는다.
+
+    자리 검사에 걸린 걸음은 **건너뛰되 크기·간격은 그대로 나아간다** — 그래야
+    "멀수록 잔것"이라는 관계가 안 깨진다 (버리고 크기를 물려주면 무리 끝에
+    큰 조각이 홀로 선다 — 옛 산포가 겪던 바로 그 실패다).
+
+    되돌림이 비면 부르는 쪽이 옛 산포로 물러난다.
+    """
+    from .rhythm import curve_for, beats, tier_of
+
+    size0 = DECO_TIER_SIZE[0] * ref
+    if size_max is not None:
+        size0 = min(size0, size_max)
+    c = curve_for(origin=origin, direction=direction, reach=reach, n=n,
+                  size0=size0, angularity=angularity, phase=phase,
+                  strands=strands)
+    out: list[Motif] = []
+    put: list[tuple[float, float, float]] = []
+    for b in beats(c):
+        size = b.size
+        if size < 0.06 * size0:
+            continue                             # 티끌은 안 놓는다
+        sh = vocab[(b.i + b.strand) % len(vocab)]
+        half = shape_half(cat, sh, size)
+        r = MOTIF_INSCRIBE * size / 2
+        if avoid is not None and (b.x + r > avoid[0] and b.x - r < avoid[2]
+                                  and b.y + r > avoid[1] and b.y - r < avoid[3]):
+            continue                             # 인물을 피한다
+        if place_ok is not None and not place_ok(b.x, b.y, r):
+            continue
+        if any(math.hypot(b.x - px, b.y - py) < DECO_SEP * (size + ps) / 2
+               for px, py, ps in put):
+            continue
+        tier = tier_of(b.i, c.n)
+        out.append(Motif(x=b.x, y=b.y, size=size, half=half, shape=sh, rot=b.rot,
+                         tier=tier, color=colors[len(out) % len(colors)],
+                         alpha=74.0 if tier == 0 else (86.0 if tier == 1 else 100.0)))
+        put.append((b.x, b.y, size))
+    return out
