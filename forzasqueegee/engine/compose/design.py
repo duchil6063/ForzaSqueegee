@@ -29,7 +29,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..model import Layer, LayerPlan, rnd
 from .bands import _teeth, stripe_layers
-from .bed import bed_layers, keyline_layers
+from .bed import keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field

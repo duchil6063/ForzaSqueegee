@@ -100,7 +100,7 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     graph       구성 그래프 — 요소가 아니라 요소 **사이**를 적는다 (관계 문법).
     roles       역할 팔레트 — 베이스 · 베드 · 주/부 액센트 · 그림자 · 하이라이트 · 무채.
     field       구성 필드 — 배치 둘레의 보호 · 지지 · 장식 · 여백 구역과 흐름.
-    bed         캐릭터 베드 — 인물 뒤 큰 색면 (판 · 쐐기 · 슬래브 · 덩어리) + 키라인.
+    bed         인물을 따르는 축(`slab_axis`)과 실루엣 키라인.
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
     rhythm      리듬 곡선 — 조각이 원점에서 잦아들며 흘러 나오는 자리.
     macro       매크로 기하 — 인물 뒤 큰 색면의 어휘 (띠·겹·날·화살·가름·모서리…).
@@ -180,7 +180,7 @@ from .critic import Critique, critique, heatmaps
 from .graph import (
     CompositionGraph, DEFAULT_GRAMMAR, Node, RELATIONS, ROLES, Rel, derive,
     relation_score)
-from .bed import bed_layers, keyline_layers
+from .bed import keyline_layers, slab_axis
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
 from .rhythm import Beat, RhythmCurve, beats, curve_for
