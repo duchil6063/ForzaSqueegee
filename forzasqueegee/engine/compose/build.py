@@ -552,11 +552,30 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         _anchor_memo[name] = got
         return got
 
-    def _motifs(colors, sm, cat_, over: bool = False, **kw) -> list[dict]:
+    def _glass_anchor(sm: gsurf.SurfaceMap) -> DecoAnchor:
+        """도어 유리의 앵커 — **아래 이음새(벨트라인) 쪽, 흐름 끝**에 뭉친다.
+
+        투영 앵커는 인물 상자를 유리 안으로 물려 놓으므로 무리가 유리 **한가운데**
+        에 선다 — 큰 별 둘이 유리 복판에 뜬 꼴이고, 차체 그래픽과 아무 관계가
+        없다. 레퍼런스의 유리 그래픽은 예외 없이 차체에서 올라온다: ARIS의
+        픽셀은 벨트라인 바로 위에 붙고, RIN의 아네모네는 리어 쿼터에서 유리로
+        이어진다. 그래서 뭉치는 자리를 **아래 가장자리 · 옆면이 고른 흐름 쪽**에
+        둔다 (후보 구름은 여전히 유리 전체다).
+        """
+        u0, v0, u1, v1 = sm.paint
+        r = rigs.get("side_" + sm.name.split("_")[-1])
+        rd = r.rear_dir if r is not None else 1.0
+        fs = rd if flow_rear else -rd
+        w, h = u1 - u0, v1 - v0
+        return DecoAnchor(box=sm.paint, center=((u0 + u1) / 2, (v0 + v1) / 2),
+                          at=((u0 + u1) / 2 + fs * 0.30 * w, v0 + 0.30 * h),
+                          ref=0.62 * h, why=msg("옆면 무리가 유리로 이어진다"))
+
+    def _motifs(colors, sm, cat_, over: bool = False, anchor=None, **kw) -> list[dict]:
         """면에 직접 흩는 모티프 — 꾸밈을 끈 판에서는 빈손이다."""
         if not deco:
             return []
-        an = _anchor(sm)
+        an = anchor if anchor is not None else _anchor(sm)
         if over:
             if an is None:
                 return []                        # 얹을 도안이 없다
@@ -699,7 +718,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         wm = maps.get(wname)
         if wname in used or wm is None or wm.uncertain:
             continue
-        motifs = _motifs(motif_c, wm, cat, n=_n(3), shapes=motifs_v)
+        motifs = _motifs(motif_c, wm, cat, n=_n(5), shapes=motifs_v,
+                         anchor=_glass_anchor(wm))
         if motifs:
             items.append({"surface": wname, "shapes": motifs})
             used.add(wname)
