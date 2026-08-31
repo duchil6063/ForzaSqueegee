@@ -89,6 +89,15 @@ RHYTHM_HERO_CAP = 0.62
 RHYTHM_MIN_KEEP = 0.34
 
 
+# 리듬 방향에 몸짓을 섞는 몫 (그 몸짓의 세기에 비례). 1.0이면 몸짓만 따르는데,
+# 그러면 무리가 인물 위나 면 밖으로 나간다 — 흐름이 "갈 수 있는 자리"를 쥔다.
+GESTURE_MIX = 0.55
+
+
+# 이 세기 아래의 몸짓은 안 쓴다 — 실루엣의 잔 요철이다.
+GESTURE_MIN = 0.22
+
+
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
 FAMILY_TOP = 4
 
@@ -245,7 +254,22 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     # 인물을 스치는 것이 전부라 리듬이 없고, 옛 산포가 그 자를 그대로 쥔다.
     mos: list = []
     if not over:
+        # **방향은 몸짓에서 나온다.** 흐름만 따르면 무리가 늘 차 뒤로 곧게 가고,
+        # 그림이 무엇을 하고 있든 같은 그림이 된다. 뻗은 팔·머리카락 중 흐름
+        # 쪽을 향한 것을 골라 섞으면 무리가 그 팔에서 흘러나온 것으로 읽힌다
+        # (`intent._gestures` · 세기는 봉우리의 돌출이다).
         fdir = fld.flow
+        best = None
+        for gx_, gy_, gw_ in fld.gestures:
+            if gw_ < GESTURE_MIN or gx_ * fdir[0] + gy_ * fdir[1] <= 0.15:
+                continue                          # 흐름 반대거나 너무 약하다
+            if best is None or gw_ > best[2]:
+                best = (gx_, gy_, gw_)
+        if best is not None:
+            k = GESTURE_MIX * best[2]
+            fdir = (fdir[0] * (1 - k) + best[0] * k, fdir[1] * (1 - k) + best[1] * k)
+            nrm = math.hypot(*fdir) or 1.0
+            fdir = (fdir[0] / nrm, fdir[1] / nrm)
         # 갈 수 있는 거리 — 뭉치는 자리에서 흐름 쪽 프레임 변까지
         reach = abs((fx1 if fdir[0] >= 0 else fx0) - ax) / max(0.35, abs(fdir[0]))
         mos = rhythm_motifs(

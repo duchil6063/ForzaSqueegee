@@ -79,6 +79,16 @@ class DesignIntent:
     light_neutral_rgb: tuple[int, int, int] | None = None
     edge_rgb: tuple[int, int, int] = (128, 128, 128)   # 실루엣 테두리 평균색
     edge_lum: float = 0.5
+    # ---- 몸짓 (`_gestures`·`_open_side`·`_masses`) ----
+    # 뻗어 나간 방향들 (dx, dy, 세기) — **캔버스 유닛**, y-up. 돌출이 큰 것부터.
+    gestures: tuple[tuple[float, float, float], ...] = ()
+    # 열린 쪽 (+1 = 캔버스 +x, −1 = −x). 껍질에서 실루엣을 뺀 몫이 큰 쪽이다.
+    open_side: float = 0.0
+    # 어두운·밝은 덩어리 (cx, cy, 넓이 몫) — 캔버스 유닛. 없으면 None.
+    dark_mass: tuple[float, float, float] | None = None
+    light_mass: tuple[float, float, float] | None = None
+    # 시선이 나가는 방향 (dx, dy) — 얼굴 방향이 확실할 때만 (아니면 (0, 0)).
+    gaze: tuple[float, float] = (0.0, 0.0)
     # 실루엣 **속**의 평균 명도 — 테두리가 아니라 덩어리의 밝기다.
     #
     # 둘은 자주 반대다: 파스텔 인물은 속이 밝은데 윤곽선이 검어서 `edge_lum`이
@@ -396,6 +406,19 @@ def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
     # 점유 격자 (12×12) — 빈 자리 판정용
     occ = cv2.resize(alpha, (12, 12), interpolation=cv2.INTER_AREA)
 
+    # ---- 몸짓 — 뻗은 팔·머리카락·무기가 만드는 방향 ----
+    ges = tuple((float(dx), float(-dy), float(w))     # px y-down → 캔버스 y-up
+                for dx, dy, w in _gestures(alpha))
+    open_side = _open_side(alpha)
+    dm, lm = _masses(rgb, alpha)
+
+    def _mass_xy(m):
+        if m is None:
+            return None
+        return (origin[0] + m[0] * upp, origin[1] - m[1] * upp, m[2])
+    # 시선 — 얼굴을 믿을 때만. 세로 성분은 안 쓴다 (반측면의 상하는 못 믿는다).
+    gaze = (float(face_dir), 0.0) if (confident and abs(face_dir) > 0.15) else (0.0, 0.0)
+
     return DesignIntent(
         lk=lk, upp=upp, origin=origin, alpha=alpha, rgb=rgb, detail=detail,
         visual_center=vc, axis=axis, elongation=elong, head=head,
@@ -406,7 +429,9 @@ def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
         occupancy=occ,
         shadow_rgb=seeds["shadow"], highlight_rgb=seeds["highlight"],
         dark_neutral_rgb=seeds["dark"], light_neutral_rgb=seeds["light"],
-        edge_rgb=edge_rgb, edge_lum=edge_lum, body_lum=body_lum)
+        edge_rgb=edge_rgb, edge_lum=edge_lum, body_lum=body_lum,
+        gestures=ges, open_side=open_side, dark_mass=_mass_xy(dm),
+        light_mass=_mass_xy(lm), gaze=gaze)
 
 
 def empty_regions(it: DesignIntent, thr: float = 0.12
@@ -422,3 +447,137 @@ def empty_regions(it: DesignIntent, thr: float = 0.12
             if occ[r, c] < thr:
                 out.append((x0 + c * cw, y1 - (r + 1) * ch, x0 + (c + 1) * cw, y1 - r * ch))
     return out
+
+
+# ---- 도안 읽기 3단계 — **몸짓** ---------------------------------------------
+#
+# `axis`(PCA 장축)는 "그림이 어느 쪽으로 길쭉한가"일 뿐이라 사람이 느끼는
+# 방향과 자주 다르다: 두 팔을 벌린 그림도, 한쪽으로 머리카락이 흘러내리는
+# 그림도 PCA는 그냥 세로다. 사람이 리버리를 짤 때 장식을 거는 것은 그 **뻗은
+# 것들**이다 — 뻗은 팔, 흩날리는 머리카락, 든 무기, 펄럭이는 옷자락.
+#
+# 모델은 안 쓴다 (래스터·기하로 먼저 푼다). 실루엣 윤곽에서 무게중심까지의
+# 거리 함수를 놓고 그 **봉우리**를 찾으면 그것이 뻗은 끝이다.
+
+
+# 윤곽을 몇 점으로 다시 뜨나. 180이면 2°마다 한 점이라 손가락 하나는 못 잡고
+# 팔·머리카락 다발은 잡는다 (잡고 싶은 것이 후자다).
+GESTURE_SAMPLES = 180
+
+
+# 봉우리의 **돌출**이 최대 반지름의 이 몫은 넘어야 몸짓으로 센다. 이 아래는
+# 실루엣의 잔 요철이다.
+GESTURE_PROM = 0.11
+
+
+# 봉우리 양쪽으로 골을 찾는 창 (표본 수). 팔 하나가 차지하는 각폭쯤이다.
+GESTURE_WIN = 22
+
+
+# 몸짓 몇 개까지 쓰나 — 돌출이 큰 것부터. 셋이면 주·부·삼이고 그 뒤는 잔것이다.
+GESTURE_MAX = 3
+
+
+def _gestures(alpha: np.ndarray) -> tuple[tuple[float, float, float], ...]:
+    """실루엣에서 **뻗어 나간 방향**들 — (dx, dy, 세기), 픽셀 좌표 y-down.
+
+    무게중심에서 윤곽까지의 거리 함수의 봉우리가 뻗은 끝이다. 세기는 그
+    봉우리의 **돌출**(양쪽 골에서 얼마나 솟았나)을 최대 반지름으로 나눈 값이라,
+    둥근 덩어리(돌출 없음)는 0에 가깝고 길게 뻗은 팔은 1에 가깝다.
+    """
+    sil = (alpha > 0.5).astype(np.uint8)
+    if sil.sum() < 64:
+        return ()
+    cnts, _h = cv2.findContours(sil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return ()
+    c = max(cnts, key=cv2.contourArea).reshape(-1, 2).astype(np.float64)
+    if len(c) < GESTURE_SAMPLES // 2:
+        return ()
+    idx = np.linspace(0, len(c) - 1, GESTURE_SAMPLES, endpoint=False)
+    pts = c[idx.astype(int)]
+    cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+    r = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
+    rmax = float(r.max()) or 1.0
+    n = len(r)
+    cand: list[tuple[float, int]] = []
+    for i in range(n):
+        if not (r[i] >= r[i - 1] and r[i] >= r[(i + 1) % n]):
+            continue
+        lo = min(float(r[(i - k) % n]) for k in range(1, GESTURE_WIN + 1))
+        hi = min(float(r[(i + k) % n]) for k in range(1, GESTURE_WIN + 1))
+        prom = (float(r[i]) - max(lo, hi)) / rmax
+        if prom >= GESTURE_PROM:
+            cand.append((prom, i))
+    if not cand:
+        return ()
+    cand.sort(key=lambda t: (-t[0], t[1]))     # 같은 돌출이면 앞 표본 (결정성)
+    out: list[tuple[float, float, float]] = []
+    used: list[int] = []
+    for prom, i in cand:
+        if any(min(abs(i - j), n - abs(i - j)) < GESTURE_WIN for j in used):
+            continue                            # 같은 팔의 다른 봉우리
+        dx, dy = float(pts[i, 0] - cx), float(pts[i, 1] - cy)
+        d = math.hypot(dx, dy) or 1.0
+        out.append((dx / d, dy / d, min(1.0, prom / 0.45)))
+        used.append(i)
+        if len(out) >= GESTURE_MAX:
+            break
+    return tuple(out)
+
+
+def _open_side(alpha: np.ndarray) -> float:
+    """어느 쪽이 **열려 있나** — +1이면 오른쪽(px +x), −1이면 왼쪽, 0이면 반반.
+
+    볼록 껍질에서 실루엣을 뺀 몫이 큰 쪽이 열린 쪽이다 (팔을 벌린 안쪽 · 다리
+    사이 · 망토 아래). 사람이 장식을 거는 여백이 대개 그쪽이다.
+    """
+    sil = (alpha > 0.5).astype(np.uint8)
+    if sil.sum() < 64:
+        return 0.0
+    cnts, _h = cv2.findContours(sil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return 0.0
+    c = max(cnts, key=cv2.contourArea)
+    hull = np.zeros_like(sil)
+    cv2.fillPoly(hull, [cv2.convexHull(c).reshape(-1, 2)], 1)
+    gap = (hull > 0) & (sil == 0)
+    if not gap.any():
+        return 0.0
+    xs = np.where(sil.any(axis=0))[0]
+    mid = (float(xs.min()) + float(xs.max())) / 2
+    cols = np.arange(gap.shape[1])
+    left = float(gap[:, cols < mid].sum())
+    right = float(gap[:, cols >= mid].sum())
+    tot = left + right
+    return float((right - left) / tot) if tot > 1e-6 else 0.0
+
+
+def _masses(rgb: np.ndarray, alpha: np.ndarray
+            ) -> tuple[tuple[float, float, float] | None,
+                       tuple[float, float, float] | None]:
+    """실루엣 안의 **어두운 덩어리 · 밝은 덩어리** — (cx, cy, 넓이 몫), px.
+
+    사람이 구도를 볼 때 인물은 한 덩이가 아니다: 검은 머리·짙은 옷이 한쪽에
+    몰려 있으면 그쪽이 무겁다.
+    """
+    m = alpha > 0.5
+    if m.sum() < 64:
+        return None, None
+    g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    v = g[m]
+    lo, hi = float(np.percentile(v, 22)), float(np.percentile(v, 78))
+    out: list[tuple[float, float, float] | None] = []
+    for sel in ((g <= lo) & m, (g >= hi) & m):
+        s = sel.astype(np.uint8)
+        if s.sum() < 0.01 * m.sum():
+            out.append(None)
+            continue
+        n, lbl, st, cen = cv2.connectedComponentsWithStats(s, 8)
+        k = max(range(1, n), key=lambda i: st[i, cv2.CC_STAT_AREA], default=0)
+        if not k:
+            out.append(None)
+            continue
+        out.append((float(cen[k][0]), float(cen[k][1]),
+                    float(st[k, cv2.CC_STAT_AREA]) / float(m.sum())))
+    return out[0], out[1]
