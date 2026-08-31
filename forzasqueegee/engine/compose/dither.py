@@ -77,6 +77,7 @@ def fade_layers(fld: CompositionField, plate: Layer, cat: Catalog,
         t = (j + 0.5) / cols
         keep = 1.0 - t                            # 이 열의 채움 확률
         size = cell_x * (FADE_FILL[0] + (FADE_FILL[1] - FADE_FILL[0]) * t)
+        n_col = 0
         for i in range(rows):
             if _BAYER[i % 4][j % 4] / 16.0 >= keep:
                 continue
@@ -89,6 +90,12 @@ def fade_layers(fld: CompositionField, plate: Layer, cat: Catalog,
                              sx=size / 2 / UNITS_PER_SCALE,
                              sy=size / 2 / UNITS_PER_SCALE,
                              rot=plate.rot, color=col, label=LABEL))
+            n_col += 1
             if len(out) >= budget:
                 return out
+        # **끊기면 거기서 끝**이다 — 판 끝이 휠아치에 걸리면 아치 너머 도색면에
+        # 조각이 되살아나 판과 뚝 떨어진 체커 판이 뜬다 (giulia-07 실측: 앞펜더에
+        # 흰 격자 한 덩이). 페이드는 판에서 이어져야 페이드다.
+        if n_col == 0:
+            break
     return out
