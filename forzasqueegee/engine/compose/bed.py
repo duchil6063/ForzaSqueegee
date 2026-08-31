@@ -235,9 +235,12 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         cx0 = vcx + d[0] * c0
         cy0 = vcy + d[1] * c0
         back = half_len * (0.85 + 0.35 * level)
-        # 흐름 쪽으로는 **패널 끝까지** 나간다 — 판이 이음새 너머로 이어지는 띠로
-        # 읽힌다 (끝이 패널 안에서 멈추면 사진틀이다)
-        fwd = max(half_len * k, _flow_reach(fld, d, cx0, cy0) * 0.98)
+        # 판은 **인물 크기로** 뻗는다 — 패널 끝까지 늘이면 기운 판의 세로 뻗음
+        # (길이 x sin)이 밴드를 다 먹어 `_lift_above_rocker`가 높이를 깎는다.
+        # 788x45로 눌린 판은 인물을 못 받치고 지나가는 띠가 된다 (실측 B0/A2:
+        # 인물 뒤 받침 .50 → .68 · 판 45 → 84유닛 · 판-인물 거리 1.19 → 0.28
+        # 인물폭). 이음새 너머로 잇는 몫은 쐐기의 좁은 띠·로커·슬래브가 진다.
+        fwd = half_len * k
         w = back + fwd
         ang, d = _tilt_for(ang, w, band_h)
         cx = cx0 + fs * d[0] * (fwd - back) / 2
@@ -258,7 +261,7 @@ def bed_layers(fld: CompositionField, pal: RolePalette, cat: Catalog,
         # 넓은 판은 짧고 가파르게 (쐐기), 좁은 띠는 길고 얕게 (흐름) — 둘의
         # 기울기가 달라야 사선이 겹치며 흐름이 난다
         back = half_len * (0.8 + 0.3 * level)
-        fwd = max(half_len * k, _flow_reach(fld, d, cx0, cy0) * 0.55)
+        fwd = half_len * k
         w = back + fwd
         ang1, d1 = _tilt_for(ang, w, band_h)
         cx = cx0 + fs * d1[0] * (fwd - back) / 2
