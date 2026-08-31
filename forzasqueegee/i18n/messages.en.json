@@ -386,7 +386,6 @@
  "{surface}: 편집기에서 옮긴 자리를 받았다": "{surface}: picked up the position moved in the editor",
  "{surface}: 편집기에서 지운 도안을 조리법에서 뺐다 — {name}": "{surface}: a design deleted in the editor was dropped from the recipe — {name}",
  "{surface}에 올린 도안이 없다 — 리버리 전체로 돈다": "no plan on {surface} — running over the whole livery",
- "{surface}은 대칭할 수 있는 면이 아니다 — 옆면·도어 유리를 전부 대칭한다": "{surface} is not a mirrorable surface — mirroring all sides and door glass",
  "{what}: 어느 도안에 걸지 못 정했다 — 레이어 나무에서 그 도안 그룹(FS:decal-…)을 고르거나, 도안이 있는 면을 열고 누르세요": "{what}: could not decide which plan to target — select that plan's group (FS:decal-…) in the layer tree, or open a surface that has a plan and press again",
  "{where}: plan이 없다 (copy_from·text·shapes·groups도 없다)": "{where}: plan is missing (no copy_from, text, shapes, or groups either)",
  "{where}: surface가 없다": "{where}: surface is missing",
@@ -933,5 +932,9 @@
  "후드에 인물을 기울여 앉힌다 ({why})": "placing the figure tilted on the hood ({why})",
  "후보 건너뜀 {name}: {kind}: {error}": "skipping candidate {name}: {kind}: {error}",
  "휠아치가 마스크에 없다 — 로케이터 어림으로 자리를 뚫고 피한다 (범퍼 기반 배율 {k:g}유닛/m · 자리 오차 중앙 0.11 m)": "no wheel arches in the mask — punching and dodging them by locator estimate (bumper-based scale {k:g} units/m · median position error 0.11 m)",
-  "레이어 상한이 범위 밖: {shapes} (1~{cap})": "layer cap out of range: {shapes} (1~{cap})"
+ "레이어 상한이 범위 밖: {shapes} (1~{cap})": "layer cap out of range: {shapes} (1~{cap})",
+ "고른 그룹은 옆면·도어 유리의 도안이 아니다 — 좌우 대칭은 그 면에서만 선다": "the selected group is not a side or door-glass plan — mirroring works only there",
+ "양쪽에 다 도안이 있어 어느 쪽이 원본인지 못 정했다 ({sides}) — 원본 쪽 구획을 열고 누르거나, 레이어 나무에서 그 도안 그룹(FS:decal-…)을 고르세요": "both sides carry a plan, so the source is ambiguous ({sides}) — open the source section and try again, or select that plan's group (FS:decal-…) in the layer tree",
+ "{surface}에서는 원본을 못 정한다 — 도안이 있는 쪽({sides})을 반대편에 세운다": "{surface} cannot be the source — mirroring the side that has a plan ({sides}) onto its counterpart",
+ "이 면": "this section"
 }

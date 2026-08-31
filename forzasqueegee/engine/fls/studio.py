@@ -593,32 +593,64 @@ def act_motif(st: Studio, family: str | None) -> str:
     return msg("모티프 계열 {family}", family=family or msg("자동"))
 
 
+MIRROR_PAIRS = {"side_left": "side_right", "side_right": "side_left",
+                "window_left": "window_right", "window_right": "window_left"}
+
+
+def _mirror_sources(st: Studio, surface: str | None, groups: list | None) -> list[dict]:
+    """좌우 대칭의 **원본** 도안 — 고른 그룹 > 보고 있는 면 > 도안이 있는 쪽.
+
+    **한 방향만 간다.** 한 쌍의 양쪽이 다 후보에 들면 보고 있는 면이 가르고, 그래도
+    못 가르면 멈춘다 — 양방향으로 돌면 방금 고친 쪽이 옛 반대편의 거울로
+    되돌아간다. 편집기가 넘기는 그룹 이름(`decal-1`)은 좌우가 같은 이름이라
+    그룹만으로는 한쪽을 못 고른다."""
+    pairs = MIRROR_PAIRS
+    if not st.designs:
+        raise ValueError(msg("올린 도안이 없다 — [Load Design into Section]으로 넣으세요"))
+    picked = designs_of_groups(st, groups or [])
+    cands = [d for d in picked if d["surface"] in pairs]
+    if picked and not cands:
+        raise ValueError(msg("고른 그룹은 옆면·도어 유리의 도안이 아니다 — "
+                             "좌우 대칭은 그 면에서만 선다"))
+    if not cands and surface in pairs:
+        cands = [d for d in st.designs if d["surface"] == surface]
+    if not cands:
+        # 보고 있는 면이 원본이 못 된다 (옆면이 아니거나 비어 있다) — 편집기는 늘
+        # 지금 열린 구획을 넘기는데 창이 막 떴을 때 그것은 대개 Front다.
+        cands = [d for d in st.designs if d["surface"] in pairs]
+        if not cands:
+            raise ValueError(msg("좌우 대칭은 옆면·도어 유리에서만 선다 — "
+                                 "그 면에 올린 도안이 없다"))
+    have = {d["surface"] for d in cands}
+    both = sorted(s for s in have if pairs[s] in have)
+    if both:
+        if surface not in both:
+            raise ValueError(
+                msg("양쪽에 다 도안이 있어 어느 쪽이 원본인지 못 정했다 ({sides}) — "
+                    "원본 쪽 구획을 열고 누르거나, 레이어 나무에서 그 도안 "
+                    "그룹(FS:decal-…)을 고르세요", sides=" · ".join(both))
+                + (msg(" (지금 면: {surface})", surface=surface) if surface else ""))
+        cands = [d for d in cands if d["surface"] not in both or d["surface"] == surface]
+    srcs_of = sorted({d["surface"] for d in cands})
+    if surface not in srcs_of:
+        st.notes.append(msg("{surface}에서는 원본을 못 정한다 — 도안이 있는 쪽({sides})을 "
+                            "반대편에 세운다", surface=surface or msg("이 면"),
+                            sides=" · ".join(srcs_of)))
+    return cands
+
+
 def act_mirror(st: Studio, surface: str | None,
                groups: list | None = None) -> str:
-    """좌우 대칭 — 옆면·도어 유리의 도안을 반대편에 거울로 세운다.
+    """좌우 대칭 — 옆면·도어 유리의 도안을 반대편에 거울로 세운다 (`_mirror_sources`).
 
-    같은 면에 이미 도안이 있으면 **그것을 갈아 끼운다** (두 벌이 되지 않는다)."""
+    반대편에 같은 도안이 이미 있으면 **그것을 갈아 끼운다** (두 벌이 되지 않는다)."""
     from .. import compose
 
-    pairs = {"side_left": "side_right", "side_right": "side_left",
-             "window_left": "window_right", "window_right": "window_left"}
+    srcs = _mirror_sources(st, surface, groups)
     maps = _maps(st)
-    # **보고 있는 면이 대칭할 수 있는 면이 아니면 전부 한다.** 편집기는 늘 지금
-    # 열린 구획을 같이 넘기는데, 창이 막 떴을 때 그것은 대개 Front다 — 거기서
-    # 멈추면 메뉴가 "옆면에서만 된다"는 말만 하고 아무 일도 안 한다.
-    if surface is not None and surface not in pairs:
-        st.notes.append(msg("{surface}은 대칭할 수 있는 면이 아니다 — 옆면·도어 "
-                            "유리를 전부 대칭한다", surface=surface))
-        surface = None
-    srcs = [d for d in st.designs
-            if d["surface"] in pairs
-            and (surface is None or d["surface"] == surface)]
-    if not srcs:
-        raise ValueError(msg("좌우 대칭은 옆면·도어 유리에서만 선다 — "
-                             "그 면에 올린 도안이 없다"))
     done: list[str] = []
     for d in list(srcs):
-        dst = pairs[d["surface"]]
+        dst = MIRROR_PAIRS[d["surface"]]
         sm, dm = maps.get(d["surface"]), maps.get(dst)
         if sm is None or dm is None:
             st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다",
