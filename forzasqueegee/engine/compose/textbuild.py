@@ -32,10 +32,52 @@ class TextSet:
     tier_main: str
     tier_sub: str
     style: str
+    # 포즈마다의 **원형 블록** (원점 중심 · 기준 높이). 자리·각·크기만 바꿔
+    # 다시 앉힐 때 글리프를 새로 안 지어도 되게 쥐고 있다 (`reposed`).
+    protos: list = None
 
     @property
     def n(self) -> int:
         return len(self.layers)
+
+
+# 원형 블록을 짓는 **기준 대문자 높이** (프레임 유닛). 실제 높이는 여기에
+# 비례해 늘린다 — 글리프는 도형을 스케일한 것뿐이라 그 환산이 정확하다.
+PROTO_H = 100.0
+
+
+def _scaled(layers: list[Layer], k: float) -> list[Layer]:
+    """블록을 `k`배로 (원점 중심 — 자리·크기가 다 비례한다)."""
+    if abs(k - 1.0) < 1e-9:
+        return list(layers)
+    return [Layer(shape=l.shape, x=l.x * k, y=l.y * k, sx=l.sx * k, sy=l.sy * k,
+                  rot=l.rot, skew=l.skew, color=l.color, alpha=l.alpha,
+                  label=l.label, mask=l.mask) for l in layers]
+
+
+def reposed(ts: "TextSet", *, dx: float = 0.0, dy: float = 0.0,
+            k: float = 1.0) -> "TextSet":
+    """글자 몫을 **다시 앉힌다** — 자리 `(dx, dy)` · 크기 `k`배.
+
+    글리프를 새로 짓지 않는다: 원형 블록(`protos`)을 크기만 늘려 포즈로 돌린다.
+    그래서 좌표하강이 글자 판도 다듬을 수 있다 — 옛 판은 손잡이마다 글자 수백
+    장을 다시 지어야 해서 **글자가 있는 후보를 아예 안 다듬었다**.
+
+    층 문턱(`tier_for_size`)을 넘는 크기 변화는 여기서 안 다룬다: 원형이 그
+    층으로 지어졌으므로 부르는 쪽이 `k`를 문턱 안에 둔다 (`REFINE_CLAMP`).
+    """
+    if not ts.protos:
+        return ts
+    poses: list[TextPose] = []
+    layers: list[Layer] = []
+    for p, proto in zip(ts.poses, ts.protos):
+        q = TextPose(role=p.role, text=p.text, x=p.x + dx, y=p.y + dy, rot=p.rot,
+                     height=p.height * k, aspect=p.aspect, hratio=p.hratio,
+                     on_bed=p.on_bed)
+        poses.append(q)
+        layers += _posed(_scaled(proto, q.height / PROTO_H), q)
+    return TextSet(poses=poses, layers=layers, tier_main=ts.tier_main,
+                   tier_sub=ts.tier_sub, style=ts.style, protos=ts.protos)
 
 
 def _posed(layers: list[Layer], p: TextPose) -> list[Layer]:
@@ -177,9 +219,17 @@ def ix_for_size(ix: int, height: float) -> int:
     return ix
 
 
-def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
-                plan: TextPlan) -> list[Layer]:
-    """포즈 하나 → 레이어. 색·벌은 층과 `on_bed`가 정한다."""
+def pose_proto(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
+               plan: TextPlan) -> list[Layer]:
+    """포즈 하나의 **원형 블록** — 원점 중심 · 기준 높이 `PROTO_H` (캐시된다).
+
+    같은 (글자·스타일·층·색·벌)이면 한 번만 짓는다. 후보 루프는 팔레트 변종과
+    배치 후보를 돌며 같은 이름을 수십 번 조판하므로 이 캐시가 곧 속도이고,
+    캐시가 있어야 좌표하강이 글자를 흔들 수 있다 (`reposed`).
+
+    캐시는 **카탈로그에 붙여** 둔다 — 한 판에 카탈로그가 하나라 수명이 맞고,
+    모듈 전역에 두면 카탈로그를 갈아 끼운 도구에서 남의 글리프가 나온다.
+    """
     is_sub = p.role == "sub"
     tier = tier_for_size(plan.tier_sub if is_sub else plan.tier_main, p.height)
     if tier == "E":
@@ -187,24 +237,42 @@ def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
     fill, edge, shadow = text_colors(pal, p.on_bed, sub=is_sub)
     outline = edge if plan.outline else None
     shad = shadow if (plan.shadow and not is_sub) else None
-    if tier == "D":
-        return _posed(font_block(p.text, plan.font, p.height, cat, fill=fill, outline=outline,
-                                 shadow=shad, label="text_sub" if is_sub else "text"), p)
     ix = ix_for_size(plan.ix_sub if is_sub else plan.ix_main, p.height)
-    blk = tg.build_text(p.text, style, p.height, cat, tier=tier, ix=ix, fill=fill,
-                        outline=outline, shadow=shad,
-                        label="text_sub" if is_sub else "text")
-    return _posed(blk.layers, p)
+    label = "text_sub" if is_sub else "text"
+    key = (p.text, style, tier, ix, plan.font, fill, outline, shad, label)
+    cache = cat.__dict__.setdefault("_text_proto", {})
+    got = cache.get(key)
+    if got is None:
+        if tier == "D":
+            got = font_block(p.text, plan.font, PROTO_H, cat, fill=fill,
+                             outline=outline, shadow=shad, label=label)
+        else:
+            got = tg.build_text(p.text, style, PROTO_H, cat, tier=tier, ix=ix,
+                                fill=fill, outline=outline, shadow=shad,
+                                label=label).layers
+        cache[key] = got
+    return got
+
+
+def pose_layers(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
+                plan: TextPlan) -> list[Layer]:
+    """포즈 하나 → 레이어. 색·벌은 층과 `on_bed`가 정한다."""
+    proto = pose_proto(p, pal, cat, style=style, plan=plan)
+    return _posed(_scaled(proto, p.height / PROTO_H), p) if proto else []
 
 
 def mirrored_set(ts: TextSet, pal: RolePalette, cat: Catalog, plan: TextPlan) -> TextSet:
     """반대편 옆면의 글자 몫 — 자리는 거울, 글자는 바로 읽힌다."""
     poses = [p.mirrored() for p in ts.poses]
     layers: list[Layer] = []
+    protos: list[list[Layer]] = []
     for p in poses:
-        layers += pose_layers(p, pal, cat, style=ts.style, plan=plan)
-    return TextSet(poses=poses, layers=layers, tier_main=ts.tier_main,
-                   tier_sub=ts.tier_sub, style=ts.style)
+        proto = pose_proto(p, pal, cat, style=ts.style, plan=plan)
+        protos.append(proto)
+        if proto:
+            layers += _posed(_scaled(proto, p.height / PROTO_H), p)
+    return TextSet(poses=poses, layers=layers, protos=protos,
+                   tier_main=ts.tier_main, tier_sub=ts.tier_sub, style=ts.style)
 
 
 def text_box(text: str, style: str, plan: TextPlan, cat: Catalog, sub: bool = False
@@ -233,17 +301,20 @@ def build_text_sets(fld: CompositionField, pal: RolePalette, cat: Catalog, *,
                              rocker, roles)
     for poses in cands:
         layers: list[Layer] = []
+        protos: list[list[Layer]] = []
+        keep: list[TextPose] = []
         used_sub = False
         for p in poses:
             p.on_bed = _on_bed(fld, bed_alpha, p)
-            ls = pose_layers(p, pal, cat, style=style, plan=plan)
-            if not ls:
+            proto = pose_proto(p, pal, cat, style=style, plan=plan)
+            if not proto:
                 continue
-            layers += ls
+            layers += _posed(_scaled(proto, p.height / PROTO_H), p)
+            protos.append(proto)
+            keep.append(p)
             used_sub = used_sub or p.role == "sub"
         if layers:
-            sets.append(TextSet(poses=[p for p in poses if (p.role != "sub" or used_sub)],
-                                layers=layers,
+            sets.append(TextSet(poses=keep, layers=layers, protos=protos,
                                 tier_main=tier_for_size(plan.tier_main, poses[0].height),
                                 tier_sub=(tier_for_size(plan.tier_sub, poses[-1].height)
                                           if used_sub else "E"),

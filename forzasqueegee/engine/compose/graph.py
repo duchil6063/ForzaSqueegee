@@ -84,11 +84,17 @@ FRAME_RATIO = (1.3, 4.5)
 # `deliberate`(나란하거나 확실히 가로지르거나)는 여기 없다 — 짝의 각을
 # `macro.counter_angle`이 늘 40° 밖으로 두므로 33판 전부 1.000이었다. 관계는
 # 남겨 두되(계열이 쓸 수 있다) 공통 문법에서는 뺀다.
+# 글자가 있는 판에만 걸리는 둘 — 없는 노드를 가리키는 관계는 안 세므로
+# (`relation_score`) 글자 없는 판은 옛 판과 같은 자로 재진다.
+#   balances(text, motif)   글자와 무리가 주역을 사이에 두고 맞선다
+#   parallel_to(text, m0)   워드마크가 큰 색면과 나란히 달린다 (레이싱 문법)
 DEFAULT_GRAMMAR = (
     ("balances", "motif", "neg", 1.0),
     ("frames", "macro0", "hero", 1.0),
     ("overlaps", "macro1", "macro0", 0.9),
     ("echoes", "echo", "motif", 0.6),
+    ("balances", "text", "motif", 0.7),
+    ("parallel_to", "text", "macro0", 0.5),
 )
 
 

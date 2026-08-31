@@ -45,7 +45,7 @@ from .scatter import (
     scatter_motifs)
 from .score import ScoreCard, _de, composite, raster_layers, score_design
 from .textbudget import TextPlan, plan_tiers
-from .textbuild import TextSet, build_text_sets
+from .textbuild import TextSet, build_text_sets, reposed
 from .textscore import TEXT_WEIGHTS, text_parts
 from .textspec import TextSpec
 from .textstyle import choose_style
@@ -121,6 +121,11 @@ class Tweak:
     bed_w: float = 0.0
     anchor_dx: float = 0.0
     motif_k: float = 1.0
+    # 글자 손잡이 — 자리(인물 폭·높이 몫)와 크기(배수). 원형 블록을 다시 앉히는
+    # 것뿐이라 (`textbuild.reposed`) 글리프를 새로 안 짓는다.
+    text_dx: float = 0.0
+    text_dy: float = 0.0
+    text_k: float = 1.0
 
 
 # 좌표하강이 도는 축과 걸음 (순서가 곧 결정성이다 — 같은 점수면 원래 값이 이긴다).
@@ -131,14 +136,22 @@ REFINE_STEPS: tuple[tuple[str, tuple[float, ...]], ...] = (
     ("bed_w", (-0.22, -0.11, 0.11, 0.22)),
     ("anchor_dx", (-0.24, -0.12, 0.12, 0.24)),
     ("motif_k", (-0.16, -0.08, 0.08, 0.16)),
+    ("text_dx", (-0.22, -0.11, 0.11, 0.22)),
+    ("text_dy", (-0.14, -0.07, 0.07, 0.14)),
+    ("text_k", (-0.10, -0.05, 0.05, 0.10)),
 )
 
 
 # 배수 손잡이의 상·하한 (여러 패스가 같은 쪽으로 걸어도 판이 뒤집히지 않게).
+# `text_k`의 폭이 좁은 이유: 크기가 층 문턱(`textbuild.tier_for_size`)을 넘으면
+# 원형이 다른 층으로 지어져야 해서 다시 앉히기로는 못 따라간다. ±20%면 문턱
+# (46·28유닛) 안에 머문다.
 REFINE_CLAMP = {"motif_k": (0.70, 1.30),
                 "bed_rot": (-12.0, 12.0), "bed_dy": (-0.20, 0.20),
                 "bed_w": (-0.44, 0.44),
-                "anchor_dx": (-0.48, 0.48)}
+                "anchor_dx": (-0.48, 0.48),
+                "text_dx": (-0.44, 0.44), "text_dy": (-0.28, 0.28),
+                "text_k": (0.80, 1.20)}
 
 
 # 다듬을 상위 후보 수 · 좌표하강 패스 수.
@@ -464,6 +477,11 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
               kinds: tuple[str, str] = ("ribbon", "ribbon")) -> Design:
         """부품 한 벌 → 재고 담은 후보. 후보 루프와 미세 조정이 같은 자를 쓴다."""
         back = list(base)
+        # 글자는 **손잡이대로 다시 앉힌다** — 원형 블록이 있어 값싸다
+        if ts is not None and (tw.text_dx or tw.text_dy or tw.text_k != 1.0):
+            ts = reposed(ts, dx=tw.text_dx * fld.char_w,
+                         dy=tw.text_dy * fld.char_h, k=tw.text_k)
+            text_ras = raster_layers(ts.layers, fld, cat)
         tl = ts.layers if ts is not None else []
         n_text = ts.n if ts is not None else 0
         if keyline:
@@ -604,6 +622,8 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         — 난수도 전수 조합도 없다 (`REFINE_STEPS`).
         """
         keyl = keyline_layers(d.fld, _keyline_color(d.pal), cat)
+        d_behind = composite(d.fld, d.pal, cat, d.back, [])["behind"] \
+            if d.text is not None else None
         best_d, tw = d, d.tweak
         for _p in range(REFINE_PASSES):
             moved = False
@@ -617,9 +637,12 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                     cand_tw = _replace(tw, **{name: v})
                     b2, t2, f2, s2 = _parts(d.family, d.fld, d.pal, d.level,
                                             d.macro, cand_tw)
+                    ts2 = d.text
+                    tr2 = raster_layers(ts2.layers, d.fld, cat) if ts2 else None
                     cd = _card(d.family, d.fld, d.pal, d.level, b2, t2, f2,
                                raster_layers(f2, d.fld, cat), keyl, d.keyline,
-                               None, s2, None, None, None, None, cand_tw, d.macro)
+                               ts2, s2, tr2, d_behind, d.text_plan, d.text_style,
+                               cand_tw, d.macro)
                     if _rank(cd) < _rank(best_d):
                         best_d, tw, moved = cd, cand_tw, True
             if not moved:
@@ -627,12 +650,13 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         return best_d
 
     cands.sort(key=_rank)
-    # 글자가 있는 판은 안 다듬는다 — 글자 벌은 판 알파에서 나오므로 손잡이마다
-    # 글자를 다시 지어야 하고, 그러면 후보 하나가 수백 ms가 된다.
-    if not text_on:
-        for i in range(min(REFINE_TOP, len(cands))):
-            cands[i] = _refine(cands[i])
-        cands.sort(key=_rank)
+    # 글자가 있는 판도 다듬는다 — 원형 블록 캐시(`textbuild.pose_proto`) 덕에
+    # 손잡이 한 걸음이 글리프 재조판이 아니라 좌표 옮기기다. 옛 판은 손잡이마다
+    # 글자 수백 장을 다시 지어야 해서 글자 있는 후보를 통째로 건너뛰었고,
+    # 그래서 글자만 다듬어지지 않은 채 남았다.
+    for i in range(min(REFINE_TOP, len(cands))):
+        cands[i] = _refine(cands[i])
+    cands.sort(key=_rank)
     best = cands[0]
     best.ranking = [(f"{'!' * len(d.score.fails)}{d.family.name}/{d.pal.variant}"
                      f"/{'rear' if d.flow_rear else 'front'}"
