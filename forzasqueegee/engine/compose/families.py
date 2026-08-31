@@ -33,6 +33,11 @@ class Family:
     other_density: float        # 다른 면 모티프 수 배율
     torn: bool = False          # 베드 흐름 끝을 뜯는다 (스플래시)
     text_budget: float = 1.0    # 글자 장수 예산 배율 (여백 계열은 글자도 절제한다)
+    # **매크로 어휘 짝** — (주 색면, 가로지르는 짝). 계열마다 둘 안팎을 후보로
+    # 돌린다 (`macro.KINDS`). 이것이 계열을 "완성된 도형 묶음"에서 **문법 프리셋**
+    # 으로 낮추는 자리다: 계열은 어느 어휘로 시작할지만 말하고, 실제 매개변수는
+    # 인물이 정하고(`macro.plan`) 어느 짝이 이기는지는 점수가 정한다.
+    macro: tuple[tuple[str, str], ...] = (("ribbon", "ribbon"),)
     # 계열이 **덧붙이는** 관계 문법 (`graph`) — 공통 문법 위에 더한다.
     # (관계, 노드 a, 노드 b, 가중치). 없는 노드를 가리키면 안 센다.
     grammar: tuple[tuple[str, str, str, float], ...] = ()
@@ -48,6 +53,7 @@ FAMILIES: dict[str, Family] = {
                       tier_scale=0.75, rocker=False, top_stripe=False, front_n=1,
                       empty_target=0.92, clutter=(0.03, 0.12), echo=False,
                       flows=("auto",), other_density=0.45, text_budget=0.5,
+                      macro=(("ribbon", "none"), ("ribbon", "ribbon")),
                       # 덧붙일 것이 없다 — 공통 문법(품되 삼키지 않는 판 · 무리와
                       # 여백의 맞섬)이 그대로 이 계열의 이치다
                       ),
@@ -56,6 +62,7 @@ FAMILIES: dict[str, Family] = {
                           tier_scale=0.95, rocker=True, top_stripe=False, front_n=2,
                           empty_target=0.75, clutter=(0.10, 0.28), echo=True,
                           flows=("auto", "rear", "front"), other_density=0.8,
+                          macro=(("split", "ribbon"), ("split", "none"), ("ribbon", "blade")),
                           # 무리는 판 **가장자리**에 선다 — 판 위에 얹으면 판이
                           # 얼룩이 되고 무리도 안 읽힌다
                           grammar=(("avoids", "motif", "macro0", 0.8),)),
@@ -64,6 +71,7 @@ FAMILIES: dict[str, Family] = {
                             tier_scale=0.9, rocker=True, top_stripe=True, front_n=3,
                             empty_target=0.65, clutter=(0.12, 0.32), echo=True,
                             flows=("auto", "rear"), other_density=1.0,
+                            macro=(("blade", "chevron"), ("split", "stack"), ("blade", "none")),
                             # 사선 둘이 서로를 **가로질러야** 흐름이 난다
                             grammar=(("counter_to", "macro1", "macro0", 1.0),)),
     # 모터스포츠 — 로커·스트라이프 등 직선 요소, 베드는 낮은 슬래브, 모티프는 적게
@@ -71,6 +79,7 @@ FAMILIES: dict[str, Family] = {
                          tier_scale=0.8, rocker=True, top_stripe=True, front_n=1,
                          empty_target=0.80, clutter=(0.08, 0.24), echo=True,
                          flows=("rear", "front"), other_density=0.6, text_budget=0.8,
+                         macro=(("stack", "corner"), ("stack", "none"), ("ribbon", "stack")),
                          # 로커가 띠를 이어 받는다 (레이싱 그래픽의 직선 계열)
                          grammar=(("continues", "rocker", "macro0", 0.6),)),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
@@ -78,6 +87,7 @@ FAMILIES: dict[str, Family] = {
                      tier_scale=1.05, rocker=True, top_stripe=False, front_n=4,
                      empty_target=0.5, clutter=(0.18, 0.45), echo=True,
                      flows=("auto",), other_density=1.25, torn=True,
+                     macro=(("burst", "ribbon"), ("sweep", "blade"), ("burst", "none")),
                      # 전경 조각이 인물을 스치고 지난다 (장면 안의 인물)
                      grammar=(("overlaps", "front", "hero", 0.6),)),
 }

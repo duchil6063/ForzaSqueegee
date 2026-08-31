@@ -51,7 +51,7 @@ WEIGHTS = {
     # 물어 그 구멍을 메운다. 가중치가 큰 둘(`focal`·`macro`)이 "멀리서 인물이
     # 먼저 읽히나"와 "큰 덩어리가 무게를 나눠 쥐나"다 — 자동 생성 티의 두 뿌리다.
     "focal": 2.0, "macro": 2.2, "rhythm": 1.2, "negative_shape": 1.0,
-    "gesture": 0.8,
+    "gesture": 0.8, "presence": 1.4,
     # 요소 사이 — 구성 그래프의 문법이 지켜졌나 (`graph.DEFAULT_GRAMMAR`)
     "relations": 1.6,
 }

@@ -46,6 +46,9 @@ class Recipe:
     config: dict
     written: list[Path] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # 이긴 옆면 설계 — 계측·디버그 도구가 필드·레이어·점수를 그대로 본다
+    # (`work/lab/deco/heat.py`). 구성 파일에는 요약만 실린다.
+    design: "Design | None" = None
 
 
 def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
@@ -775,6 +778,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             "family": design.family.name, "variant": design.pal.variant,
             "flow": "rear" if design.flow_rear else "front",
             "bed_level": round(design.level, 2),
+            # 이긴 매크로 어휘 짝과 좌표하강 손잡이 — "왜 이 꼴인가"의 첫 줄이다
+            "macro": list(design.macro),
+            "tweak": {k: round(v, 3) for k, v in vars(design.tweak).items()},
             "score": round(design.score.total, 4),
             "parts": {k: round(v, 3) for k, v in design.score.parts.items()},
             # 항목이 왜 그 값인지 되짚는 원자료 (테두리 명도차·묻은 몫·커버리지…)
@@ -806,7 +812,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     written.append(cfg_path)
     for n in notes:
         log(f"  · {n}")
-    return Recipe(config=cfg, written=written, notes=notes)
+    return Recipe(config=cfg, written=written, notes=notes, design=design)
 
 
 # 후드 인물의 대각 기울기 (도) — HINATA 레퍼런스의 후드 인물은 차축 대비

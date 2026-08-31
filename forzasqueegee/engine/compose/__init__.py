@@ -140,14 +140,18 @@ from .surfshapes import (
 from .intent import DesignIntent, read_intent
 from .roles import RolePalette, role_palette
 from .field import CompositionField, build_field
-from .critic import Critique, critique
+from . import critic
+from .critic import Critique, critique, heatmaps
 from .graph import (
     CompositionGraph, DEFAULT_GRAMMAR, Node, RELATIONS, ROLES, Rel, derive,
     relation_score)
 from .bed import bed_layers, keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
-from .score import ScoreCard, score_design
+from .macro import (
+    KINDS as MACRO_KINDS, MACRO_AREA_MAX, MacroSpec, macro_layers,
+    plan as macro_plan)
+from .score import ScoreCard, composite, raster_layers, score_design
 from .design import DECO_FRAME_FILL, Design, compose_design
 from .textspec import PLACEMENTS as TEXT_PLACEMENTS, STYLES as TEXT_STYLES, TextSpec
 from .textbudget import TextPlan, plan_tiers

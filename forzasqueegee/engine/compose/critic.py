@@ -57,9 +57,14 @@ BLOB_MIN = 0.0016
 # 둘, 도안 33판 실측의 **반대쪽**: 지금은 hero 0.78 · h2 0.19 · 덩어리 3이다.
 # 구간은 그 사이를 넉넉히 잡았다 — 자가 목표를 못 박으면 후보가 그 값 하나로
 # 몰려 다시 한 가지 그림이 된다.
-MACRO_W1 = (0.30, 0.62)          # 가장 무거운 덩어리가 쥐는 몫
-MACRO_W2 = (0.30, 0.90)          # 둘째 / 첫째
-MACRO_N = (2, 5)                 # 큰 덩어리 수 (잔티끌 뺀)
+# 구간은 실측으로 두 번 조였다. 첫 판 (0.30, 0.62)/(0.30, 0.90)/(2, 5)는 매크로
+# 어휘를 갈아 넣고 나니 33판 중 열일곱이 0.987 위로 몰려 자가 아니었고, 그것을
+# (0.28, 0.52)로 좁혔더니 이번엔 주 색면이 너무 잘게 갈려 덩어리 무게가 0.42로
+# 내려앉았다 (레퍼런스 0.58). 지금 값은 그 둘 사이다 — **주역 하나가 확실히
+# 무겁고 조연이 그 절반쯤**인 사람 리버리의 꼴이다.
+MACRO_W1 = (0.36, 0.60)          # 가장 무거운 덩어리가 쥐는 몫
+MACRO_W2 = (0.38, 0.92)          # 둘째 / 첫째
+MACRO_N = (3, 7)                 # 큰 덩어리 수 (잔티끌 뺀)
 
 
 # 가장 큰 꾸밈 덩어리가 **인물 넓이의** 몇 배까지인가. 이 위면 판이 아니라
@@ -67,15 +72,57 @@ MACRO_N = (2, 5)                 # 큰 덩어리 수 (잔티끌 뺀)
 MACRO_SPAN = (0.45, 3.2)
 
 
+# **꾸밈이 실제로 있나** — 그릴 수 있는 면(인물 밖) 중 꾸밈이 덮은 몫의 목표.
+#
+# 계열마다 다른 `clutter` 목표(minimal은 0.03~0.12)는 계열을 **고르는** 데는
+# 못 쓴다: 목표가 느슨한 계열이 언제나 만점을 받아 이긴다. 실제로 매크로 어휘를
+# 갈아 넣은 뒤 minimal이 여덟 판을 가져가면서 꾸밈 잉크 중앙값이 0.44 → 0.18로
+# 내려앉았고, 그중 셋은 큰 색면 하나에 조각 둘이 전부였다. 계열과 무관한
+# 자가 하나 있어야 "디자인이 있긴 한가"를 물을 수 있다.
+#
+# 구간의 위 끝은 옛 판의 실측(0.44)이 이미 과했다는 판정에서, 아래 끝은
+# 레퍼런스 밴드 크롭에서 인물을 뺀 어림(히나타 0.37)에서 왔다.
+PRESENCE = (0.14, 0.40)
+
+
 # 여백 한 덩이의 목표 — 그릴 수 있는 면 대비 넓이와 **꼴**(상자 채움).
 # 얇고 긴 자투리는 여백이 아니라 남은 자리다.
-NEG_AREA = (0.10, 0.42)
-NEG_FILL = 0.42
+# (구간은 실측으로 조인다: 첫 판의 (0.10, 0.42)·채움 0.42는 33판 전부가
+# 1.000이라 자가 아니었다 — 지금 생성기가 닿는 범위의 **위쪽**을 목표로 둔다.)
+NEG_AREA = (0.20, 0.45)
+NEG_FILL = 0.62
 
 
-# 인물이 꾸밈보다 먼저 읽혀야 하는 배수 — far 배율의 대비 끌림 비.
-# 이 아래로 내려가면 주역이 뒤집힌 것이다 (탈락 조건).
-HERO_PULL_MIN = 0.92
+# **경쟁자의 자격.** 인물을 받치는 덩어리는 무대지 경쟁자가 아니다 — 인물
+# 실루엣의 이 몫 이상을 (조금 부풀려) 감싸면 무대로 본다. 크기로 가르려 했더니
+# 안 갈렸다 (짙은 판이 인물의 2배라 크기 구간 안에 들어왔다): 무대와 경쟁자를
+# 가르는 것은 크기가 아니라 **인물과 겹치나**다.
+COMPETE_BACKING_MAX = 0.25
+
+
+# 경쟁자로 세는 최소 크기 (인물 넓이 대비) — 이보다 잔 것은 잔 조각이다.
+COMPETE_MIN = 0.08
+
+
+# **프레임을 건너는 것은 바탕이다.** 로커 띠·관통 판처럼 상자가 프레임의 이
+# 몫 이상을 가로지르는 덩어리는 차의 구조로 읽히지 주역과 겨루지 않는다
+# (레퍼런스의 검은 로커가 인물을 이기지 않는다). 인물을 안 받치는 것만으로
+# 경쟁자를 가르면 흰 차의 검은 로커가 끌림 0.77로 주역을 뺏은 것이 된다.
+GROUND_SPAN = 0.85
+
+
+# 인물이 멀리서 가져야 할 **절대 끌림** 구간 (명도차). 아래면 판에 녹은 것이고,
+# 위(0.6 넘게)면 판이 인물만 남기고 아무것도 안 하는 것이다.
+HERO_PULL = (0.14, 0.60)
+
+
+# 주역을 **잃은** 것으로 보는 자 — 멀리서 인물이 아예 안 떨어져 나온다.
+#
+# 탈락 조건은 이 하나뿐이다. 경쟁 비(`focal_ratio`)로도 떨어뜨려 봤더니 33판 중
+# 열아홉이 걸렸고, 전멸한 판에서는 순위가 다시 총점으로 정해져 자가 아무것도
+# 안 하면서 이름만 남았다. 겨룸은 점수(`focal`)로 밀고, 탈락은 "안 보인다"에만
+# 쓴다.
+HERO_PULL_FLOOR = 0.065
 
 
 @dataclass
@@ -105,18 +152,34 @@ def scales(lum: np.ndarray, cols: int) -> tuple[np.ndarray, np.ndarray]:
     return cv2.blur(lum, (kf, kf)), cv2.blur(lum, (km, km))
 
 
-def _pull(lum: np.ndarray, mask: np.ndarray, k: int) -> float:
-    """`mask` 안팎의 명도차 — "이 덩어리가 얼마나 끌리나".
+def _pull(lum: np.ndarray, mask: np.ndarray, k: int,
+          valid: np.ndarray | None = None) -> float:
+    """`mask` 안과 **떨어진 둘레**의 명도차 — "이 덩어리가 얼마나 끌리나".
 
-    안쪽 평균과 **바로 바깥 띠**의 평균 차다. 바탕과 같은 명도면 0이다.
+    둘레는 `k`칸 **밖에서 시작하는** 고리다. 바로 붙은 한 칸을 쓰면 안 된다:
+    `lum`이 이미 반경 `k`로 흐려진 그림이라 경계 양쪽이 서로 섞여 있어서 차가
+    구조적으로 0에 가깝게 나온다 (실측 silvia-01: 짙은 판 위의 밝은 인물인데도
+    끌림이 0.029로 나와 주역이 뒤집힌 것으로 오판했다). 흐림 반경 밖으로 나가야
+    "멀리서 이 덩어리가 둘레와 다른 톤인가"를 재는 것이 된다.
+
+    `valid`(그릴 수 있는 자리)를 주면 면 밖은 안 센다 — 패널 위쪽 비도색면이
+    둘레에 섞이면 어느 덩어리든 대비가 세게 나온다.
     """
     m = mask.astype(np.uint8)
     if not m.any():
         return 0.0
-    ring = cv2.dilate(m, np.ones((2 * k + 1, 2 * k + 1), np.uint8)).astype(bool) & ~mask
-    if not ring.any():
+    ker = np.ones((2 * k + 1, 2 * k + 1), np.uint8)
+    near = cv2.dilate(m, ker).astype(bool)
+    far_ = cv2.dilate(m, ker, iterations=3).astype(bool)
+    ring = far_ & ~near
+    if valid is not None:
+        ring = ring & valid
+        inner = mask & valid
+    else:
+        inner = mask
+    if not ring.any() or not inner.any():
         return 0.0
-    return float(abs(lum[mask].mean() - lum[ring].mean()))
+    return float(abs(lum[inner].mean() - lum[ring].mean()))
 
 
 def _band(v: float, lo: float, hi: float, soft: float) -> float:
@@ -157,23 +220,37 @@ def blobs(alpha: np.ndarray, lum: np.ndarray, base_lum: float, room: np.ndarray
     return out
 
 
-def focal(far: np.ndarray, sil: np.ndarray, bl: list[dict], k: int
-          ) -> tuple[float, dict]:
+def focal(far: np.ndarray, sil: np.ndarray, bl: list[dict], k: int,
+          valid: np.ndarray | None = None) -> tuple[float, dict]:
     """**멀리서 누가 먼저 읽히나** — 인물의 끌림 대 가장 센 꾸밈 덩어리의 끌림.
 
     사람이 만든 이타샤는 차에서 멀어질수록 인물만 남는다. 자동 생성물은 인물
     뒤에 깐 큰 판이 먼저 읽혀서, 멀리서 보면 "판 위에 뭔가 있는" 그림이 된다.
     """
-    hero = _pull(far, sil, k)
+    hero = _pull(far, sil, k, valid)
+    # **바탕은 경쟁자가 아니다.** 큰 색면이 세게 읽히는 것은 잘못이 아니라
+    # 문법이다 (레퍼런스의 흰 차 위 검은 판). 주역을 뺏는 것은 인물과 **비슷한
+    # 크기**의 요소다 — 판을 경쟁자로 세면 짙은 판을 깐 판이 전부 "주역 상실"로
+    # 떨어진다 (실측 silvia-01: 흰 차 위 남색 판의 끌림 0.768 대 인물 0.140 —
+    # 레퍼런스 그대로인 구도가 탈락했다).
+    ha = float(sil.sum()) or 1.0
+    ker = np.ones((2 * k + 1, 2 * k + 1), np.uint8)
     top = 0.0
-    for b in bl[:3]:
-        top = max(top, _pull(far, b["sel"], k))
-    if hero <= 1e-6 and top <= 1e-6:
-        return 0.5, {"hero_pull": 0.0, "deco_pull": 0.0}
-    ratio = hero / max(1e-6, hero + top)
-    # 0.5면 인물과 꾸밈이 같은 세기, 1이면 인물뿐이다. 0.55~0.85가 목표 —
-    # 1.0(꾸밈이 아예 안 읽힘)도 좋은 그림이 아니다.
-    return _band(ratio, 0.55, 0.90, 0.30), {
+    rows, cols = sil.shape
+    for b in bl:
+        if float(b["sel"].sum()) < COMPETE_MIN * ha:
+            continue
+        if max(b["w"] / max(1, cols), b["h"] / max(1, rows)) >= GROUND_SPAN:
+            continue                              # 프레임을 건넌다 — 바탕이다
+        grown = cv2.dilate(b["sel"].astype(np.uint8), ker).astype(bool)
+        if float((grown & sil).sum()) / ha >= COMPETE_BACKING_MAX:
+            continue                              # 인물을 받친다 — 무대다
+        top = max(top, _pull(far, b["sel"], k, valid))
+    ratio = hero / max(1e-6, hero + top) if (hero + top) > 1e-6 else 0.5
+    # 두 가지를 같이 본다: 인물이 **얼마나** 읽히나(절대) · 비슷한 크기의 것에
+    # 안 밀리나(상대).
+    return (0.55 * _band(hero, *HERO_PULL, soft=0.16)
+            + 0.45 * _band(ratio, 0.50, 1.0, 0.30)), {
         "hero_pull": hero, "deco_pull": top, "focal_ratio": ratio}
 
 
@@ -248,6 +325,14 @@ def rhythm(motifs: list[tuple[float, float, float, int]]) -> tuple[float, dict]:
              "r_tiers": float(tiers)})
 
 
+def presence(deco_alpha: np.ndarray, room: np.ndarray) -> tuple[float, dict]:
+    """꾸밈이 인물 밖 도색면을 덮은 몫 — 너무 비었나 · 너무 덮었나."""
+    if not room.any():
+        return 0.5, {"p_ink": 0.0}
+    v = float((deco_alpha[room] > 0.5).mean())
+    return _band(v, *PRESENCE, soft=0.16), {"p_ink": v}
+
+
 def negative_shape(ink: np.ndarray, room: np.ndarray, head_c, face_dir: float,
                    cell: float, char_w: float, x0: float = 0.0, y_top: float = 0.0
                    ) -> tuple[float, dict, tuple[float, float, float, float] | None]:
@@ -320,6 +405,32 @@ def gesture(bl: list[dict], vc: tuple[float, float], gestures,
     return max(0.0, min(1.0, 0.5 + 0.5 * best)), {"g_cos": best}
 
 
+def heatmaps(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
+             ink: np.ndarray, deco_alpha: np.ndarray, base_lum: float,
+             cols: int) -> dict[str, np.ndarray]:
+    """비평이 **실제로 본 것**을 그림으로 (디버그 — `work/lab/deco/heat.py`).
+
+    점수만 보고는 "왜 나쁜가"를 못 되짚는다. 여기서 내는 것은 판정에 쓴 바로
+    그 배열이다: 멀리 본 명도 · 인물과 꾸밈의 끌림 · 큰 덩어리 · 빈 덩이.
+    """
+    lum = _lum(img)
+    far, mid = scales(lum, cols)
+    bl = blobs(deco_alpha, mid, base_lum, room)
+    masses = np.zeros(lum.shape, np.float32)
+    for i, b in enumerate(bl[:6]):
+        masses[b["sel"]] = 1.0 - 0.14 * i
+    empty = (room & ~(ink > 0.5)).astype(np.uint8)
+    big = np.zeros(lum.shape, np.float32)
+    if empty.any():
+        n, lb, st, _c = cv2.connectedComponentsWithStats(empty, 8)
+        k = max(range(1, n), key=lambda i: st[i, cv2.CC_STAT_AREA], default=0)
+        if k:
+            big[lb == k] = 1.0
+    return {"far": far, "mid": mid, "near": lum, "masses": masses,
+            "empty": big, "sil": sil.astype(np.float32),
+            "room": room.astype(np.float32)}
+
+
 def critique(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
              ink: np.ndarray, deco_alpha: np.ndarray, base_lum: float,
              motifs: list[tuple[float, float, float, int]],
@@ -336,16 +447,17 @@ def critique(*, img: np.ndarray, sil: np.ndarray, room: np.ndarray,
     parts: dict[str, float] = {}
     info: dict[str, float] = {}
     for name, (v, i) in (
-            ("focal", focal(far, sil, bl, k)),
+            ("focal", focal(far, sil, bl, k, room | sil)),
             ("macro", macro(bl, float(sil.sum()), float(room.sum()))),
             ("rhythm", rhythm(motifs)),
             ("negative_shape", (ns, ni)),
+            ("presence", presence(deco_alpha, room)),
             ("gesture", gesture(bl, visual_center, gestures, cell, x0, y_top))):
         parts[name] = float(v)
         info.update({k2: float(v2) for k2, v2 in i.items()})
     fails: list[str] = []
     # 주역 상실 — 꾸밈 덩어리가 인물보다 세게 읽히면 (비 = hero/(hero+deco)가
     # HERO_PULL_MIN 배에 해당하는 지점 아래) 그건 이타샤가 아니다
-    if info.get("focal_ratio", 1.0) < HERO_PULL_MIN / (1.0 + HERO_PULL_MIN):
+    if info.get("hero_pull", 1.0) < HERO_PULL_FLOOR:
         fails.append("hero")
     return Critique(parts=parts, info=info, fails=tuple(fails), neg_box=neg_box)

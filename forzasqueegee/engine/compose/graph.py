@@ -78,12 +78,16 @@ FRAME_RATIO = (1.3, 4.5)
 #
 #   balances(motif, neg)   무리와 여백이 주역을 사이에 두고 맞선다
 #   frames(macro0, hero)   큰 색면이 인물을 품되 삼키지 않는다
-#   deliberate(macro1, m0) 판 둘의 축 관계가 뚜렷하다 (나란하거나 가로지르거나)
+#   overlaps(macro1, m0)   둘째 색면이 첫째와 **만난다** (따로 뜬 판이 아니다)
 #   echoes(echo, motif)    잔 조각이 무리의 작은 되풀이다
+#
+# `deliberate`(나란하거나 확실히 가로지르거나)는 여기 없다 — 짝의 각을
+# `macro.counter_angle`이 늘 40° 밖으로 두므로 33판 전부 1.000이었다. 관계는
+# 남겨 두되(계열이 쓸 수 있다) 공통 문법에서는 뺀다.
 DEFAULT_GRAMMAR = (
     ("balances", "motif", "neg", 1.0),
     ("frames", "macro0", "hero", 1.0),
-    ("deliberate", "macro1", "macro0", 0.8),
+    ("overlaps", "macro1", "macro0", 0.9),
     ("echoes", "echo", "motif", 0.6),
 )
 

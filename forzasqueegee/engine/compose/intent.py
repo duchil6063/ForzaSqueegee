@@ -79,6 +79,14 @@ class DesignIntent:
     light_neutral_rgb: tuple[int, int, int] | None = None
     edge_rgb: tuple[int, int, int] = (128, 128, 128)   # 실루엣 테두리 평균색
     edge_lum: float = 0.5
+    # 실루엣 **속**의 평균 명도 — 테두리가 아니라 덩어리의 밝기다.
+    #
+    # 둘은 자주 반대다: 파스텔 인물은 속이 밝은데 윤곽선이 검어서 `edge_lum`이
+    # 낮다. 그것만 보고 판 색을 고르면 밝은 인물 뒤에 **밝은 판**이 깔리고,
+    # 가까이서는 윤곽선 덕에 읽히지만 멀리서는 인물이 판에 녹는다 (실측
+    # silvia-01: 테두리 명도차 0.46인데 far 배율 끌림이 0.029 — 꾸밈 덩어리의
+    # 0.199에 밀려 주역이 뒤집혔다). 멀리서 읽히는 것은 덩어리의 밝기다.
+    body_lum: float = 0.5
 
     # ---- 좌표 ----
     def to_px(self, x: float, y: float) -> tuple[float, float]:
@@ -379,6 +387,11 @@ def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
         e = np.array([128.0, 128.0, 128.0])
     edge_rgb = tuple(int(v) for v in e)
     edge_lum = float((0.299 * e[0] + 0.587 * e[1] + 0.114 * e[2]) / 255.0)
+    if n_sil:
+        b = rgb[sil].astype(np.float32).mean(axis=0)
+        body_lum = float((0.299 * b[0] + 0.587 * b[1] + 0.114 * b[2]) / 255.0)
+    else:
+        body_lum = 0.5
 
     # 점유 격자 (12×12) — 빈 자리 판정용
     occ = cv2.resize(alpha, (12, 12), interpolation=cv2.INTER_AREA)
@@ -393,7 +406,7 @@ def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
         occupancy=occ,
         shadow_rgb=seeds["shadow"], highlight_rgb=seeds["highlight"],
         dark_neutral_rgb=seeds["dark"], light_neutral_rgb=seeds["light"],
-        edge_rgb=edge_rgb, edge_lum=edge_lum)
+        edge_rgb=edge_rgb, edge_lum=edge_lum, body_lum=body_lum)
 
 
 def empty_regions(it: DesignIntent, thr: float = 0.12
