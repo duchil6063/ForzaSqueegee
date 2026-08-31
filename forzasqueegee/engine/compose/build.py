@@ -24,6 +24,7 @@ from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
     drawable, manual_box, person_pose, person_tilt, place_in_rect, place_xf)
+from .atlas import build_atlas
 from .folds import _all_folds
 from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
@@ -46,6 +47,9 @@ class Recipe:
     config: dict
     written: list[Path] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # 이긴 옆면 설계 — 계측·디버그 도구가 필드·레이어·점수를 그대로 본다
+    # (`work/lab/deco/heat.py`). 구성 파일에는 요약만 실린다.
+    design: "Design | None" = None
 
 
 def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
@@ -302,6 +306,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     deco_src = next((n for n in ROLE_MAIN if hand_box.get(n)), None)
     side0 = maps.get(deco_src) if deco_src else None
     deco_plan = deco_place = deco_front = front_place = None
+    # 옆면 큰 색면의 (높이 v, 각, 두께) — 면 유닛. 이음새 너머로 잇는 자가 쓴다.
+    side_band: tuple[float, float, float] | None = None
     design: Design | None = None
     face_summary: dict | None = None
     text_groups: dict[str, dict] = {}         # 면 → 글자 그룹 항목
@@ -356,6 +362,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             phase=_face_phase(deco_src), text=side_text, cap=side_cap,
             n_person=side_person)
         notes += design.notes
+        # ---- **차 한 대의 지도** — 옆면의 큰 색면이 이음새를 건너간다 ----
+        # 프레임 좌표는 면 유닛의 균등 축소라(회전 없음) 각은 그대로고 자리·
+        # 두께만 `u`를 곱하면 된다.
+        prim = next((l for l in design.back if l.label == "itasha_bed"), None)
+        if prim is not None:
+            a = prim.rot % 180.0
+            side_band = (fcv + prim.y * u, a - 180.0 if a > 90.0 else a,
+                         2 * abs(prim.sy) * UNITS_PER_SCALE * u)
         deco_plan = design.plan(plan, cat)
         # **빈 꾸밈 그룹은 안 만든다.** 이미 어두운 차라 로커가 빠지고
         # (`ROCKER_BASE_MIN`) 인물이 차체 밴드를 거의 다 덮으면 남는 것이 하나도
@@ -475,6 +489,55 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 면마다 **나갈 수 있는 이음새**를 미리 푼다. 쓰는 자리는 하나다: 도안 앵커가
     # 이웃 면의 도안 상자를 이 면으로 **투영**한다 (유리 포함 — 도어 유리의
     # 모티프도 문짝의 도안에서 자란다).
+    # 차 지도 — 이음새·차체 선을 한 번만 푼다 (`atlas`). 못 푸는 차는 빈 지도라
+    # 이어 붙이기만 조용히 접힌다.
+    try:
+        atlas = build_atlas(maps, rigs, media=pinned) if deco else None
+    except Exception:                              # 지도가 모자란 차 — 이 판은 안 잇는다
+        atlas = None
+
+    carried: dict = {}
+
+    def _carry_macro(name: str) -> list[dict]:
+        """옆면 큰 색면을 이 면으로 **이어 그린다** (없으면 빈 목록).
+
+        레퍼런스의 큰 색면은 한 면에서 끝나지 않는다 — 옆면의 띠가 범퍼를 돌아
+        같은 높이·같은 기울기로 이어지고, 그 전환이 이음새에 숨는다. 지금까지
+        이어진 것은 무채 로커 띠뿐이라(`flow_shapes`의 `rocker`) 차를 돌아보면
+        옆면에만 구도가 있었다.
+
+        가파른 색면은 안 잇는다: 위아래(벨트라인·로커)로 나가므로 애초에
+        앞뒤 이음새에 안 닿는다.
+        """
+        if atlas is None or side_band is None or not use_deco or design is None:
+            return []
+        # **흐름이 가리키는 면에만** 잇는다. 양쪽으로 다 이으면 색면이 차를 한
+        # 바퀴 두르는 띠가 되고, 실측으로도 흐름 반대쪽에서는 오히려 어긋났다
+        # (바닥 높이 어긋남 dv_front 0.036 → 0.162 — 이미 맞아 있던 것을 흔들었다.
+        # 흐름 쪽 리어는 0.225 → 0.136으로 좋아졌다).
+        if name != (ROLE_REAR if flow_rear else "front"):
+            return []
+        carried["from"] = deco_src
+        v_s, ang_s, h_s = side_band
+        if abs(ang_s) > MACRO_CARRY_TILT:
+            return []
+        got = atlas.carry_band(deco_src, name, v_s, ang_s)
+        sm = maps.get(name)
+        if got is None or sm is None or sm.uncertain:
+            return []
+        v2, ang2 = got
+        carried.update({"to": name, "v_side": round(v_s, 1),
+                        "ang_side": round(ang_s, 1), "v": round(v2, 1),
+                        "ang": round(ang2, 1)})
+        # 건너온 띠는 **이 면의 몫으로 다시 재야 한다.** 옆면 밴드의 두께와
+        # 기울기를 그대로 대면 리어처럼 짧은 면에서는 그것이 면의 6할을 쓸고
+        # 지나간다 (실측: 실비아 리어가 통째로 판 색이 됐다). 이어짐은 "같은
+        # 높이에서 같은 방향으로 이어진다"는 신호지 같은 크기가 아니다.
+        ph = sm.paint[3] - sm.paint[1]
+        return flow_shapes(design.pal.bed, sm, mode="macro", center_v=v2,
+                           rot=max(-MACRO_CARRY_OUT, min(MACRO_CARRY_OUT, ang2)),
+                           height=min(h_s, MACRO_CARRY_H * ph), cat=cat)
+
     _fold_memo: dict[str, list[gfold.Fold]] = {}
 
     def _face_folds(name: str) -> list[gfold.Fold]:
@@ -711,7 +774,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if deco and ROLE_REAR not in used and rs is not None \
             and (not rs.uncertain or _deco_usable(rs)):
         items.append({"surface": ROLE_REAR,
-                      "shapes": _flow(rs, center_v=_bumper_seed(media, ROLE_REAR))
+                      "shapes": _carry_macro(ROLE_REAR)
+                      + _flow(rs, center_v=_bumper_seed(media, ROLE_REAR))
                       + _motifs(motif_c, rs, cat, n=_n(7), shapes=motifs_v)})
         used.add(ROLE_REAR)
         notes.append(msg("리어에 관통 띠 + 모티프를 잇는다"))
@@ -723,9 +787,10 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if deco and "front" not in used and fs is not None \
             and (not fs.uncertain or _deco_usable(fs)):
         items.append({"surface": "front",
-                      "shapes": _flow(fs, box=fs.fit(2.5, coverage=0.85,
-                                                     anchor="center"),
-                                      max_sx=2.2)
+                      "shapes": _carry_macro("front")
+                      + _flow(fs, box=fs.fit(2.5, coverage=0.85,
+                                             anchor="center"),
+                              max_sx=2.2)
                       + _motifs(motif_c, fs, cat, n=_n(6), shapes=motifs_v)})
         used.add("front")
         notes.append(msg("프론트에 관통 띠 + 모티프를 잇는다"))
@@ -775,11 +840,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             "family": design.family.name, "variant": design.pal.variant,
             "flow": "rear" if design.flow_rear else "front",
             "bed_level": round(design.level, 2),
+            # 이긴 매크로 어휘 짝과 좌표하강 손잡이 — "왜 이 꼴인가"의 첫 줄이다
+            "macro": list(design.macro),
+            "tweak": {k: round(v, 3) for k, v in vars(design.tweak).items()},
             "score": round(design.score.total, 4),
             "parts": {k: round(v, 3) for k, v in design.score.parts.items()},
             # 항목이 왜 그 값인지 되짚는 원자료 (테두리 명도차·묻은 몫·커버리지…)
             "info": {k: round(v, 4) for k, v in design.score.info.items()},
             "ranking": design.ranking,
+            # 이음새를 건너간 큰 색면 — 어느 면으로, 어느 높이·각으로 (`atlas`).
+            # 비면 안 이었다는 뜻이다 (가파른 색면이거나 이음새를 못 푸는 차).
+            "carry": dict(carried),
             "palette": {k: list(getattr(design.pal, k)) for k in
                         ("base", "bed", "bed_alt", "primary", "secondary",
                          "shadow", "highlight", "dark")}}
@@ -806,7 +877,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     written.append(cfg_path)
     for n in notes:
         log(f"  · {n}")
-    return Recipe(config=cfg, written=written, notes=notes)
+    return Recipe(config=cfg, written=written, notes=notes, design=design)
+
+
+# 큰 색면을 이음새 너머로 **이어 그리는** 기울기 상한 (도). 이보다 가파른 색면은
+# 위아래(벨트라인·로커)로 나가므로 앞뒤 이음새에 애초에 안 닿는다.
+MACRO_CARRY_TILT = 32.0
+
+
+# 이어 온 색면이 **그 면**에서 가질 수 있는 두께 (면 높이 대비)와 기울기 (도).
+MACRO_CARRY_H = 0.30
+MACRO_CARRY_OUT = 18.0
 
 
 # 후드 인물의 대각 기울기 (도) — HINATA 레퍼런스의 후드 인물은 차축 대비

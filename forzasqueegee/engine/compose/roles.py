@@ -29,6 +29,15 @@ from .palette import (
 BED_EDGE_GAP = 0.18
 
 
+# 베드와 **인물 덩어리** 사이의 명도차 — 멀리서 인물이 판에서 떨어져 나오나.
+#
+# 테두리 간격만으로는 못 지킨다: 파스텔 인물은 속이 밝고 윤곽선이 검어서
+# 테두리 자로는 "밝은 판"이 정답으로 나오는데, 그러면 멀리서 인물이 판에
+# 녹는다 (실측 silvia-01: 테두리 명도차 0.46 · far 배율 인물 끌림 0.029 대
+# 꾸밈 0.199 — 주역이 뒤집혔다). 멀리서 읽히는 것은 덩어리의 밝기다.
+BED_BODY_GAP = 0.26
+
+
 # 베드와 베이스 사이의 명도차 — 이 아래면 베드가 판으로 안 읽히고 얼룩이 된다.
 # 레퍼런스의 판은 예외 없이 베이스와 확실히 갈린다 (흰 차 위 남색·검정 판).
 BED_BASE_GAP = 0.32
@@ -78,17 +87,20 @@ def _shift(c: tuple[int, int, int], ds: float = 0.0, db: float = 0.0) -> tuple[i
 
 
 def _separate(c: tuple[int, int, int], edge_lum: float, base_lum: float,
-              prefer_dark: bool) -> tuple[int, int, int]:
-    """색을 **실루엣 테두리와 베이스 둘 다에서** 명도로 떼어 놓는다 (색조는 지킨다)."""
+              prefer_dark: bool, body_lum: float | None = None
+              ) -> tuple[int, int, int]:
+    """색을 **테두리 · 인물 덩어리 · 베이스 셋 다에서** 명도로 뗀다 (색조는 지킨다)."""
     h, s, b = rgb_to_hsb(*c)
     s = min(s, BED_SAT_MAX)
-    # 두 제약(테두리·베이스와의 명도차)의 **여유**가 큰 명도를 고른다 — 둘 다
-    # 만족하는 값이 없을 때도 (밝은 인물 + 밝은 차) 가장 덜 나쁜 명도가 나온다.
-    # 같은 여유면 원래 명도에 가깝고 선호 방향(짙게/연하게)인 쪽이다.
+    # 세 제약(테두리·덩어리·베이스와의 명도차)의 **여유**가 큰 명도를 고른다 —
+    # 셋 다 만족하는 값이 없을 때도 (밝은 인물 + 밝은 차) 가장 덜 나쁜 명도가
+    # 나온다. 같은 여유면 원래 명도에 가깝고 선호 방향(짙게/연하게)인 쪽이다.
     best, bs = b, -1e9
     for k in range(0, 101, 2):
         v = k / 100.0
         margin = min(abs(v - edge_lum) / BED_EDGE_GAP, abs(v - base_lum) / BED_BASE_GAP)
+        if body_lum is not None:
+            margin = min(margin, abs(v - body_lum) / BED_BODY_GAP)
         margin = min(margin, 1.0)
         sc = margin * 2.0 - 0.3 * abs(v - b) + (0.25 if (v < 0.5) == prefer_dark else 0.0)
         if sc > bs:
@@ -123,21 +135,25 @@ def role_palette(it: DesignIntent, lk: Look, base: tuple[int, int, int],
         hl = it.light_neutral_rgb or (250, 250, 250)
     # 판은 **베이스의 반대**다 (흰 차엔 짙은 판, 검은 차엔 연한 판). 인물이
     # 아주 어두우면 짙은 판이 실루엣을 삼키므로 `_separate`가 중간 명도로 민다.
-    prefer_dark = base_lum > 0.5
-    if prefer_dark and edge < BED_DARK_EDGE:
+    body = it.body_lum
+    # 판은 **인물 덩어리의 반대쪽**으로 간다 — 밝은 인물이면 짙은 판, 짙은
+    # 인물이면 연한 판. 베이스의 반대라는 옛 규칙 위에 이것이 얹힌다.
+    prefer_dark = body > 0.5 if abs(body - 0.5) > 0.08 else base_lum > 0.5
+    if prefer_dark and edge < BED_DARK_EDGE and body < 0.5:
         prefer_dark = False
     if variant == "shadow":
-        bed = _separate(shadow, edge, base_lum, prefer_dark)
-        bed_alt = _separate(prim, edge, base_lum, prefer_dark)
+        bed = _separate(shadow, edge, base_lum, prefer_dark, body)
+        bed_alt = _separate(prim, edge, base_lum, prefer_dark, body)
     elif variant == "primary":
-        bed = _separate(prim, edge, base_lum, prefer_dark)
-        bed_alt = _separate(shadow, edge, base_lum, prefer_dark)
+        bed = _separate(prim, edge, base_lum, prefer_dark, body)
+        bed_alt = _separate(shadow, edge, base_lum, prefer_dark, body)
     elif variant == "neutral":
-        bed = _separate((30, 30, 36) if prefer_dark else (246, 246, 246), edge, base_lum, prefer_dark)
-        bed_alt = _separate(prim, edge, base_lum, prefer_dark)
+        bed = _separate((30, 30, 36) if prefer_dark else (246, 246, 246), edge,
+                        base_lum, prefer_dark, body)
+        bed_alt = _separate(prim, edge, base_lum, prefer_dark, body)
     else:                                # inverse — 액센트가 판, 하이라이트가 잔것
-        bed = _separate(prim, edge, base_lum, not prefer_dark)
-        bed_alt = _separate(third, edge, base_lum, not prefer_dark)
+        bed = _separate(prim, edge, base_lum, not prefer_dark, body)
+        bed_alt = _separate(third, edge, base_lum, not prefer_dark, body)
         prim, sec, hl = third, prim, sec
     return RolePalette(base=base, bed=bed, bed_alt=bed_alt,
                        primary=readable_on(prim, base), secondary=readable_on(sec, base),

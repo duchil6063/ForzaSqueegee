@@ -100,6 +100,11 @@ class CompositionField:
     texture_coherence: float = 0.0
     rear_sign: float = 1.0                        # +x가 차 뒤면 +1
     free: dict[str, float] = field(default_factory=dict)   # 방향별 빈 도색면 몫
+    # 몸짓 — (dx, dy, 세기) 목록, 프레임 좌표 (`intent.gestures`를 얹은 것).
+    # 뻗은 팔·머리카락·무기가 만드는 방향이다. 비면 결(`texture`)로 물러난다.
+    gestures: tuple[tuple[float, float, float], ...] = ()
+    open_side: float = 0.0                        # 열린 쪽 (프레임 +x가 +1)
+    gaze: tuple[float, float] = (0.0, 0.0)        # 시선 방향 (프레임 좌표)
 
     @property
     def char_h(self) -> float:
@@ -195,6 +200,14 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
     a = np.array(it.axis, float) @ L.T
     n = np.linalg.norm(a)
     axis = (float(a[0] / n), float(a[1] / n)) if n > 1e-6 else (0.0, 1.0)
+    # 몸짓·시선을 프레임으로 — 방향만 옮기면 되므로 선형부만 먹인다
+    def _dir_to_frame(v):
+        w = np.array(v, float) @ L.T
+        n = float(np.linalg.norm(w))
+        return (float(w[0] / n), float(w[1] / n)) if n > 1e-9 else (0.0, 0.0)
+    ges = tuple((*_dir_to_frame((gx, gy)), w) for gx, gy, w in it.gestures)
+    gaze = _dir_to_frame(it.gaze) if any(it.gaze) else (0.0, 0.0)
+    open_side = float(np.sign(L[0, 0]) * it.open_side) if L[0, 0] else it.open_side
     tx = np.array(it.flow, float) @ L.T
     tn = np.linalg.norm(tx)
     texture = (float(tx[0] / tn), float(tx[1] / tn)) if tn > 1e-6 else (1.0, 0.0)
@@ -205,7 +218,8 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
     outside = (draw > 0.5) & (sil_gap == 0)
     free = {"pos": float(outside[:, X[0] > person_box[2]].mean()) if (X[0] > person_box[2]).any() else 0.0,
             "neg": float(outside[:, X[0] < person_box[0]].mean()) if (X[0] < person_box[0]).any() else 0.0}
-    fl = flow if flow is not None else choose_flow(axis, face_dir, free, rear_sign)
+    fl = flow if flow is not None else choose_flow(axis, face_dir, free, rear_sign,
+                                                  open_side=open_side, gestures=ges)
     fnorm = math.hypot(*fl) or 1.0
     fl = (fl[0] / fnorm, fl[1] / fnorm)
     # 지지 — 실루엣 후광 ∪ 포즈 축 슬래브 (흐름 쪽으로 더 뻗는다)
@@ -241,20 +255,29 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
         support=supp.astype(np.float32), decoration=deco.astype(np.float32),
         negative=neg, flow=fl, axis=axis, head_center=head_c, face_dir=face_dir,
         visual_center=(vcx, vcy), texture=texture,
-        texture_coherence=it.flow_coherence, rear_sign=rear_sign, free=free)
+        texture_coherence=it.flow_coherence, rear_sign=rear_sign, free=free,
+        gestures=ges, open_side=open_side, gaze=gaze)
 
 
 def choose_flow(axis: tuple[float, float], face_dir: float, free: dict[str, float],
-                rear_sign: float) -> tuple[float, float]:
-    """흐름 방향 — 뒤 고정이 아니라 **빈 자리 · 얼굴 방향 · 포즈 축**이 정한다.
+                rear_sign: float, open_side: float = 0.0,
+                gestures: tuple[tuple[float, float, float], ...] = ()
+                ) -> tuple[float, float]:
+    """흐름 방향 — 뒤 고정이 아니라 **빈 자리 · 몸짓 · 얼굴 · 포즈 축**이 정한다.
 
-    점수: 빈 도색면이 넓은 쪽 +, 얼굴이 향하는 쪽 + (시선 앞을 비우지 않고
-    채우는 것이 레퍼런스의 다수 — RIN의 글자는 얼굴 앞에 있다), 차 뒤쪽 +
-    (동률이면 레퍼런스의 다수인 리어 쿼터). 세로 성분은 포즈 축의 기울기를
-    조금 따른다 — 대각 포즈면 대각선 흐름.
+    점수: 빈 도색면이 넓은 쪽 +, **몸짓이 뻗은 쪽** + (뻗은 팔·머리카락이
+    가리키는 쪽으로 장식이 흐르면 인물과 한 몸이 된다), 얼굴이 향하는 쪽 +
+    (시선 앞을 비우지 않고 채우는 것이 레퍼런스의 다수 — RIN의 글자는 얼굴
+    앞에 있다), 인물이 **열린 쪽** +, 차 뒤쪽 + (동률이면 레퍼런스의 다수인
+    리어 쿼터). 세로 성분은 포즈 축의 기울기를 조금 따른다.
     """
-    pos = 0.55 * free.get("pos", 0.0) + 0.25 * max(0.0, face_dir) + 0.20 * (rear_sign > 0)
-    neg = 0.55 * free.get("neg", 0.0) + 0.25 * max(0.0, -face_dir) + 0.20 * (rear_sign < 0)
+    gx = sum(w * dx for dx, _dy, w in gestures)
+    pos = (0.42 * free.get("pos", 0.0) + 0.20 * max(0.0, face_dir)
+           + 0.22 * max(0.0, gx) + 0.10 * max(0.0, open_side)
+           + 0.14 * (rear_sign > 0))
+    neg = (0.42 * free.get("neg", 0.0) + 0.20 * max(0.0, -face_dir)
+           + 0.22 * max(0.0, -gx) + 0.10 * max(0.0, -open_side)
+           + 0.14 * (rear_sign < 0))
     sx = 1.0 if pos >= neg else -1.0
     # 포즈 축이 기울었으면 그 기울기를 흐름의 세로 성분으로 (상한 ±0.45)
     ax, ay = axis

@@ -34,15 +34,38 @@ from ..catalog import Catalog
 from ..model import Layer, LayerPlan
 from ..render import render_plan
 from .boxes import major_axis
+from .critic import critique
 from .field import CompositionField
+from .graph import CompositionGraph, Node, relation_score
 from .roles import RolePalette
 
 
 WEIGHTS = {
-    "readability": 2.0, "face": 2.0, "balance": 1.8, "clutter": 1.0,
+    # `readability`는 **제약이지 목표가 아니다.** 가중치 2.0으로 두면 그 자를
+    # 최대로 만드는 길이 "판을 아예 안 깔고 인물을 맨 도색 위에 두는 것"이라
+    # 큰 색면을 쓰는 계열이 한 판도 못 이긴다 (33판 중 graphic_bed 1 ·
+    # diagonal_flow 0). 대신 탈락 문턱을 0.09 → 0.16으로 올려 **정말 안 읽히는
+    # 판**을 거르고, 그 위에서는 구도가 정하게 둔다.
+    "readability": 1.3, "face": 2.0, "balance": 1.8, "clutter": 1.0,
     "negative": 0.8, "flow": 1.0, "cohesion": 0.6, "integration": 1.4,
     "continuity": 0.5, "orphan": 0.6, "hierarchy": 1.4,
+    # ---- 배율별 자 (`critic`) ----
+    # 위 열한 항목은 33판 실측에서 넷이 **전부 1.000**이고 값이 갈리는 것은
+    # `readability` 하나뿐이었다 (1위·2위 점수 차 중앙값 0.0000 — 후보를 고르는
+    # 것이 점수가 아니라 후보를 짓는 순서였다). 아래 다섯이 배율마다 다른 것을
+    # 물어 그 구멍을 메운다. 가중치가 큰 둘(`focal`·`macro`)이 "멀리서 인물이
+    # 먼저 읽히나"와 "큰 덩어리가 무게를 나눠 쥐나"다 — 자동 생성 티의 두 뿌리다.
+    "focal": 2.0, "macro": 2.2, "rhythm": 1.2, "negative_shape": 1.0,
+    "gesture": 0.8, "presence": 1.4, "lengthwise": 1.2,
+    # 요소 사이 — 구성 그래프의 문법이 지켜졌나 (`graph.DEFAULT_GRAMMAR`)
+    "relations": 1.6,
 }
+
+
+# 실루엣이 **읽히는** 최소 테두리 명도차 — 이 아래면 인물이 배경에 묻는다.
+# 0.09는 너무 낮아 아무 후보도 안 걸렸고(실측 33판 최저 0.31), 그래서 가독성이
+# 탈락 조건이 아니라 사실상 순위 자로만 돌았다.
+READ_FLOOR = 0.16
 
 
 # 로커 띠의 잉크 — 판이 이것과 같은 색이면 하부와 한 덩이가 된다 (`roof.ROOF_DARK`).
@@ -185,7 +208,8 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
                  extra: dict[str, float] | None = None,
                  extra_weights: dict[str, float] | None = None,
                  text: tuple[np.ndarray, np.ndarray] | None = None,
-                 front_raster: tuple[np.ndarray, np.ndarray] | None = None) -> ScoreCard:
+                 front_raster: tuple[np.ndarray, np.ndarray] | None = None,
+                 graph: CompositionGraph | None = None) -> ScoreCard:
     """`extra`는 다른 자(텍스트 — `textscore`)가 낸 항목들 — 같은 표에 가중합한다."""
     g = fld.grid
     comp = composite(fld, pal, cat, back, front, text=text, front_raster=front_raster)
@@ -318,13 +342,44 @@ def score_design(fld: CompositionField, pal: RolePalette, cat: Catalog,
         info["h2"] = h2
     else:
         parts["hierarchy"] = 0.35                # 덩어리가 하나뿐 — 위계가 없다
+    # 12~16) **배율별 자** — 멀리/중간/가까이에서 다른 것을 묻는다 (`critic`).
+    #     여기 넘기는 꾸밈 알파는 **판·로커까지 넣은 것**이다: 위 항목들이
+    #     모티프만 보는 것과 갈리는 자리다 — 큰 판이야말로 멀리서 읽히는
+    #     덩어리라 위계를 재려면 그것을 세야 한다.
+    all_deco = np.maximum(balpha, falpha)
+    cr = critique(
+        img=comp["img"], sil=sil, room=room, ink=ink, deco_alpha=all_deco,
+        base_lum=float(_lum(np.array([[list(pal.base)]], np.uint8))[0, 0]),
+        motifs=motifs, cols=g.cols, cell=g.cell, x0=g.x0, y_top=g.y_top,
+        visual_center=fld.visual_center, head_c=fld.head_center,
+        face_dir=fld.face_dir, char_w=fld.char_w,
+        gestures=fld.gestures or ((fld.texture[0], fld.texture[1],
+                                   fld.texture_coherence),))
+    parts.update(cr.parts)
+    info.update(cr.info)
+    # 17) **관계** — 구성 그래프의 문법이 이 기하에서 지켜졌나 (`graph`).
+    #     여백 노드는 여기서 붙인다 (가장 큰 빈 덩이는 비평이 찾는다).
+    if graph is not None:
+        if cr.neg_box is not None:
+            fa = max(1e-6, (fld.frame_box[2] - fld.frame_box[0])
+                     * (fld.frame_box[3] - fld.frame_box[1]))
+            nb = cr.neg_box
+            graph.add(Node(id="neg", role="negative",
+                           at=((nb[0] + nb[2]) / 2, (nb[1] + nb[3]) / 2),
+                           axis=(1.0, 0.0),
+                           extent=(nb[2] - nb[0], nb[3] - nb[1]), box=nb,
+                           weight=(nb[2] - nb[0]) * (nb[3] - nb[1]) / fa,
+                           kind="void", z=0))
+        rv, rinfo = relation_score(graph)
+        parts["relations"] = rv
+        info.update(rinfo)
     parts = {k: float(v) for k, v in parts.items()}
     info = {k: float(v) for k, v in info.items()}
     # ---- 탈락 조건 (가중합에 안 섞는다) ----
-    fails: list[str] = []
+    fails: list[str] = list(cr.fails)
     if info.get("face_cover", 0.0) > 0.06:
         fails.append("face")
-    if info.get("edge_dl", 1.0) < 0.09:
+    if info.get("edge_dl", 1.0) < READ_FLOOR:
         fails.append("readability")
     if cov > hi + 0.25:
         fails.append("clutter")

@@ -28,21 +28,24 @@ import numpy as np
 from ...i18n import msg
 from ..catalog import Catalog
 from ..model import Layer, LayerPlan, rnd
-from .bands import stripe_layers
-from .bed import bed_layers, keyline_layers
+from .bands import _teeth, stripe_layers
+from .bed import keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field
+from .graph import Rel, derive
+from .macro import macro_layers, plan as macro_plan
 from .intent import DesignIntent
 from .look import Look
 from .place import _refit_canvas
 from dataclasses import replace as _replace
 from .roles import RolePalette, role_palette
 from .scatter import (
-    DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, scatter_motifs)
+    DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, rhythm_motifs,
+    scatter_motifs)
 from .score import ScoreCard, _de, composite, raster_layers, score_design
 from .textbudget import TextPlan, plan_tiers
-from .textbuild import TextSet, build_text_sets
+from .textbuild import TextSet, build_text_sets, reposed
 from .textscore import TEXT_WEIGHTS, text_parts
 from .textspec import TextSpec
 from .textstyle import choose_style
@@ -74,6 +77,27 @@ TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_keyline", "itasha_stripe")
 MOTIF_DE_MIN = 18.0
 
 
+# 리듬의 최대형 조각이 **차체 밴드 높이**에서 차지할 수 있는 몫. 크기 자는
+# 인물이지만(`DECO_TIER_SIZE`) 그 자는 넓은 옆면에서 잰 것이라 좁은 밴드에
+# 그대로 쓰면 첫 조각이 밴드를 가로막는다 (`scatter.DECO_HERO_CAP`과 같은 사정).
+RHYTHM_HERO_CAP = 0.62
+
+
+# 리듬이 자리 검사를 이만큼도 못 통과하면 **옛 산포로 물러난다** — 곡선 하나는
+# 휠아치 구멍이나 좁은 필드에 걸리면 통째로 죽을 수 있고, 그때 무리가 아예
+# 없는 것보다는 뿌린 것이라도 있는 편이 낫다.
+RHYTHM_MIN_KEEP = 0.34
+
+
+# 리듬 방향에 몸짓을 섞는 몫 (그 몸짓의 세기에 비례). 1.0이면 몸짓만 따르는데,
+# 그러면 무리가 인물 위나 면 밖으로 나간다 — 흐름이 "갈 수 있는 자리"를 쥔다.
+GESTURE_MIX = 0.55
+
+
+# 이 세기 아래의 몸짓은 안 쓴다 — 실루엣의 잔 요철이다.
+GESTURE_MIN = 0.22
+
+
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
 FAMILY_TOP = 4
 
@@ -87,14 +111,21 @@ class Tweak:
     """미세 조정 손잡이 — 이긴 후보를 좌표하강으로 다듬는다 (`_refine`).
 
     전부 0/1이면 손대기 전과 같다. 단위: 각은 도, `bed_dy`는 인물 높이 몫,
-    `anchor_dx`는 인물 폭 몫, `motif_k`는 배수. 판의 길이는 손잡이가 아니다 —
-    판은 늘 프레임을 관통한다 (`bed`).
+    `anchor_dx`는 인물 폭 몫, `motif_k`는 배수, `bed_w`는 색면 폭의 배수 편차다.
+    색면의 **길이는 손잡이가 아니다** — 큰 색면은 늘 프레임 밖까지 나간다
+    (`macro` — 끝을 자르는 것은 도형이 아니라 차다).
     """
 
     bed_rot: float = 0.0
     bed_dy: float = 0.0
+    bed_w: float = 0.0
     anchor_dx: float = 0.0
     motif_k: float = 1.0
+    # 글자 손잡이 — 자리(인물 폭·높이 몫)와 크기(배수). 원형 블록을 다시 앉히는
+    # 것뿐이라 (`textbuild.reposed`) 글리프를 새로 안 짓는다.
+    text_dx: float = 0.0
+    text_dy: float = 0.0
+    text_k: float = 1.0
 
 
 # 좌표하강이 도는 축과 걸음 (순서가 곧 결정성이다 — 같은 점수면 원래 값이 이긴다).
@@ -102,20 +133,38 @@ class Tweak:
 REFINE_STEPS: tuple[tuple[str, tuple[float, ...]], ...] = (
     ("bed_rot", (-6.0, -3.0, 3.0, 6.0)),
     ("bed_dy", (-0.10, -0.05, 0.05, 0.10)),
+    ("bed_w", (-0.22, -0.11, 0.11, 0.22)),
     ("anchor_dx", (-0.24, -0.12, 0.12, 0.24)),
     ("motif_k", (-0.16, -0.08, 0.08, 0.16)),
+    ("text_dx", (-0.22, -0.11, 0.11, 0.22)),
+    ("text_dy", (-0.14, -0.07, 0.07, 0.14)),
+    ("text_k", (-0.10, -0.05, 0.05, 0.10)),
 )
 
 
 # 배수 손잡이의 상·하한 (여러 패스가 같은 쪽으로 걸어도 판이 뒤집히지 않게).
+# `text_k`의 폭이 좁은 이유: 크기가 층 문턱(`textbuild.tier_for_size`)을 넘으면
+# 원형이 다른 층으로 지어져야 해서 다시 앉히기로는 못 따라간다. ±20%면 문턱
+# (46·28유닛) 안에 머문다.
 REFINE_CLAMP = {"motif_k": (0.70, 1.30),
                 "bed_rot": (-12.0, 12.0), "bed_dy": (-0.20, 0.20),
-                "anchor_dx": (-0.48, 0.48)}
+                "bed_w": (-0.44, 0.44),
+                "anchor_dx": (-0.48, 0.48),
+                "text_dx": (-0.44, 0.44), "text_dy": (-0.28, 0.28),
+                "text_k": (0.80, 1.20)}
 
 
 # 다듬을 상위 후보 수 · 좌표하강 패스 수.
 REFINE_TOP = 2
 REFINE_PASSES = 2
+
+
+# **단계 A에서 살려 보내는 매크로 기하 수** (`compose_design`의 빔).
+# 계열 × 흐름 × 어휘 짝 × 크기를 전수로 돌면 후보가 사백을 넘어 한 판에 이십
+# 초가 넘는다. 큰 색면이 정해지기 전에는 산포·에코·글자가 순위를 거의 안 바꾸므로
+# (둘 다 색면 위에 얹히는 잔 요소다) 기하를 먼저 여섯으로 추린다 — 여섯이면
+# 계열 넷이 적어도 하나씩은 살고 이긴 계열은 변종 둘을 데려간다.
+BEAM_MACRO = 6
 
 
 @dataclass
@@ -134,6 +183,7 @@ class Design:
     text_style: str | None = None
     trimmed: int = 0                    # 면 상한 때문에 뺀 산포·에코 장수
     tweak: "Tweak" = field(default_factory=lambda: Tweak())
+    macro: tuple[str, str] = ("ribbon", "ribbon")   # 이긴 매크로 어휘 짝
     notes: list[str] = field(default_factory=list)
     ranking: list[tuple[str, float]] = field(default_factory=list)
 
@@ -164,9 +214,10 @@ class Design:
 
 def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
              vocab: tuple[str, ...], halo: tuple[int, int, int] | None,
-             over: bool, phase: float, anchor_dx: float = 0.0
+             over: bool, phase: float, anchor_dx: float = 0.0,
+             angularity: float = 0.5
              ) -> tuple[list[Layer], list[tuple[float, float, float, int]]]:
-    """산포 — 자리는 필드가, 크기·층·간격은 `scatter_motifs`가 정한다."""
+    """무리 — 자리는 필드가, 크기·간격·꺾임은 리듬 곡선이 정한다 (`rhythm`)."""
     fx0, fy0, fx1, fy1 = fld.frame_box
     ch = fld.char_h
     cx, cy = (fx0 + fx1) / 2, (fy0 + fy1) / 2
@@ -210,12 +261,46 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     stats: list[tuple[float, float, float, int]] = []
     if n <= 0:
         return out, stats
-    for mo in scatter_motifs(center=(cx, cy), radii=(rx, ry), ref=ref, n=n,
+    # ---- 배경 무리는 **리듬**이 놓는다 (`rhythm`) ----
+    # 뭉치는 자리에서 흐름 쪽으로 곡선 하나를 걸으며 큰 것 → 잔것으로 잦아든다.
+    # 황금각 산포는 자리가 크기와 무관해 "뿌린 것"으로 읽혔다. 전경 벌은 몇 장이
+    # 인물을 스치는 것이 전부라 리듬이 없고, 옛 산포가 그 자를 그대로 쥔다.
+    mos: list = []
+    if not over:
+        # **방향은 몸짓에서 나온다.** 흐름만 따르면 무리가 늘 차 뒤로 곧게 가고,
+        # 그림이 무엇을 하고 있든 같은 그림이 된다. 뻗은 팔·머리카락 중 흐름
+        # 쪽을 향한 것을 골라 섞으면 무리가 그 팔에서 흘러나온 것으로 읽힌다
+        # (`intent._gestures` · 세기는 봉우리의 돌출이다).
+        fdir = fld.flow
+        best = None
+        for gx_, gy_, gw_ in fld.gestures:
+            if gw_ < GESTURE_MIN or gx_ * fdir[0] + gy_ * fdir[1] <= 0.15:
+                continue                          # 흐름 반대거나 너무 약하다
+            if best is None or gw_ > best[2]:
+                best = (gx_, gy_, gw_)
+        if best is not None:
+            k = GESTURE_MIX * best[2]
+            fdir = (fdir[0] * (1 - k) + best[0] * k, fdir[1] * (1 - k) + best[1] * k)
+            nrm = math.hypot(*fdir) or 1.0
+            fdir = (fdir[0] / nrm, fdir[1] / nrm)
+        # 갈 수 있는 거리 — 뭉치는 자리에서 흐름 쪽 프레임 변까지
+        reach = abs((fx1 if fdir[0] >= 0 else fx0) - ax) / max(0.35, abs(fdir[0]))
+        mos = rhythm_motifs(
+            origin=(ax, ay), direction=fdir, reach=max(1.0, reach), ref=ref, n=n,
+            vocab=vocab, cat=cat, colors=pal.motif_trio, avoid=fld.person_box,
+            place_ok=_ok, phase=phase, angularity=angularity,
+            strands=2 if n >= 12 else 1,
+            size_max=RHYTHM_HERO_CAP * (fy1 - fy0))
+    # 리듬이 자리 검사에 다 걸리는 판(휠아치 위에 핵이 앉은 옆면·좁은 필드)에서는
+    # 옛 산포로 물러난다 — 황금각은 결정적 폴백으로 남는다
+    if over or len(mos) < max(2, int(RHYTHM_MIN_KEEP * n)):
+        mos = scatter_motifs(center=(cx, cy), radii=(rx, ry), ref=ref, n=n,
                              vocab=vocab, cat=cat, colors=pal.motif_trio,
                              anchor_at=(ax, ay), avoid=fld.person_box, over=over,
                              place_ok=_ok, phase=phase,
                              gap=None if over else DECO_GAP_MAX,
-                             pool=max(n * 6, 160)):
+                             pool=max(n * 6, 160))
+    for mo in mos:
         if halo is not None and mo.tier <= 1 and not over:
             out.append(Layer(shape=mo.shape, x=mo.x, y=mo.y, sx=mo.half * HALO_GROW,
                              sy=mo.half * HALO_GROW, rot=mo.rot, color=halo,
@@ -286,6 +371,32 @@ def _keyline_color(pal: RolePalette) -> tuple[int, int, int]:
     return (250, 250, 250) if b < 0.5 else (24, 24, 28)
 
 
+def _macro_colors(pal: RolePalette) -> dict[str, tuple[int, int, int]]:
+    """매크로 명세의 색 역할 이름 → 실제 색 (`macro.MacroSpec.role`)."""
+    return {"bed": pal.bed, "bed_alt": pal.bed_alt, "primary": pal.primary,
+            "secondary": pal.secondary, "shadow": pal.shadow, "dark": pal.dark}
+
+
+def _tear(base: list[Layer], fld: CompositionField, edge_v: tuple[str, ...],
+          cat: Catalog) -> list[Layer]:
+    """큰 색면의 **흐름 쪽 끝을 뜯는다** (스플래시 계열 — `Family.torn`).
+
+    옛 `bed`가 판의 마지막 장에 톱니를 물리던 자리다. 매크로 어휘는 색면이
+    프레임 밖까지 나가므로 뜯을 자리는 **프레임 안쪽 가장자리**다 — 흐름 쪽
+    프레임 변에서 조금 안으로 들어온 선을 조각으로 문다.
+    """
+    first = next((l for l in base if l.label == "itasha_bed"), None)
+    if first is None:
+        return []
+    fx0, fy0, fx1, fy1 = fld.frame_box
+    fs = 1.0 if fld.flow[0] >= 0 else -1.0
+    h = fld.char_h
+    ex = (fx1 if fs > 0 else fx0) - fs * 0.18 * (fx1 - fx0)
+    return _teeth(edge_v, cat, span=(fy1 - fy0) * 1.1, x0=ex - 0.5 * h,
+                  top=(fy0 + fy1) / 2 + (fy1 - fy0) * 0.55, band=h * 0.45, n=3,
+                  color=first.color, label="itasha_bed")
+
+
 def _rocker(fld: CompositionField, lk: Look, cat: Catalog, car_rgb, vocab) -> list[Layer]:
     frame = _replace(lk, box=fld.frame_box, hull=None)
     return stripe_layers(frame, ROOF_DARK, cat, shapes=vocab, car=car_rgb,
@@ -326,34 +437,51 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                                        rear_sign, drawable_at=drawable_at, flow=flow)
         return fields[mode]
 
-    def _parts(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
-               tw: "Tweak") -> tuple[list[Layer], list[Layer], list[Layer], list]:
-        """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계) — 미세 조정도 이 자를 쓴다."""
-        # 판이 먼저, 로커가 그 위다 — 판은 프레임을 관통해 로커 속으로도 내려가고
-        # (`bed`), 로커 띠가 그 아랫단을 덮어 하부 투톤이 판을 자른다 (레퍼런스의
-        # 검은 하부는 판 위에 얹힌 층이다 — Evo IX·EVELYNE).
-        base: list[Layer] = bed_layers(fld, pal, cat, fam.bed, level, edge_shapes=edge_v,
-                                       torn=fam.torn, rocker=fam.rocker,
-                                       d_rot=tw.bed_rot, d_y=tw.bed_dy)
+    def _base(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
+              kinds: tuple[str, str], tw: "Tweak") -> list[Layer]:
+        """큰 색면 + 로커 — 후보의 **바탕**.
+
+        판이 먼저, 로커가 그 위다 — 색면은 프레임을 관통해 로커 속으로도 내려가고
+        로커 띠가 그 아랫단을 덮어 하부 투톤이 색면을 자른다 (레퍼런스의 검은
+        하부는 판 위에 얹힌 층이다 — Evo IX·EVELYNE).
+        """
+        specs = macro_plan(fld, kinds, level, rocker=fam.rocker,
+                           d_rot=tw.bed_rot, d_y=tw.bed_dy, d_w=tw.bed_w)
+        base = macro_layers(specs, fld.frame_box, _macro_colors(pal), cat)
+        if fam.torn and edge_v and base:
+            base += _tear(base, fld, edge_v, cat)
         if fam.rocker:
             base += _rocker(fld, lk, cat, car_rgb, edge_v)
+        return base
+
+    def _parts(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
+               kinds: tuple[str, str], tw: "Tweak"
+               ) -> tuple[list[Layer], list[Layer], list[Layer], list]:
+        """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계) — 미세 조정도 이 자를 쓴다."""
+        base = _base(fam, fld, pal, level, kinds, tw)
         fam_m = _replace(fam, tier_scale=fam.tier_scale * tw.motif_k)
         sc, stats = _scatter(fld, fam_m, pal, cat, vocab, halo, False, phase,
-                             anchor_dx=tw.anchor_dx)
+                             anchor_dx=tw.anchor_dx, angularity=it.angularity)
         tail: list[Layer] = list(sc)
         if fam.echo:
             tail += echo_layers(fld, it, pal, cat, n=max(3, fam.motif_n // 3),
                                 phase=phase)
         tail = _readable_motifs(tail, fld, pal, cat, base)
         front, _fs = _scatter(fld, fam_m, pal, cat, vocab, None, True, phase,
-                              anchor_dx=tw.anchor_dx)
+                              anchor_dx=tw.anchor_dx, angularity=it.angularity)
         return base, tail, front, stats
 
     def _card(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
               base, tail, front, front_ras, keyl, keyline: bool, ts, stats,
-              text_ras, behind, tplan, tstyle, tw: "Tweak") -> Design:
+              text_ras, behind, tplan, tstyle, tw: "Tweak",
+              kinds: tuple[str, str] = ("ribbon", "ribbon")) -> Design:
         """부품 한 벌 → 재고 담은 후보. 후보 루프와 미세 조정이 같은 자를 쓴다."""
         back = list(base)
+        # 글자는 **손잡이대로 다시 앉힌다** — 원형 블록이 있어 값싸다
+        if ts is not None and (tw.text_dx or tw.text_dy or tw.text_k != 1.0):
+            ts = reposed(ts, dx=tw.text_dx * fld.char_w,
+                         dy=tw.text_dy * fld.char_h, k=tw.text_k)
+            text_ras = raster_layers(ts.layers, fld, cat)
         tl = ts.layers if ts is not None else []
         n_text = ts.n if ts is not None else 0
         if keyline:
@@ -367,67 +495,114 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         if text_on:
             extra = text_parts(fld, cat, ts.poses if ts else [], tl, behind,
                                front_alpha=front_ras[1])
+        # **구성 그래프** — 지어 놓은 부품에서 역할 노드를 되읽고 계열의 문법을
+        # 건다 (`graph`). 점수가 "무엇이 있나"가 아니라 "무엇과 무엇이 어떤
+        # 사이인가"를 잴 수 있게 하는 자리다. 여백 노드는 점수기가 붙인다.
+        gr = derive(fld, back, front, stats,
+                    text_poses=(ts.poses if ts is not None else None))
+        gr.rels = tuple(Rel(k, a, b, w) for k, a, b, w in fam.rels())
         # 점수용 합성: 글자 그룹은 꾸밈 그룹 **위**·도안 아래에 선다
         card = score_design(fld, pal, cat, back, front,
                             clutter_target=fam.clutter, empty_target=fam.empty_target,
                             motifs=stats, rocker=fam.rocker,
                             extra=extra, extra_weights=TEXT_WEIGHTS,
-                            text=text_ras, front_raster=front_ras)
+                            text=text_ras, front_raster=front_ras, graph=gr)
         return Design(family=fam, pal=pal, fld=fld, back=back, front=front, score=card,
                       flow_rear=(fld.flow[0] * rear_sign) > 0, level=level,
                       keyline=keyline, text=ts, text_plan=tplan, text_style=tstyle,
-                      trimmed=trimmed, tweak=tw)
+                      trimmed=trimmed, tweak=tw, macro=kinds)
 
-    cands: list[Design] = []
+    # ---- 단계 A: **매크로 기하**만 겨룬다 -------------------------------------
+    # 계열 × 흐름 × 어휘 짝 × 크기를 전수로 돌면 후보가 사백을 넘어 한 판에
+    # 이십 초가 넘는다. 큰 색면이 정해지기 전에는 산포·에코·글자가 순위를 거의
+    # 안 바꾸므로(둘 다 색면 위에 얹히는 잔 요소다) **기하를 먼저 추린다**:
+    # 대표 팔레트 하나로 색면만 지어 재고, 살아남은 것에만 팔레트·키라인·글자를
+    # 붙인다. 대표 팔레트는 `VARIANTS_TRIED[0]`이다 — 어느 하나를 골라야 하고,
+    # 순위는 기하끼리의 견줌이라 팔레트가 같으면 공정하다.
+    pal0 = role_palette(it, lk, car_rgb, VARIANTS_TRIED[0])
+    seeds: list[tuple[tuple[int, float], Family, str, CompositionField,
+                      tuple[str, str], float]] = []
     for fname in fams:
         fam = FAMILIES[fname]
         for mode in fam.flows:
             fld = _field(mode)
-            for variant in VARIANTS_TRIED:
-                pal = role_palette(it, lk, car_rgb, variant)
+            for kinds in fam.macro:
                 for level in (fam.bed_level, max(0.0, fam.bed_level - 0.25)):
-                    base, tail, front, stats = _parts(fam, fld, pal, level, Tweak())
-                    front_ras = raster_layers(front, fld, cat)
-                    # 키라인은 후보의 한 축이다 — 짙은 판 위에서 실루엣이 읽히나를
-                    # 점수(readability)가 가르고, 안 필요한 판에서는 장수만 먹는다
-                    key_col = _keyline_color(pal)
-                    keyl = keyline_layers(fld, key_col, cat)
-                    # ---- 글자 — 배치 후보마다 한 벌, 그리고 "없음" ----
-                    text_sets: list[TextSet | None] = [None]
-                    tplan = None
-                    tstyle = None
-                    if text_on:
-                        tstyle = choose_style(text.style, fam, it)
-                        # 남는 장수: 우선순위 high면 산포·에코를 안 세고(글자가
-                        # 먼저다 — 넘치면 그쪽을 뺀다), low면 절반만 준다
-                        fixed = n_person + len(base) + len(keyl) + len(front) + 12
-                        free = cap - fixed - (0 if text.priority == "high" else len(tail))
-                        if text.priority == "low":
-                            free = int(free * 0.5)
-                        free = int(free * fam.text_budget)
-                        tplan = plan_tiers(text, tstyle, max(0, free))
-                        _b, bed_a = raster_layers([l for l in base if l.label == "itasha_bed"],
-                                                  fld, cat)
-                        text_sets += build_text_sets(
-                            fld, pal, cat, main=text.main or "", sub=text.sub, style=tstyle,
-                            plan=tplan, rocker=fam.rocker, bed_alpha=bed_a)
-                    # 게임 글꼴 글리프는 후보당 수십 장이라 도형 맞춤(수백 장)과 달리
-                    # 다듬기를 막을 이유가 없다 — 다만 판을 흔들면 글자 자리도 흔들려
-                    # 다시 지어야 하므로 `_refine`은 여전히 글자 없는 판만 돈다.
-                    # 글자 래스터는 (배치 후보 × 이 팔레트)마다 한 번만 — 키라인·
-                    # 베드 크기 변종이 같은 것을 나눠 쓴다
-                    text_ras = {id(ts): raster_layers(ts.layers, fld, cat)
-                                for ts in text_sets if ts is not None}
-                    behind = composite(fld, pal, cat, base, [], front_raster=front_ras)["behind"] \
-                        if text_on else None
-                    for keyline in (False, True):
-                        for ts in text_sets:
-                            cands.append(_card(fam, fld, pal, level, base, tail, front,
-                                               front_ras, keyl, keyline, ts, stats,
-                                               text_ras.get(id(ts)), behind,
-                                               tplan, tstyle, Tweak()))
+                    base = _base(fam, fld, pal0, level, kinds, Tweak())
+                    gr = derive(fld, base, [], [])
+                    gr.rels = tuple(Rel(k, a, b, w) for k, a, b, w in fam.rels())
+                    sc = score_design(fld, pal0, cat, base, [],
+                                      clutter_target=fam.clutter,
+                                      empty_target=fam.empty_target, motifs=[],
+                                      rocker=fam.rocker, graph=gr)
+                    seeds.append(((len(sc.fails), -round(sc.total, 6)), fam, mode,
+                                  fld, kinds, level))
                     if fam.bed == "none":
                         break
+    seeds.sort(key=lambda s: s[0])
+    # **계열마다 하나는 살려 보낸다.** 점수순으로만 자르면 자를 느슨하게 잡은
+    # 계열(minimal의 `clutter` 0.03~0.12)이 빔을 통째로 차지한다 — 실측 P4에서
+    # 33판 중 스물일곱이 minimal·motorsport였고 graphic_bed는 한 판도 못 이겼다.
+    # 큰 색면이 다른 구도는 조각까지 얹어 봐야 견줄 수 있으므로, 계열마다 가장
+    # 좋은 기하 하나를 먼저 넣고 남는 자리를 점수순으로 채운다.
+    keep: list = []
+    seen: set[str] = set()
+    for sd in seeds:
+        if sd[1].name not in seen:
+            seen.add(sd[1].name)
+            keep.append(sd)
+    for sd in seeds:
+        if len(keep) >= BEAM_MACRO:
+            break
+        if sd not in keep:
+            keep.append(sd)
+    seeds = keep[:max(BEAM_MACRO, len(seen))]
+
+    # ---- 단계 B: 살아남은 기하에 팔레트·키라인·글자를 붙인다 -------------------
+    cands: list[Design] = []
+    for _k, fam, _mode, fld, kinds, level in seeds:
+        for variant in VARIANTS_TRIED:
+            pal = role_palette(it, lk, car_rgb, variant)
+            base, tail, front, stats = _parts(fam, fld, pal, level, kinds, Tweak())
+            front_ras = raster_layers(front, fld, cat)
+            # 키라인은 후보의 한 축이다 — 짙은 판 위에서 실루엣이 읽히나를
+            # 점수(readability)가 가르고, 안 필요한 판에서는 장수만 먹는다
+            key_col = _keyline_color(pal)
+            keyl = keyline_layers(fld, key_col, cat)
+            # ---- 글자 — 배치 후보마다 한 벌, 그리고 "없음" ----
+            text_sets: list[TextSet | None] = [None]
+            tplan = None
+            tstyle = None
+            if text_on:
+                tstyle = choose_style(text.style, fam, it)
+                # 남는 장수: 우선순위 high면 산포·에코를 안 세고(글자가
+                # 먼저다 — 넘치면 그쪽을 뺀다), low면 절반만 준다
+                fixed = n_person + len(base) + len(keyl) + len(front) + 12
+                free = cap - fixed - (0 if text.priority == "high" else len(tail))
+                if text.priority == "low":
+                    free = int(free * 0.5)
+                free = int(free * fam.text_budget)
+                tplan = plan_tiers(text, tstyle, max(0, free))
+                _b, bed_a = raster_layers([l for l in base if l.label == "itasha_bed"],
+                                          fld, cat)
+                text_sets += build_text_sets(
+                    fld, pal, cat, main=text.main or "", sub=text.sub, style=tstyle,
+                    plan=tplan, rocker=fam.rocker, bed_alpha=bed_a)
+            # 게임 글꼴 글리프는 후보당 수십 장이라 도형 맞춤(수백 장)과 달리
+            # 다듬기를 막을 이유가 없다 — 다만 판을 흔들면 글자 자리도 흔들려
+            # 다시 지어야 하므로 `_refine`은 여전히 글자 없는 판만 돈다.
+            # 글자 래스터는 (배치 후보 × 이 팔레트)마다 한 번만 — 키라인·
+            # 베드 크기 변종이 같은 것을 나눠 쓴다
+            text_ras = {id(ts): raster_layers(ts.layers, fld, cat)
+                        for ts in text_sets if ts is not None}
+            behind = composite(fld, pal, cat, base, [], front_raster=front_ras)["behind"] \
+                if text_on else None
+            for keyline in (False, True):
+                for ts in text_sets:
+                    cands.append(_card(fam, fld, pal, level, base, tail, front,
+                                       front_ras, keyl, keyline, ts, stats,
+                                       text_ras.get(id(ts)), behind,
+                                       tplan, tstyle, Tweak(), kinds))
     # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다).
     #
     # 총점은 **여섯째 자리에서 끊어** 견준다. 점수 항목 몇은 LAPACK을 거치는데
@@ -447,6 +622,8 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         — 난수도 전수 조합도 없다 (`REFINE_STEPS`).
         """
         keyl = keyline_layers(d.fld, _keyline_color(d.pal), cat)
+        d_behind = composite(d.fld, d.pal, cat, d.back, [])["behind"] \
+            if d.text is not None else None
         best_d, tw = d, d.tweak
         for _p in range(REFINE_PASSES):
             moved = False
@@ -458,10 +635,14 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                     if not (lo <= v <= hi):
                         continue
                     cand_tw = _replace(tw, **{name: v})
-                    b2, t2, f2, s2 = _parts(d.family, d.fld, d.pal, d.level, cand_tw)
+                    b2, t2, f2, s2 = _parts(d.family, d.fld, d.pal, d.level,
+                                            d.macro, cand_tw)
+                    ts2 = d.text
+                    tr2 = raster_layers(ts2.layers, d.fld, cat) if ts2 else None
                     cd = _card(d.family, d.fld, d.pal, d.level, b2, t2, f2,
                                raster_layers(f2, d.fld, cat), keyl, d.keyline,
-                               None, s2, None, None, None, None, cand_tw)
+                               ts2, s2, tr2, d_behind, d.text_plan, d.text_style,
+                               cand_tw, d.macro)
                     if _rank(cd) < _rank(best_d):
                         best_d, tw, moved = cd, cand_tw, True
             if not moved:
@@ -469,12 +650,13 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         return best_d
 
     cands.sort(key=_rank)
-    # 글자가 있는 판은 안 다듬는다 — 글자 벌은 판 알파에서 나오므로 손잡이마다
-    # 글자를 다시 지어야 하고, 그러면 후보 하나가 수백 ms가 된다.
-    if not text_on:
-        for i in range(min(REFINE_TOP, len(cands))):
-            cands[i] = _refine(cands[i])
-        cands.sort(key=_rank)
+    # 글자가 있는 판도 다듬는다 — 원형 블록 캐시(`textbuild.pose_proto`) 덕에
+    # 손잡이 한 걸음이 글리프 재조판이 아니라 좌표 옮기기다. 옛 판은 손잡이마다
+    # 글자 수백 장을 다시 지어야 해서 글자 있는 후보를 통째로 건너뛰었고,
+    # 그래서 글자만 다듬어지지 않은 채 남았다.
+    for i in range(min(REFINE_TOP, len(cands))):
+        cands[i] = _refine(cands[i])
+    cands.sort(key=_rank)
     best = cands[0]
     best.ranking = [(f"{'!' * len(d.score.fails)}{d.family.name}/{d.pal.variant}"
                      f"/{'rear' if d.flow_rear else 'front'}"

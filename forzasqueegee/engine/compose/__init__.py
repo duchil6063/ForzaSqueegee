@@ -28,12 +28,43 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
   무리는 이웃 면의 도안 상자를 이음새 너머로 투영해 그 자리에서 자란다
   (Fate R34의 리어 별무리는 리어 쿼터에서 들어온다). 자리를 정하는 문법은
   캔버스 꾸밈 그룹과 면 도형이 **한 벌을 나눠 쓴다** (`scatter_motifs`).
-- 인물 뒤에는 **꾸밈 그룹**(로커 밴드·베드·산포·에코)이 제 그룹으로 깔리고,
-  로커·모티프가 이웃 면으로 이어져 차 전체를 접착한다 (`design`·`flow_shapes`).
+- 인물 뒤에는 **꾸밈 그룹**(로커 밴드·큰 색면·무리·에코)이 제 그룹으로 깔리고,
+  로커·큰 색면·모티프가 이웃 면으로 이어져 차 전체를 접착한다
+  (`design`·`atlas`·`flow_shapes`).
 - **사람 배치를 읽고, 후보를 만들고, 재서 고른다** (`intent` → `field` → `design`).
-  꾸밈 문법은 한 벌이 아니라 계열 여럿(`families`)이고, 인물 뒤 큰 색면(`bed`)과
-  역할 팔레트(`roles`)가 그 위에 선다. 사람이 앉힌 도안은 어느 후보에서도 안
-  움직인다.
+  사람이 앉힌 도안은 어느 후보에서도 안 움직인다.
+
+## 구도를 어떻게 짜나 — 요소가 아니라 **요소 사이**
+
+옛 구조는 "무엇을 놓나"의 목록이었다: 계열이 판 하나와 조각 몇을 내고 점수가
+그 결과를 쟀다. 33판을 구워 재 보니 그 길의 천장이 분명했다 — 점수 열한 항목
+중 넷이 모든 판에서 정확히 1.000이고, 값이 갈리는 것은 "실루엣 테두리 명도차"
+하나뿐이며, 1위와 2위의 차 중앙값이 0.0000이었다 (후보를 고른 것은 점수가
+아니라 후보를 짓는 **순서**였다). 그 하나뿐인 자를 최대로 만드는 길이 인물 뒤에
+반대 명도의 큰 판을 통째로 까는 것이라, 판 넓이가 인물의 5.8배였다.
+
+지금 구조는 다섯 층이다.
+
+1. **읽는다** (`intent`) — 실루엣·머리·포즈 축에 더해 **몸짓**을 읽는다: 윤곽
+   거리 함수의 봉우리가 뻗은 팔·머리카락·무기이고, 그 돌출이 세기다. 열린 쪽·
+   어두운 덩어리·시선도 같이 읽는다. 모델은 안 쓴다.
+2. **자리를 편다** (`field`) — 보호·지지·장식·여백 구역과 흐름. 흐름은 빈 자리·
+   몸짓·얼굴·열린 쪽이 함께 고른다.
+3. **관계를 적는다** (`graph`) — 노드는 역할(hero·macro·counter·motif·echo·
+   text·negative·trim)이고 관계는 잴 수 있는 것만 둔다. 계열은 "무엇과 무엇이
+   어떤 사이여야 하나"만 말하는 **문법 프리셋**으로 내려앉았다 (`families`).
+4. **기하를 낸다** (`macro`·`rhythm`) — 큰 색면은 아홉 어휘의 연속 매개변수고
+   (`macro`), 조각은 곡선 하나를 걸어 나온다 (`rhythm` — 원점에서 잦아들며).
+   둘 다 **어느 변으로 프레임을 나가나**가 정의의 일부다.
+5. **잰다** (`critic`·`score`) — 같은 합성을 세 배율로 갈라 배율마다 다른 것을
+   묻고(멀리 누가 읽히나 · 덩어리 무게가 갈리나 · 조각이 리듬인가), 그래프의
+   문법이 기하에서 지켜졌나를 잰다. 자에 넣는 조건은 하나다: **후보에 따라
+   값이 실제로 갈릴 것.** 만들기 나름으로 늘 1.000이 되는 항목은 자가 아니라
+   희석이다.
+
+탐색은 두 단이다 (`design`): 대표 팔레트 하나로 **기하만** 먼저 재 계열마다
+하나씩 살려 여섯을 남기고, 거기에만 팔레트·키라인·글자를 붙여 다시 잰 뒤
+이긴 둘을 좌표하강으로 다듬는다. 난수는 없다.
 - 윗면 = 후드 인물(도안 재사용) + 지붕 블랙아웃.
 - **글자는 기본으로 안 넣는다** — 스폰서 이름·넘버판 숫자 같은 텍스트는 어휘에
   없다. 사람이 캐릭터 이름을 **넣기로 하면**(`textspec.TextSpec`) 그 글자가 꾸밈의
@@ -62,14 +93,19 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     roof        지붕 블랙아웃 — 윗면의 후드 뒤 구간을 검정으로 덮는다.
     place       배치 — 도안을 면 어디에 얼마로 앉히나 (자리 수학과 그 밑감).
     folds       면 이음새 접기 그래프 — 꾸밈 뿌리를 이웃 면으로 투영하는 자.
+    atlas       차 한 대의 면 지도 — 이음새·차체 선, 그리고 그것을 **건너는** 자.
     autoplace   자동 자리 — 편집기가 도안을 처음 앉히는 그 자리.
     surfshapes  면에 직접 놓는 꾸밈 — 관통 띠 · 산포 모티프의 도형 명세.
     intent      도안 읽기 2단계 — 실루엣 · 머리 · 포즈 축 · 디테일 · 색 역할 씨앗.
+    graph       구성 그래프 — 요소가 아니라 요소 **사이**를 적는다 (관계 문법).
     roles       역할 팔레트 — 베이스 · 베드 · 주/부 액센트 · 그림자 · 하이라이트 · 무채.
     field       구성 필드 — 배치 둘레의 보호 · 지지 · 장식 · 여백 구역과 흐름.
-    bed         캐릭터 베드 — 인물 뒤 큰 색면 (판 · 쐐기 · 슬래브 · 덩어리) + 키라인.
+    bed         인물을 따르는 축(`slab_axis`)과 실루엣 키라인.
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
+    rhythm      리듬 곡선 — 조각이 원점에서 잦아들며 흘러 나오는 자리.
+    macro       매크로 기하 — 인물 뒤 큰 색면의 어휘 (띠·겹·날·화살·가름·모서리…).
     families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
+    critic      구도 비평 — 같은 합성을 세 배율(멀리·중간·가까이)로 재는 자.
     score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
     textspec    텍스트 스펙 — 사람이 넣은 이름·작품명과 옵션 (기본 꺼짐).
     textstyle   텍스트 스타일 — 계열·인상이 글꼴을, 역할 팔레트가 색을 준다.
@@ -131,6 +167,7 @@ from .place import (
     drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_tilt,
     place_in_rect, place_xf, surface_exposure, take_layers)
 from .folds import _all_folds, _pillar_hints, seam_fold
+from .atlas import BodyLines, Seam, VehicleAtlas, build_atlas
 from .autoplace import _side_place, auto_place, mirror_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
@@ -138,10 +175,19 @@ from .surfshapes import (
 from .intent import DesignIntent, read_intent
 from .roles import RolePalette, role_palette
 from .field import CompositionField, build_field
-from .bed import bed_layers, keyline_layers
+from . import critic
+from .critic import Critique, critique, heatmaps
+from .graph import (
+    CompositionGraph, DEFAULT_GRAMMAR, Node, RELATIONS, ROLES, Rel, derive,
+    relation_score)
+from .bed import keyline_layers, slab_axis
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
-from .score import ScoreCard, score_design
+from .rhythm import Beat, RhythmCurve, beats, curve_for
+from .macro import (
+    KINDS as MACRO_KINDS, MACRO_AREA_MAX, MacroSpec, macro_layers,
+    plan as macro_plan)
+from .score import ScoreCard, composite, raster_layers, score_design
 from .design import DECO_FRAME_FILL, Design, compose_design
 from .textspec import PLACEMENTS as TEXT_PLACEMENTS, STYLES as TEXT_STYLES, TextSpec
 from .textbudget import TextPlan, plan_tiers
