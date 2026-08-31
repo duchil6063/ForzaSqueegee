@@ -41,7 +41,7 @@ from dataclasses import replace as _replace
 from .roles import RolePalette, role_palette
 from .scatter import (
     DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, scatter_motifs)
-from .score import ScoreCard, composite, raster_layers, score_design
+from .score import ScoreCard, _de, composite, raster_layers, score_design
 from .textbudget import TextPlan, plan_tiers
 from .textbuild import TextSet, build_text_sets
 from .textscore import TEXT_WEIGHTS, text_parts
@@ -68,6 +68,12 @@ DECO_BAND_FILL = 1.0
 # 버렸다 — 도안이 2,983장인 판 셋이 그래서 꾸밈 0장이 됐다.
 TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_fade", "itasha_keyline",
               "itasha_stripe")
+
+
+# 모티프가 **제 뒤 배경에서 읽히는** 최소 색차 (Lab). 이 아래면 조각이 판에
+# 묻어 없는 것과 같다 — 흰 판 위 흰 물감(07번: 아홉 중 다섯) · 흰 띠 위 흰 별
+# (11번: 열여섯 중 넷)이 실측이다.
+MOTIF_DE_MIN = 18.0
 
 
 # 디더 페이드의 장수 상한 (판 하나당). 40장이면 8열 x 5행의 절반쯤이 찬다.
@@ -249,6 +255,39 @@ def _fit_cap(layers: list[Layer], room: int) -> tuple[list[Layer], int]:
     return [l for i, l in enumerate(layers) if i not in drop], len(drop)
 
 
+def _readable_motifs(layers: list[Layer], fld: CompositionField, pal: RolePalette,
+                     cat: Catalog, back: list[Layer]) -> list[Layer]:
+    """조각의 색을 **제 뒤에 실제로 깔린 것**에서 읽히게 고른다.
+
+    색은 베이스 도색을 보고 골라 놓는데(`palette.readable_on`), 조각이 판 위에
+    앉으면 그 자가 안 맞는다 — 흰 판 위의 흰 물감은 없는 것과 같다 (실측: 옆면
+    11장 146조각 중 열하나가 ΔE 18 아래, 그 아홉이 어두운 차 둘에 몰렸다).
+    역할 팔레트의 세 색을 **원래 순서대로** 보고, 지금 색이 묻으면 그 자리에서
+    가장 잘 읽히는 색으로 바꾼다 (순서를 지키므로 무리의 색 리듬은 남는다).
+    """
+    trio = pal.motif_trio
+    # 바꿔 낄 색에는 **그림자·무채**도 넣는다 — 어두운 차의 무채 팔레트는 셋이
+    # 전부 근백이라(07·11) 셋 안에서 고르면 흰 판 위의 흰 조각을 못 구한다.
+    pool = tuple(dict.fromkeys(trio + (pal.shadow, pal.dark)))
+    brgb, balpha = raster_layers(back, fld, cat)
+    g = fld.grid
+    out: list[Layer] = []
+    for l in layers:
+        if tuple(l.color) not in {tuple(c) for c in trio}:
+            out.append(l)                        # 후광·무채 조각은 제 색이 있다
+            continue
+        c, r = g.to_cell(l.x, l.y)
+        bg = pal.base
+        if 0 <= c < g.cols and 0 <= r < g.rows and balpha[r, c] > 0.5:
+            bg = tuple(int(v) for v in brgb[r, c])
+        if _de(l.color, bg) >= MOTIF_DE_MIN:
+            out.append(l)
+            continue
+        alt = max(pool, key=lambda t: _de(t, bg))
+        out.append(_replace(l, color=alt) if _de(alt, bg) > _de(l.color, bg) else l)
+    return out
+
+
 def _keyline_color(pal: RolePalette) -> tuple[int, int, int]:
     """키라인 색 — 베드의 반대 명도 (짙은 판엔 밝은 테, 연한 판엔 짙은 테)."""
     b = (0.299 * pal.bed[0] + 0.587 * pal.bed[1] + 0.114 * pal.bed[2]) / 255.0
@@ -318,6 +357,7 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         if fam.echo:
             tail += echo_layers(fld, it, pal, cat, n=max(3, fam.motif_n // 3),
                                 phase=phase)
+        tail = _readable_motifs(tail, fld, pal, cat, base)
         front, _fs = _scatter(fld, fam_m, pal, cat, vocab, None, True, phase,
                               anchor_dx=tw.anchor_dx)
         return base, tail, front, stats
