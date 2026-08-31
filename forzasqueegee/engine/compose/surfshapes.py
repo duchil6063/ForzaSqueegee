@@ -39,6 +39,52 @@ FLOW_TEETH = 6                 # 관통 밴드 윗선을 뜯는 조각 수 (면�
 FACE_ROCKER_FRAC = 0.42
 
 
+# ---- 띠는 면 끝을 **넘겨서** 끝난다 ----
+# 사각이 면 안에서 끝나면 패널 한가운데에 곧은 단면이 남는다 — 사람이 그은
+# 띠는 언제나 차 밖으로 달아나고, 끝을 자르는 것은 차의 실루엣이다. 넘긴 몫은
+# 면 마스크가 자르므로 공짜다 (그려지지도 않는다).
+BAND_OVERSHOOT = 1.06
+
+
+# 나눠 깐 조각끼리 겹치는 몫 — 안 겹치면 반올림 한 칸에 흰 실선이 난다.
+# 같은 색·같은 도형이라 겹쳐도 이음매가 안 보인다 (`_shape_batches`가 이 묶음을
+# 위저드 한 바퀴로 놓는다).
+TILE_OVERLAP = 1.08
+
+
+def surface_sx_cap(smap: gsurf.SurfaceMap) -> float:
+    """면 도형 **한 장**이 가질 수 있는 스케일 상한 — 면 제 크기다.
+
+    면 스케일은 원형(랩) 축이라 상한 밖 목표는 수렴이 원리적으로 불가하고,
+    폐루프는 5%씩 물러나다 도형을 통째로 잃는다 (`auto.itasha.shapes`). 하드
+    랩을 실측한 것은 front의 ±2.3 하나뿐이라(2026-08-19) 그 면은 부르는 쪽이
+    `max_sx`로 따로 못 박고, 여기서는 **폭 ÷ 128**로 어림한다 — 도형이 제가
+    앉은 면보다 클 수 없다는 자다.
+
+    **이 자는 일부러 짜다.** 2026-08-31 911 터보 인게임 실측에서 top은 8.296
+    (이 자로는 7.977) · rear는 2.519(2.422)가 그대로 통과했다 — 실제 상한은
+    적어도 4% 더 후하다. 그래도 안 늘리는 이유는 값이 싸기 때문이다: 넘게
+    잡으면 띠 하나를 통째로 잃거나 15% 짧아지는데, 짜게 잡아 갈린 조각은
+    묶음 스탬프로 나가 **장당 오히려 빠르다** (홑장 17.7초 vs 묶음 12.8초).
+    그림도 같다 (같은 색 사각이 겹칠 뿐 — 실측 픽셀 차 0.1%).
+    """
+    return max(0.5, (smap.paint[2] - smap.paint[0]) / 2 / UNITS_PER_SCALE)
+
+
+def band_tiles(u0: float, u1: float, cap: float) -> list[tuple[float, float]]:
+    """`[u0,u1]`을 덮는 사각 조각들 `(중심 u, sx)` — 상한을 넘으면 나눈다.
+
+    한 장으로 안 되는 길이를 **짧게 자르는 대신** 여러 장으로 잇는다. 옛
+    길(`sx = min(sx, max_sx)`)은 띠를 면 절반에서 사각으로 끊었다 (실측:
+    RX-7 프론트 면 294유닛에 띠 42유닛).
+    """
+    span = max(1e-6, u1 - u0)
+    lim = max(1e-6, cap * UNITS_PER_SCALE)
+    n = max(1, math.ceil(TILE_OVERLAP * span / 2 / lim))
+    half = span / 2 / n * (TILE_OVERLAP if n > 1 else 1.0)
+    return [(u0 + span * (i + 0.5) / n, half / UNITS_PER_SCALE) for i in range(n)]
+
+
 def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
                 box: tuple[float, float, float, float] | None = None,
                 max_sx: float | None = None,
@@ -67,23 +113,31 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
     쓰여 씨앗 사각이 그대로 찍혔다). 값은 게임 변형 칸에 그대로 들어간다
     (x·y = 면 유닛, sx·sy = 스케일 값 = 반폭/128).
 
-    `box`를 주면 그 상자 기준으로 놓는다 — 프론트처럼 도색 상자 가운데가
-    비도색(그릴)인 면은 내접 상자를 줘야 밴드가 보이는 자리에 앉는다.
+    `box`를 주면 밴드의 **높이·자리(v)**를 그 상자로 잡는다 — 프론트처럼 도색
+    상자 가운데가 비도색(그릴)인 면은 내접 상자를 줘야 밴드가 보이는 자리에
+    앉는다. **길이(u)는 언제나 면 도색 폭**이고 거기서 더 넘긴다: 내접 상자로
+    길이까지 재던 옛 길은 띠를 면 한가운데에서 사각으로 끊었다 (실측: RX-7
+    프론트 면 294유닛에 띠 42유닛 · CRX 306에 79 · 챌린저 502에 282).
+
+    `max_sx`는 이 면의 스케일 축 상한이다 (`surface_sx_cap`과 함께 걸린다).
+    상한을 넘는 길이는 **짧게 자르지 않고 나눠 깐다** (`band_tiles`).
     """
-    p0, q0, p1, q1 = box if box is not None else smap.paint
-    w, hh = p1 - p0, q1 - q0
-    cx = (p0 + p1) / 2
-    # 면 스케일 클램프를 미리 피한다 — front는 ±2.3쯤에서 원형으로 감긴다
-    # (실측). 목표가 상한 밖이면 폐루프 백오프가 도형을 버리는 데 4번의
-    # 수렴 실패를 쓴다 (줄리아 실측: front 띠 한 장을 통째로 잃었다).
-    sx = 1.04 * w / 2 / UNITS_PER_SCALE
+    q0, q1 = (box[1], box[3]) if box is not None else (smap.paint[1], smap.paint[3])
+    hh = q1 - q0
+    # 길이는 면 도색 폭 — 여기서 `BAND_OVERSHOOT`만큼 더 넘겨 끝을 면 밖에 둔다
+    fu0, fu1 = smap.paint[0], smap.paint[2]
+    fcx, fw = (fu0 + fu1) / 2, (fu1 - fu0) * BAND_OVERSHOOT
+    u0, u1 = fcx - fw / 2, fcx + fw / 2
+    cap = surface_sx_cap(smap)
     if max_sx is not None:
-        sx = min(sx, max_sx)
+        cap = min(cap, max_sx)
+    tiles = band_tiles(u0, u1, cap)
     if mode == "stripe":
-        return [{"shape": "A_01", "x": round(cx, 1),
-                 "y": round(q0 + f * hh, 1), "sx": round(sx, 3),
+        return [{"shape": "A_01", "x": round(tx, 1),
+                 "y": round(q0 + f * hh, 1), "sx": round(tsx, 3),
                  "sy": round(0.055 * hh / 2 / UNITS_PER_SCALE, 4),
-                 "rot": 0.0, "rgb": list(color)} for f in (0.42, 0.58)]
+                 "rot": 0.0, "rgb": list(color)}
+                for f in (0.42, 0.58) for tx, tsx in tiles]
     # 하부 밴드 — **도색 상자 안에서** 잡는다. 상자 아래로 빼면 도형 중심이
     # 상자 밖으로 나가고, 면의 이동 축은 상자보다 좁게 클램프되므로 실행 중에
     # 엉뚱한 자리에 꽂힌다 (`add_shape_job`의 폐루프가 못 닿는다).
@@ -97,10 +151,10 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
     else:
         top = q0 + FACE_ROCKER_FRAC * hh
         lo = q0 - 0.10 * hh      # 상자 아래를 조금 물어 범퍼 밑선까지 덮는다
-    out = [{"shape": "A_01", "x": round(cx, 1), "y": round((lo + top) / 2, 1),
-            "sx": round(sx, 3),
+    out = [{"shape": "A_01", "x": round(tx, 1), "y": round((lo + top) / 2, 1),
+            "sx": round(tsx, 3),
             "sy": round((top - lo) / 2 / UNITS_PER_SCALE, 4),
-            "rot": 0.0, "rgb": list(color)}]
+            "rot": 0.0, "rgb": list(color)} for tx, tsx in tiles]
     # 찢긴 윗선 — 옆면 로커와 **같은 자**다 (`_teeth`): 가로는 이웃과 겹칠 만큼,
     # 세로는 밴드의 몇 할만. 등방으로 재던 옛 자는 면 높이의 0.39배짜리 조각을
     # 내서 범퍼 위로 검은 가시가 솟았다 (frag0-03 미리보기).
@@ -112,9 +166,9 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
         reach = (cat.shapes[name].reach
                  if cat is not None and name in cat.shapes else 1.0)
         out.append({"shape": name,
-                    "x": round(p0 + w * (i + 0.5) / FLOW_TEETH, 1),
+                    "x": round(u0 + (u1 - u0) * (i + 0.5) / FLOW_TEETH, 1),
                     "y": round(top - 0.38 * band * ((i * 3 % 5) / 4.0), 1),
-                    "sx": round(TEETH_OVERLAP * (w / FLOW_TEETH) / 2 * k
+                    "sx": round(TEETH_OVERLAP * ((u1 - u0) / FLOW_TEETH) / 2 * k
                                 / UNITS_PER_SCALE / reach, 3),
                     "sy": round(TEETH_AMP * band / 2 * k
                                 / UNITS_PER_SCALE / reach, 4),

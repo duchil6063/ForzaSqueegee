@@ -8,6 +8,7 @@ from ...game import surface as gsurf
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE
 from .bands import TEETH_OVERLAP
+from .surfshapes import band_tiles, surface_sx_cap
 
 
 # ---- 지붕 블랙아웃 (영상 문법 18 · HINATA 검정 지붕 · 수이세이 검정 펜더) ----
@@ -29,6 +30,18 @@ ROOF_TEETH = 4
 
 # 지붕 투톤 경계의 **진폭** — 덮는 구간 길이(차 길이 방향)의 몫이다.
 ROOF_TEETH_AMP = 0.16
+
+
+# 판의 **앞선**이 구간 앞끝에서 물러나는 몫 — 뜯는 조각이 이 자리를 걸터앉아
+# 곧은 선을 지운다. 여기만 물러난다: 앞선은 투톤 경계라 그림의 일부다.
+ROOF_HEAD_IN = 0.02
+
+
+# 판의 **뒷선**이 구간 뒤끝을 넘는 몫. 뒤는 그림이 아니라 그냥 끝이라 곧은
+# 단면이 남으면 안 된다 — 넘긴 몫은 유리 구멍(또는 차 끝)이 자른다. 옛 값은
+# 앞뒤를 같이 2% 물렸고(0.96), 그 바람에 판과 뒷유리 사이에 본색 실선이 남아
+# 판이 "지붕에 얹은 검은 사각"으로 읽혔다.
+ROOF_TAIL_OVER = 0.06
 
 
 def hood_index(segs: list[tuple[float, float, float, float]],
@@ -65,6 +78,8 @@ def roof_blackout(smap: gsurf.SurfaceMap,
         return []
     hi = hood_index(segs, hood_u)
     hood_h = segs[hi][3] - segs[hi][1]
+    cap_u = surface_sx_cap(smap)
+    cap_v = max(0.5, smap.height / 2 / UNITS_PER_SCALE)
     out: list[dict] = []
     first = True
     for bu0, bv0, bu1, bv1 in segs[hi + 1:hi + 3]:  # 후드 구간 뒤의 최대 둘
@@ -78,11 +93,21 @@ def roof_blackout(smap: gsurf.SurfaceMap,
         # 담으므로 지붕 양 옆에 본색 띠가 남아 블랙아웃이 지붕 위에 얹힌 검은
         # 판으로 보인다. 넘긴 몫은 면 마스크가 알아서 자른다 (레퍼런스의 검은
         # 지붕은 필러까지 통째다 — HINATA·수이세이).
-        out.append({"shape": "A_01",
-                    "x": round((bu0 + bu1) / 2, 1), "y": round((bv0 + bv1) / 2, 1),
-                    "sx": round(0.96 * (bu1 - bu0) / 2 / UNITS_PER_SCALE, 3),
-                    "sy": round(1.18 * (bv1 - bv0) / 2 / UNITS_PER_SCALE, 3),
-                    "rot": 0.0, "rgb": list(ROOF_DARK)})
+        # 앞선은 구간 앞끝 안쪽(뜯는 조각이 덮는다), 뒷선은 구간 뒤끝 **너머**다.
+        # 넘기는 몫은 **다음 구간까지 남은 틈의 절반**을 안 넘는다 — 넘으면
+        # 검정이 데크 앞머리를 물어 투톤 경계가 데크로 내려온다.
+        seg = bu1 - bu0
+        gap = next((a - bu1 for a, _b, _c, _d in segs if a > bu1), None)
+        tail = ROOF_TAIL_OVER * seg
+        if gap is not None:
+            tail = min(tail, 0.5 * gap)
+        pu0, pu1 = bu0 + ROOF_HEAD_IN * seg, bu1 + tail
+        sy = min(1.18 * (bv1 - bv0) / 2 / UNITS_PER_SCALE, cap_v)
+        for tx, tsx in band_tiles(pu0, pu1, cap_u):
+            out.append({"shape": "A_01",
+                        "x": round(tx, 1), "y": round((bv0 + bv1) / 2, 1),
+                        "sx": round(tsx, 3), "sy": round(sy, 3),
+                        "rot": 0.0, "rgb": list(ROOF_DARK)})
         if not first:
             continue
         first = False

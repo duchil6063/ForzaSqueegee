@@ -677,9 +677,10 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       + _motifs(motif_c, rs, cat, n=_n(7), shapes=motifs_v)})
         used.add(ROLE_REAR)
         notes.append(msg("리어에 관통 띠 + 모티프를 잇는다"))
-    # 프론트 — 자리는 **내접 상자**다: 도색 상자 비율로 놓으면 띠가 그릴(비도색)에
-    # 떨어져 안 보인다 (2026-08-18 캡처 실측). 스케일 상한도 따로 준다 (front는
-    # ±2.3쯤에서 원형으로 감긴다).
+    # 프론트 — **높이**는 내접 상자가 잡는다: 도색 상자 비율로 놓으면 띠가
+    # 그릴(비도색)에 떨어져 안 보인다 (2026-08-18 캡처 실측). 길이는 면 폭이고
+    # (`flow_shapes`), 상한을 넘는 몫은 나눠 깐다 — front는 스케일이 ±2.3쯤에서
+    # 원형으로 감기므로 한 장으로는 면을 못 건넌다.
     fs = maps.get("front")
     if deco and "front" not in used and fs is not None \
             and (not fs.uncertain or _deco_usable(fs)):

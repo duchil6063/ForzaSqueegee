@@ -50,8 +50,15 @@ from .vocabulary import _RING8, edge_shapes, motif_shapes
 from .roof import ROOF_DARK
 
 
-# 띠가 캔버스 끝에 딱 붙으면 기울일 때 모서리가 밖으로 나간다 — 조금 줄인다
+# 모티프가 캔버스 끝에 딱 붙으면 기울일 때 모서리가 밖으로 나간다 — 조금 줄인다
 DECO_FRAME_FILL = 0.98
+
+
+# **로커 띠는 캔버스 끝까지 간다.** 캔버스가 곧 옆면 도색 폭이라(`build`의 `ds`)
+# 여기서 물러난 몫이 그대로 패널 안의 곧은 단면이 된다 — 0.98로는 띠가 앞뒤로
+# 8.7·4.7유닛 모자라 사이드실 끝에 사각 단면이 남았다 (Evo VIII 실측).
+# 산포와 갈리는 이유: 띠는 안 기울고(rot 0), 넘친 몫은 면 마스크가 자른다.
+DECO_BAND_FILL = 1.0
 
 
 # 후보에 쓰는 계열 수 (순위 앞에서부터). 다섯 다 써도 되지만 뒤의 것은 거의 안 이긴다.
@@ -180,7 +187,7 @@ def _keyline_color(pal: RolePalette) -> tuple[int, int, int]:
 def _rocker(fld: CompositionField, lk: Look, cat: Catalog, car_rgb, vocab) -> list[Layer]:
     frame = _replace(lk, box=fld.frame_box, hull=None)
     return stripe_layers(frame, ROOF_DARK, cat, shapes=vocab, car=car_rgb,
-                         length=DECO_FRAME_FILL * (fld.frame_box[2] - fld.frame_box[0]))
+                         length=DECO_BAND_FILL * (fld.frame_box[2] - fld.frame_box[0]))
 
 
 def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
