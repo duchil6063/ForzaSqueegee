@@ -50,6 +50,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from ..catalog import Catalog
@@ -122,6 +123,101 @@ def _joint_at(path_g: np.ndarray, pt: np.ndarray) -> int:
     """이음 중점에 가장 가까운 경로 표본 인덱스 (path_g는 (y,x), pt는 (x,y))."""
     xy = np.stack([path_g[:, 1], path_g[:, 0]], axis=1).astype(np.float64)
     return int(np.argmin(((xy - pt) ** 2).sum(axis=1)))
+
+
+# ── 교차점 지표 (`_junction_metrics`) ──────────────────────────────────
+# 한 획 **안**의 이음은 `joint_*`가 이미 잰다. 여기서 재는 것은 **획끼리**
+# 만나는 자리다 — T·Y·X 교차. 사람이 그은 선에서 그 자리는 그냥 지나가는데,
+# 우리 판에서는 두 획이 각자 제 경로만 보고 서 있어 끊기거나(틈) 서로 겹쳐
+# 뭉치거나(배부름) 방향이 어긋난다.
+#
+# 자리는 뼈대의 접합점 그대로다 (`skeleton._paths`의 head_j·tail_j) — 새
+# 검출이 없다. 재는 것은 **놓인 잉크 라스터**이므로 "도안이 실제로 그런가"다.
+#
+# **참여한 마디만 본다.** 창 안 잉크 전부를 세면 선망이 조밀한 자리에서는
+# 지나가는 남의 획이 늘 한 성분 더 잡혀, "이 접합점이 끊겼나"가 아니라
+# "근처에 다른 선이 있나"를 재게 된다. 그래서 성분·두께는 그 접합점에서
+# 만나기로 한 **끝 마디들**의 잉크로만 센다.
+_J_BULGE = 1.6          # 이 배 넘게 굵으면 뭉친 것이다
+_J_R = 2.5              # 창 반경 = 이 배 × 획 폭
+
+
+def _junction_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float,
+                      by: dict[int, list]) -> dict:
+    """획끼리 만나는 자리의 틈·뭉침·접선 오차 (계측 전용)."""
+    from .geometry import _poly_px
+
+    w, h = plan.image_size
+    dmap = descriptors(cat)
+    ends: dict[tuple[int, int], list] = {}
+    for s in rec.strokes:
+        lays = by.get(s.sid) or []
+        if not s.shapes or not lays or len(s.path) < 2:
+            continue
+        pg = np.stack([s.path[:, 0] + s.roi[1], s.path[:, 1] + s.roi[0]],
+                      axis=1).astype(np.float64)
+        k = max(1, min(3, len(pg) - 1))
+        for jid, i, j in ((s.head_j, 0, k), (s.tail_j, -1, -1 - k)):
+            if jid < 0:
+                continue
+            pt = np.array([pg[i][1], pg[i][0]])          # (x, y)
+            aw = np.array([pg[j][1] - pg[i][1], pg[j][0] - pg[i][0]])
+            n = float(np.hypot(*aw))
+            if n < 1e-9:
+                continue
+            best = None
+            for lay in lays:
+                got = chain.line_of(dmap.get(lay.shape), lay, upp, w, h)
+                if got is None:
+                    continue
+                for q, t in ((got[0], -got[2]), (got[1], got[3])):
+                    d = float(np.hypot(*(q - pt)))
+                    if best is None or d < best[0]:
+                        best = (d, lay, t)
+            if best is None:
+                continue
+            ends.setdefault((s.comp, int(jid)), []).append(
+                (s.sid, pt, aw / n, float(s.width), best[1], best[2], best[0]))
+    junc = [v for v in ends.values() if len({e[0] for e in v}) >= 2]
+    if not junc:
+        return {}
+    n_gap = n_bulge = 0
+    terr: list[float] = []
+    for v in junc:
+        pt = np.mean([e[1] for e in v], axis=0)
+        wmed = float(np.median([e[3] for e in v]))
+        r = max(4, int(round(_J_R * max(wmed, 1.0))))
+        x0 = max(0, int(pt[0]) - r); x1 = min(w, int(pt[0]) + r + 1)
+        y0 = max(0, int(pt[1]) - r); y1 = min(h, int(pt[1]) + r + 1)
+        if x1 - x0 < 3 or y1 - y0 < 3:
+            continue
+        m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        off = np.array([x0, y0], np.int32)
+        for _sid, _pt, _tv, _wp, lay, _t, _d in v:
+            for poly in _poly_px(cat, lay, upp, w, h):
+                cv2.fillPoly(m, [np.round(poly).astype(np.int32) - off], 1)
+        # ① 틈 — 만나기로 한 마디들의 잉크가 한 덩이가 아니면 안 만난 것이다
+        if cv2.connectedComponents(m, connectivity=8)[0] - 1 != 1:
+            n_gap += 1
+        # ② 뭉침 — 그 자리 두께가 제 폭의 배를 넘나
+        if wmed > 1e-6 and m.any() and (
+                2.0 * float(cv2.distanceTransform(m, cv2.DIST_L2, 3).max())
+                > _J_BULGE * wmed):
+            n_bulge += 1
+        # ③ 접선 — 놓인 도형의 끝 방향이 경로와 어긋난 각
+        for _sid, _pt, tv, wp, _lay, t, d in v:
+            if d > 2.0 * max(wmed, 1.0) + 2.0:
+                continue
+            cos = abs(float(np.clip(np.dot(t, tv), -1.0, 1.0)))
+            terr.append(float(np.degrees(np.arccos(cos))))
+    n = len(junc)
+    out = {"junction_n": n,
+           "junction_gap_rate": round(n_gap / n, 4),
+           "junction_bulge_rate": round(n_bulge / n, 4)}
+    if terr:
+        out["junction_tangent_error"] = round(float(np.median(terr)), 1)
+        out["junction_tangent_p90"] = round(_pct(np.asarray(terr), 90), 1)
+    return out
 
 
 def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float,
@@ -289,4 +385,5 @@ def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float,
         "reach_miss_med": round(float(np.median(reach)), 2) if reach else 0.0,
         "seam_ratio": (round(n_seam / max(1, sum(nsh)), 4) if nsh else 0.0),
     }
+    out.update(_junction_metrics(plan, rec, cat, upp, by))
     return out

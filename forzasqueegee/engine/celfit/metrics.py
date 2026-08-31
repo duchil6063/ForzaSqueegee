@@ -42,7 +42,7 @@ from ..catalog import Catalog
 from ..celart import CelArt
 from ..celart.marks import _MARK_DE, _MARK_RATIO
 from ..model import LayerPlan
-from . import residual
+from . import economy, residual
 from .geometry import _poly_px
 
 # "색이 틀렸다"의 문턱 — `residual._THR`과 같은 자
@@ -463,6 +463,10 @@ def plan_metrics(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     # 자리(`de <= _THR`)를 놓고 성분 수와 구멍 수를 목표와 견준다 — 사람 도안이
     # 한 덩이로 유지하는 형태를 기계가 부스러기로 흩는지가 여기서 보인다
     out.update(_topology(cel, de, min_area=40))
+
+    # ── §10 **레이어 경제** — 한 장이 무엇 때문에 팔렸나 (`economy` 문서)
+    out.update(economy.layer_economy(cel, cat, plan.layers, labels, reg_of,
+                                     vis, value, owner))
 
     # ── 중요도 가중 재현 오차 — 값 맵으로 가중한 ΔE (눈에 띄는 자리 우선)
     insil = cel.labels >= 0

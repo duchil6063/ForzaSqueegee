@@ -469,6 +469,17 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
 
     stats.update(_reorder(plan, cel, cat, log=log))
     _snap("s5_reorder")
+    # §29 **교차점** — 획끼리 만나는 자리를 라스터에서 맞춘다 (레이어 0장).
+    # 전역 미세 조정 **다음**이라야 그 손이 되돌리지 않고, 봉인 **앞**이라야
+    # 옮긴 잉크가 드러낸 표본을 봉인이 막는다 (`celfit.junction` 문서)
+    _jrec = stats.get("_rec") or line_rec
+    if _jrec is not None and line_mask is not None:
+        from .celfit import junction as _junc
+
+        n_j = _junc.close_gaps(plan, cat, 900.0 / h, (w, h), _jrec.strokes,
+                               line_mask, cel.labels < 0, stats)
+        if n_j:
+            log(msg("  교차점 정리: 끝 마디 {n}회 이동 (도형 0장)", n=n_j))
     # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
     # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).
