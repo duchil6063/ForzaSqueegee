@@ -5,7 +5,7 @@
     python tools/geom_check.py --dump --limit 40  # 없는 덤프를 그 자리에서 뜬다
 
 꾸밈 기하를 메시로 옮기기 전에 **덤프가 우리 좌표계에 맞는가**를 먼저 판정한다.
-다섯을 잰다:
+여섯을 잰다:
 
 - `[box]`  면 유닛 상자·격자 모양이 설치 마스크와 같은가 (여기가 틀리면 나머지는
            볼 것도 없다).
@@ -23,6 +23,10 @@
 - `[cross]` **면끼리의 깊이 일관성** — 옆면 한 점을 세계로 풀어 윗면에 던지고,
            윗면이 그 자리에서 말하는 깊이와 옆면이 말한 높이를 견준다. 접기
            그래프를 메시로 갈아 끼울 때(`game.hull`) 이 값이 합격선이 된다.
+- `[seam]` 이음선을 세 자로 재서 견준다 (마스크 끝 · 실루엣 껍질 · 메시).
+           `fold`가 실제로 **받아쓰는 몫**까지 낸다 — `SEAM_TOL` 밖은 마스크
+           끝선 그대로 간다. 옆면에서 나가는 짝은 메시가 실루엣에 넘기므로
+           (x축 방향 다툼, `hull.MeshHull` 참조) 두 값이 같게 나온다.
 """
 
 from __future__ import annotations
@@ -36,7 +40,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from forzasqueegee.game import carfiles, fsgeom, locators as gl, seam as gseam  # noqa: E402
+from forzasqueegee.game import (  # noqa: E402
+    carfiles, fold as gfold, fsgeom, hull as ghull, locators as gl, seam as gseam)
 
 BODY = ("front", "rear", "top", "side_left", "side_right")
 
@@ -179,6 +184,42 @@ def check_cross(media: str, geom: fsgeom.CarGeom, rows: list,
                      float(same.sum() / max(1, ok.sum())), med, med * upm))
 
 
+# ---------- [seam] ----------
+def check_seam(media: str, maps: dict, rows: list) -> None:
+    """이음선을 세 자로 재서 견준다 — 마스크 끝 · 실루엣 껍질 · 메시.
+
+    참값은 없다. 보는 것은 **메시가 마스크 끝선에서 얼마나 옮기나**이고, 그것이
+    `fold`가 실제로 받아 쓰는 보정이다 (`SEAM_TOL` 울타리 안일 때만).
+    """
+    sil = ghull.build(maps)
+    mesh = ghull.mesh_of(media, base=sil)
+    if mesh is None:
+        return
+    for src in gfold.BODY:
+        if src not in maps:
+            continue
+        for dst in gfold.neighbors(src):
+            if dst not in maps or dst not in gfold.BODY:
+                continue
+            # `fold.fold`와 같은 셈이다: src는 dst가 밖으로 보는 축으로 넘치고,
+            # dst는 src가 밖으로 보는 축의 **반대**로 들어온다.
+            out_l, out_s = ghull._depth_axis(dst)
+            in_l, in_s = ghull._depth_axis(src)
+            s_ax = gfold._find(src, out_l)
+            d_ax = gfold._find(dst, in_l)
+            if s_ax is None or d_ax is None:
+                continue
+            e_s = gfold.edge_line(maps[src], s_ax[0], out_s * s_ax[2])
+            e_d = gfold.edge_line(maps[dst], d_ax[0], in_s * d_ax[2])
+            if e_s is None or e_d is None:
+                continue
+            i = d_ax[1]
+            ext = abs(maps[dst].paint[i + 2] - maps[dst].paint[i]) or 1.0
+            got_s = sil.seam(src, dst, e_s) if sil is not None else None
+            got_m = mesh.seam(src, dst, e_s)
+            rows.append((media, f"{src}→{dst}", e_d, got_s, got_m, ext))
+
+
 # ---------- 판 ----------
 def one(media: str, geom: fsgeom.CarGeom, acc: dict) -> None:
     try:
@@ -191,6 +232,7 @@ def one(media: str, geom: fsgeom.CarGeom, acc: dict) -> None:
     check_scale(media, geom, acc["scale"])
     check_k(media, geom, maps, acc["k"])
     check_cross(media, geom, acc["cross"])
+    check_seam(media, maps, acc["seam"])
 
 
 def main() -> int:
@@ -213,7 +255,7 @@ def main() -> int:
         print("덤프가 없다 — `--dump`로 뜨거나 work/geom에 놓을 것")
         return 2
 
-    acc = {"cover": [], "scale": [], "k": [], "cross": []}
+    acc = {"cover": [], "scale": [], "k": [], "cross": [], "seam": []}
     print("[box]")
     done = 0
     for media in names:
@@ -280,6 +322,25 @@ def main() -> int:
                   f"같은면 {np.nanmedian(a[:, 1]):.2f}  어긋남 중앙 "
                   f"{np.nanmedian(a[:, 3]):.2f} 유닛 · p90 "
                   f"{np.nanpercentile(a[:, 3], 90):.2f}")
+
+    print("[seam] 이음선 — 마스크 끝선에서 얼마나 옮기나 (목적 면 크기의 몫)")
+    print(f"    `fold`는 {gfold.SEAM_TOL:.0%} 안쪽만 받는다 — 밖은 마스크 끝선 그대로다")
+    per4: dict[str, list] = {}
+    for _m, pair, e_d, got_s, got_m, ext in acc["seam"]:
+        per4.setdefault(pair, []).append(
+            (abs(got_s - e_d) / ext if got_s is not None else np.nan,
+             abs(got_m - e_d) / ext if got_m is not None else np.nan,
+             1.0 if got_s is not None else 0.0,
+             1.0 if got_m is not None else 0.0))
+    for pair in sorted(per4):
+        a = np.array(per4[pair], float)
+        with np.errstate(invalid="ignore"):
+            ms = np.nanmedian(a[:, 0]) if np.isfinite(a[:, 0]).any() else np.nan
+            mm = np.nanmedian(a[:, 1]) if np.isfinite(a[:, 1]).any() else np.nan
+            take = np.mean(a[:, 1][np.isfinite(a[:, 1])] <= gfold.SEAM_TOL) \
+                if np.isfinite(a[:, 1]).any() else np.nan
+        print(f"    {pair:22s} 실루엣 {ms * 100:5.1f}%({a[:, 2].mean():.2f})  "
+              f"메시 {mm * 100:5.1f}%({a[:, 3].mean():.2f})  받아쓴 몫 {take:.2f}")
 
     print("FAIL" if FAILS else "PASS", len(FAILS))
     return 1 if FAILS else 0

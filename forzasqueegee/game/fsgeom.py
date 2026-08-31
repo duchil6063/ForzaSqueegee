@@ -77,6 +77,15 @@ SLOT_TAB: tuple[str, ...] = (
 # 세계 축 번호 → 글자 (`game.fold`의 규약).
 AXIS_LETTER = ("x", "y", "z")
 
+# **거울을 여기서 편다.** 덤프의 세계는 FLS의 `mirroredCarSpace`라 x가 게임과
+# 반대다: `Locators.xml`은 왼쪽 휠을 x 음수에 두는데 덤프의 `side_left` 깊이는
+# +0.78 m다 (설치본 13대 전부). 그래서 이 모듈이 내는 세계 좌표는 언제나 게임
+# 규약이다 (`game.fold`·`game.locators`와 같은 자 — **+x = 차의 오른쪽**).
+#
+# **면에서 면으로 갈 때는 상쇄된다** (`plane`이 곱한 것을 `to_face`가 되나눈다).
+# 이 부호가 실제로 드러나는 자리는 덤프 좌표를 **로케이터 미터와 섞을 때**뿐이다.
+MIRROR = {"x": -1.0, "y": 1.0, "z": 1.0}
+
 
 @dataclass
 class SideGeom:
@@ -145,13 +154,15 @@ class SideGeom:
                 (ay, top, bottom, self.y_axis, self.y_scale, 1)):
             t = (val - lo) / max(1e-9, hi - lo)
             px = self.proj_min[i] + t * (self.proj_max[i] - self.proj_min[i])
-            got[AXIS_LETTER[axis]] = px / (sgn if sgn else 1.0)
+            letter = AXIS_LETTER[axis]
+            got[letter] = px / (sgn if sgn else 1.0) * MIRROR[letter]
         return got
 
     def world(self, u, v) -> dict[str, np.ndarray]:
         """면 유닛 → **차 표면의 세계 좌표 셋** (깊이가 없으면 그 축이 NaN)."""
         got = self.plane(u, v)
-        got[AXIS_LETTER[self.depth_axis]] = self.at(u, v)
+        letter = AXIS_LETTER[self.depth_axis]
+        got[letter] = self.at(u, v) * MIRROR[letter]
         return got
 
     def to_face(self, w: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
@@ -161,7 +172,9 @@ class SideGeom:
         for lo, hi, axis, sgn, i in (
                 (left, right, self.x_axis, self.x_scale, 0),
                 (top, bottom, self.y_axis, self.y_scale, 1)):
-            px = np.asarray(w[AXIS_LETTER[axis]], float) * (sgn if sgn else 1.0)
+            letter = AXIS_LETTER[axis]
+            px = (np.asarray(w[letter], float) * MIRROR[letter]
+                  * (sgn if sgn else 1.0))
             span = self.proj_max[i] - self.proj_min[i]
             vals.append(lo + (px - self.proj_min[i]) / max(1e-9, span) * (hi - lo))
         return _to_face(vals[0], vals[1], self.origin[0], self.origin[1],

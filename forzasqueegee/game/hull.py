@@ -73,6 +73,9 @@ GRAD_WIN = 0.04
 HEAD_ON_MIN = 0.5
 # 이음선이 껍질 밖일 때 안쪽으로 들이는 걸음 (면 크기의 몫 × 횟수).
 _SEAM_STEP, _SEAM_STEPS = 0.01, 12
+# 메시 이음선이 그 열을 **읽었다**고 볼 조건 — 살아 있는 표본의 몫과, 옮긴
+# 자리가 한 줄로 모인 정도 (목적 면 크기의 몫). `MeshHull.seam` 참조.
+_SEAM_MIN_FRAC, _SEAM_SPREAD = 0.40, 0.25
 # 깊이가 **두 실루엣에 함께 걸리는** 면들 — 이 면과 옆·윗면 사이에서만 껍질이
 # 이음선을 고쳐 준다 (`Hull.seam` 참조).
 _FASCIA = ("front", "rear")
@@ -453,8 +456,167 @@ def _silhouette(smap: SurfaceMap, ax0: str, ax1: str, g0: np.ndarray,
     return _sample(smap, U, V)
 
 
+# ---------- 메시 껍질 ----------
+class MeshHull:
+    """FLS 기하 덤프로 선 껍질 — **실루엣 어림이 아니라 차 메시 그 자체**다.
+
+    `Hull`과 표면이 같다 (`seam`·`head_on`) — 부르는 쪽은 어느 쪽을 쥐었는지
+    모른다 (`of`가 고른다). 갈리는 것은 근거다:
+
+    | | `Hull` | `MeshHull` |
+    |---|---|---|
+    | 깊이 | 옆·윗 실루엣 둘의 교집합 | 면마다 뜬 **깊이 래스터** |
+    | 면 사이 | 축 표 + 바닥선 맞춤 | 덤프의 투영 상수 (닫힌 식) |
+    | 유리 | 못 다룬다 | 윈드실드·뒷유리는 다룬다 (도어 유리는 래스터가 빈다) |
+
+    실측 (2026-08-31, 14대 — `tools/geom_check.py`): 한 면의 점을 세계로 풀어
+    이웃 면에 던져 두 면이 말하는 깊이를 견주면 짝 다섯이 전부 **1유닛 아래**로
+    맞는다 (`side_left→top` 0.50 · `front→side_left` 0.55 · `front→top` 0.17 ·
+    `rear→side_left` 0.57 · `rear→top` 0.37). 마스크 끝선으로 잡던 이음선은
+    차 크기의 4.7%(옆면 900유닛이면 42유닛)였다.
+
+    **옆면에서 나가는 이음선은 아직 실루엣이 낸다** (`base`) — 그 짝은 옆면의
+    **깊이가 x축**이고, 덤프의 x 방향과 `fold.AXES`의 x 방향이 갈린다. 크기는
+    맞는데 부호가 반대다 (미아타 실측: 옆면 표면을 앞면에 던지면 u −130,
+    마스크 끝선은 +143 — 절댓값은 9% 안에서 맞는다). 덤프 안에서만 오가면
+    부호가 상쇄되어 `[cross]`가 못 잡고, 마스크와 대는 순간 드러난다.
+    가르는 것은 **인게임 캡처 한 장**이다 (윗면 탭 v>0이 차의 어느 쪽인가) —
+    `fold.AXES`의 x 방향은 2026-08-17 캡처에서 **유도**한 것이지 잰 것이 아니다.
+    """
+
+    def __init__(self, geom, base: "Hull | None" = None, note: str = ""):
+        self.geom = geom
+        self.base = base
+        self.note = note or f"메시 {len(geom.sides)}면"
+        self._cos: dict[str, np.ndarray] = {}
+
+    def _side(self, name: str):
+        s = self.geom.get(name)
+        return s if s is not None and s.depth is not None else None
+
+    # ---------- 이음선 ----------
+    def seam(self, src: str, dst: str, edge: float,
+             span: tuple[float, float] | None = None,
+             n: int = 65) -> float | None:
+        """src 유닛의 이음선(`edge`)이 **dst 유닛의 어디인가** — 중앙값.
+
+        `Hull.seam`과 하는 일이 같다: 이음선 위의 점을 차 표면으로 되짚고
+        (여기서 깊이 래스터가 들어온다) 그 점을 dst 유닛으로 옮긴다.
+
+        **깊이가 x축인 면(옆면)에서 나가는 짝은 실루엣에 넘긴다** — 클래스
+        설명의 x 방향 다툼이 그 짝에서만 답에 실린다.
+        """
+        s, d = self._side(src), self._side(dst)
+        if s is None or d is None or _depth_axis(src)[0] == "x":
+            return self.base.seam(src, dst, edge, span=span) \
+                if self.base is not None else None
+        s_ax = gfold._find(src, _depth_axis(dst)[0])       # 넘침 축
+        d_ax = gfold._find(dst, _depth_axis(src)[0])       # dst의 들어오는 축
+        sh = gfold._shared(src, dst)
+        if s_ax is None or d_ax is None or sh is None:
+            return None
+        w_ax = gfold._find(src, sh)
+        if w_ax is None or w_ax[0] == s_ax[0]:
+            return None
+        i = 0 if w_ax[0] == "u" else 1
+        lo, hi = span if span is not None else (s.box[i], s.box[i + 2])
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            lo, hi = s.box[i], s.box[i + 2]
+        ws = np.linspace(min(lo, hi), max(lo, hi), n)
+        # 면 상자 맨 끝은 **차가 아니다**. 앞면 상자의 바깥 열에 남는 것은 미러
+        # 스토크·뒤 펜더처럼 그 방향을 보는 딴 자리이고(미아타 실측: u=143 열에서
+        # 40칸 중 10칸만 살아 있고 그 깊이가 z −0.91~+1.13으로 흩어진다),
+        # 중앙값을 그대로 쓰면 이음선이 차 한가운데에 앉는다 (side u −17).
+        #
+        # 그래서 **안쪽으로 한 발씩 들이며 두 가지가 같이 설 때까지** 본다:
+        # 살아 있는 칸이 넉넉하고(`_SEAM_MIN_FRAC`), 옮긴 자리가 한 줄로
+        # 모여 있어야 한다(`_SEAM_SPREAD` — 흩어져 있으면 딴 표면을 물었다).
+        d_s = _depth_axis(dst)[1] * s_ax[2]         # +면 좌표가 커질 때 넘친다
+        j = 0 if s_ax[0] == "u" else 1
+        ext = abs(s.box[j + 2] - s.box[j]) or 1.0
+        di = d_ax[1]
+        dext = abs(d.box[di + 2] - d.box[di]) or 1.0
+        for k in range(_SEAM_STEPS + 1):
+            e = float(edge) - d_s * k * _SEAM_STEP * ext
+            es = np.full(n, e)
+            u, v = (es, ws) if s_ax[0] == "u" else (ws, es)
+            du, dv = d.to_face(s.world(u, v))
+            got = np.asarray(du if d_ax[0] == "u" else dv, float)
+            got = got[np.isfinite(got)]
+            if len(got) < max(3, int(_SEAM_MIN_FRAC * n)):
+                continue
+            spread = float(np.percentile(got, 75) - np.percentile(got, 25))
+            if spread <= _SEAM_SPREAD * dext:
+                return float(np.median(got))
+        return None
+
+    # ---------- 정면도 ----------
+    def head_on(self, name: str, smap: SurfaceMap) -> np.ndarray | None:
+        """`smap` 마스크 격자 위의 **정면도** (0~1). 못 재면 None.
+
+        참 깊이의 기울기다 — 표면이 없는 칸(래스터 NaN)은 0이다. 그 자리는
+        "눌려서 안 보인다"가 아니라 아예 차가 없는 자리다.
+        """
+        cos = self._cos_of(name)
+        if cos is None or smap.mask.size <= 1:
+            return None
+        s = self.geom.get(name)
+        mh, mw = smap.mask.shape
+        u0, v0, u1, v1 = smap.paint
+        us = u0 + (np.arange(mw) + 0.5) / mw * (u1 - u0)
+        vs = v1 - (np.arange(mh) + 0.5) / mh * (v1 - v0)
+        U, V = np.meshgrid(us, vs)
+        b0, c0, b1, c1 = s.box
+        h, w = cos.shape
+        ci = np.round((U - b0) / max(1e-9, b1 - b0) * (w - 1))
+        ri = np.round((c1 - V) / max(1e-9, c1 - c0) * (h - 1))
+        ok = (ci >= 0) & (ci < w) & (ri >= 0) & (ri < h)
+        out = np.zeros(U.shape, np.float32)
+        out[ok] = cos[np.clip(ri, 0, h - 1).astype(int),
+                      np.clip(ci, 0, w - 1).astype(int)][ok]
+        return out
+
+    def _cos_of(self, name: str) -> np.ndarray | None:
+        if name in self._cos:
+            return self._cos[name]
+        s = self._side(name)
+        got = None
+        if s is not None:
+            d = _smooth(s.depth.astype(float))
+            if np.isfinite(d).any():
+                # 칸 하나 = 면 유닛 하나 = 1/유닛당미터 미터. 기울기는 **미터
+                # 대 미터**라야 코사인이 된다.
+                ku, kv = s.units_per_m
+                gu = _wide_grad(d, 1.0 / max(1e-6, ku), 1)
+                gv = _wide_grad(d, 1.0 / max(1e-6, kv), 0)
+                s2 = np.nan_to_num(gu) ** 2 + np.nan_to_num(gv) ** 2
+                live = np.isfinite(gu) & np.isfinite(gv)
+                got = np.where(live, 1.0 / np.sqrt(1.0 + s2), 0.0).astype(np.float32)
+        self._cos[name] = got
+        return got
+
+
+def mesh_of(media: str | None, base: "Hull | None" = None) -> "MeshHull | None":
+    """그 차의 메시 껍질 — 떠 둔 기하 덤프가 있고 차체 면이 둘 이상일 때만.
+
+    `base`(실루엣 껍질)는 메시가 아직 못 내는 이음선을 받는다 (`MeshHull.seam`).
+    """
+    if not media:
+        return None
+    from . import fsgeom
+
+    geom = fsgeom.for_car(media)
+    if geom is None:
+        return None
+    body = [n for n in gfold.BODY
+            if (s := geom.get(n)) is not None and s.depth is not None]
+    if len(body) < 2:
+        return None
+    return MeshHull(geom, base=base, note=f"메시 {media} (차체 {len(body)}면)")
+
+
 # ---------- 캐시 ----------
-_CACHE: dict[tuple, "Hull | None"] = {}
+_CACHE: dict[tuple, "Hull | MeshHull | None"] = {}
 _CACHE_MAX = 4
 
 
@@ -468,15 +630,24 @@ def _sig(maps: dict[str, SurfaceMap]) -> tuple:
     return tuple(out)
 
 
-def of(maps: dict[str, SurfaceMap]) -> Hull | None:
-    """이 면 지도의 껍질 (한 번 지으면 캐시). 못 지으면 None."""
-    key = _sig(maps)
+def of(maps: dict[str, SurfaceMap],
+       media: str | None = None) -> "Hull | MeshHull | None":
+    """이 면 지도의 껍질 (한 번 지으면 캐시). 못 지으면 None.
+
+    `media`를 주고 그 차의 기하 덤프가 떠 있으면 **메시 껍질**이다 (`MeshHull`) —
+    실루엣 교집합보다 정확하다. 없으면 지금까지처럼 실루엣으로 짓는다.
+    """
+    key = (media,) + _sig(maps)
     if key in _CACHE:
         return _CACHE[key]
     try:
         got = build(maps)
     except Exception:                              # noqa: BLE001 — 껍질 없이도 산다
         got = None
+    try:
+        got = mesh_of(media, base=got) or got
+    except Exception:                              # noqa: BLE001 — 덤프가 이상해도 산다
+        pass
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
     _CACHE[key] = got

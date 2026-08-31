@@ -58,8 +58,8 @@ def _pillar_hints(rigs: dict[str, "SideRig"]
 
 def _all_folds(name: str, maps: dict[str, gsurf.SurfaceMap],
                rigs: dict[str, "SideRig"],
-               box: tuple[float, float, float, float] | None = None
-               ) -> list[gfold.Fold]:
+               box: tuple[float, float, float, float] | None = None,
+               media: str | None = None) -> list[gfold.Fold]:
     """이 면에서 이웃 면으로 나가는 변환 **전부** — 차체 모서리 + 유리 이음새.
 
     유리도 차체와 같은 그래프의 면이다 (2026-08-21): 옆면 ↔ 도어 유리는
@@ -69,9 +69,10 @@ def _all_folds(name: str, maps: dict[str, gsurf.SurfaceMap],
 
     차체 모서리의 이음선은 **껍질**이 되짚는다 (`game.hull`) — 앞·뒤 면과 옆·윗면은
     같은 모서리를 서로 다른 깊이에서 쥐어서, 마스크 끝선끼리 붙이면 자리가 수십
-    유닛 어긋난다.
+    유닛 어긋난다. `media`를 주고 그 차의 기하 덤프가 떠 있으면 껍질이 **차
+    메시**다 (`hull.MeshHull`) — 실루엣 어림보다 정확하다.
     """
-    cand = gfold.folds_for(maps, name, box=box, hull=ghull.of(maps))
+    cand = gfold.folds_for(maps, name, box=box, hull=ghull.of(maps, media))
     if name in ("side_left", "side_right"):
         wname = "window_" + name.split("_")[-1]
         if name in rigs and wname in maps:

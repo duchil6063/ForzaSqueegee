@@ -273,7 +273,8 @@ EXPOSED_FULL = ghull.HEAD_ON_MIN   # 이 정면도부터는 온전히 밝다
 
 
 def surface_exposure(name: str, smap: gsurf.SurfaceMap,
-                     maps: dict[str, gsurf.SurfaceMap]) -> np.ndarray | None:
+                     maps: dict[str, gsurf.SurfaceMap],
+                     media: str | None = None) -> np.ndarray | None:
     """이 면이 도안을 **실제로 내보이는 정도** (0~1) — `smap` 마스크 격자 위.
 
     도색 마스크는 "게임이 여기에 칠한다"까지만 말한다. 그 위에 한 겹이 더
@@ -288,8 +289,13 @@ def surface_exposure(name: str, smap: gsurf.SurfaceMap,
     (`drawable` — 옆면 그린하우스는 벨트라인 아래로, 윗면 앞·뒷유리는 프로브가
     잰 띠로 잘려 있다, `game.seam`). 이 자는 "그려지기는 하는데 눌려서 안
     보이는" 자리만 잰다.
+
+    **메시 껍질이면 한 가지가 더 0이 된다** (`media`를 주고 그 차의 기하 덤프가
+    떠 있을 때 — `hull.MeshHull`): 마스크는 칠한다는데 **그 방향에서 보이는
+    표면이 아예 없는** 칸이다 (옆면 그린하우스·윗면 유리 — 차체 메시에 없다).
+    표시용이라는 뜻은 같다 — 둘 다 "도안이 여기서는 안 보인다"이다.
     """
-    h = ghull.of(maps)
+    h = ghull.of(maps, media)
     return h.head_on(name, smap) if h is not None else None
 
 

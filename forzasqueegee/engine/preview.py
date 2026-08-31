@@ -334,7 +334,8 @@ def render_config(cfg_path: Path, out_path: Path | None = None,
         try:
             panels[name] = render_surface(
                 item, smap, Path(cfg_path).parent, cat, base, mask_map=mm,
-                exposure=compose.surface_exposure(name, mm, maps))
+                exposure=compose.surface_exposure(
+                    name, mm, maps, media or raw.get("media")))
         except Exception as e:
             log(msg("미리보기 {name} 실패: {kind}: {err}",
                     name=name, kind=type(e).__name__, err=e))

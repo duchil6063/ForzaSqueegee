@@ -489,7 +489,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     def _face_folds(name: str) -> list[gfold.Fold]:
         if name not in _fold_memo:
             try:
-                got = [f for f in _all_folds(name, maps, rigs) if f.dst in maps]
+                got = [f for f in _all_folds(name, maps, rigs, media=pinned)
+                       if f.dst in maps]
             except Exception:                    # 지도가 모자란 차 — 투영을 접는다
                 got = []
             _fold_memo[name] = got
