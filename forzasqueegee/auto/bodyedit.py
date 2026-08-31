@@ -336,7 +336,11 @@ class BodyEditor:
         x0, y0, x1, y1 = GROUP_LAYERS_REL
         crop = img[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
         gl = ocr._count_glyphs(crop, crop.min(axis=2) > 200)
-        return ocr._count_digits(gl)
+        n = ocr._count_digits(gl)
+        # 저장 그룹은 최소 2장이다 (게임이 그 미만 저장을 거부한다) — 0은 패널
+        # 자리표시자/미정착 판독이라 실패(None)로 본다. 0을 값으로 흘리면
+        # walk_groups의 조용함 계산이 오염돼 실제 그룹 셀을 못 가 본다.
+        return None if n == 0 else n
 
     def group_cell(self, img: np.ndarray | None = None) -> tuple[int, int] | None:
         """그리드에서 선택된 셀 (row, col). 미검출 시 None (라임 테두리 기준)."""
@@ -362,7 +366,7 @@ class BodyEditor:
         row = round((cy / h - GRID_CELL0[1]) / GRID_STRIDE[1])
         return (int(row), int(col)) if row >= 0 and 0 <= col < GRID_COLS else None
 
-    def group_layers_stable(self, tries: int = 10, delay: float = 0.08) -> int | None:
+    def group_layers_stable(self, tries: int = 20, delay: float = 0.08) -> int | None:
         """정보 패널의 레이어 수를 **정착 판독**한다 (연속 2회 동일).
 
         칸을 옮기면 패널이 한 박자 늦게 바뀐다 — 한 번만 읽으면 **앞 칸의 수**를
