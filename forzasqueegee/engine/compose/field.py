@@ -100,6 +100,9 @@ class CompositionField:
     texture_coherence: float = 0.0
     rear_sign: float = 1.0                        # +x가 차 뒤면 +1
     free: dict[str, float] = field(default_factory=dict)   # 방향별 빈 도색면 몫
+    # 몸짓 — (dx, dy, 세기) 목록, 프레임 좌표 (`intent.gestures`를 얹은 것).
+    # 뻗은 팔·머리카락·무기가 만드는 방향이다. 비면 결(`texture`)로 물러난다.
+    gestures: tuple[tuple[float, float, float], ...] = ()
 
     @property
     def char_h(self) -> float:
