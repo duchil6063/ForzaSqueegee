@@ -497,6 +497,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             _fold_memo[name] = got
         return _fold_memo[name]
 
+    # 이음새에서 넘어온 무리가 패널 안으로 밀려 들어가는 상한 (패널 크기 대비).
+    SEAM_PUSH = 0.22
+
+
+    # 이음새에서 넘어온 무리의 크기 자 (패널 짧은 변 대비) — 이보다 작게는 안 잰다.
+    SEAM_REF = 0.50
+
+
     # ---- 면마다 **도안 앵커** — 꾸밈이 자랄 뿌리 (`DecoAnchor`) ----
     # 이 면에 도안이 있으면 그 상자가 뿌리다. 없으면 이웃 면의 도안 상자를
     # 이음새 너머로 투영해 쓴다 — 레퍼런스에서 도안 없는 면의 무리는 예외 없이
@@ -543,12 +551,26 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 # 흐름은 **면 안쪽**이다 — 물린 상자는 이음새 가장자리에 붙어
                 # 있으니 무리가 패널 안으로 퍼져야 이어져 보인다.
                 cu, cv = (pb[0] + pb[2]) / 2, (pb[1] + pb[3]) / 2
-                fu = (sm.paint[0] + sm.paint[2]) / 2
-                fv = (sm.paint[1] + sm.paint[3]) / 2
+                u0, v0, u1, v1 = sm.paint
+                fu, fv = (u0 + u1) / 2, (v0 + v1) / 2
                 d = math.hypot(fu - cu, fv - cv)
                 flow = ((fu - cu) / d, (fv - cv) / d) if d > 1e-6 else (1.0, 0.0)
                 got = deco_anchor(pb, flow, avoid=ink,
                                   why=msg("{src}의 도안을 이 면으로 투영", src=src))
+                # **이음새에서 너무 멀리 밀지 않는다.** 물린 상자가 크면
+                # `deco_anchor`의 밀어내기(상자 폭의 1.35배)가 무리를 패널
+                # 한복판에 세운다 — 리어의 별무리가 범퍼 가운데 떠 있고 이웃
+                # 면과 아무 관계가 없어진다 (미리보기 판정). 레퍼런스의 리어
+                # 무리는 옆면에서 넘어온 쪽 모서리에 붙는다 (Fate R34의 별).
+                # 밀어내기 상한은 **패널 크기**의 몫이다.
+                pw, ph = u1 - u0, v1 - v0
+                au = min(max(got.at[0], cu - SEAM_PUSH * pw), cu + SEAM_PUSH * pw)
+                av = min(max(got.at[1], cv - SEAM_PUSH * ph), cv + SEAM_PUSH * ph)
+                # 크기 자도 **패널**이 준다 — 물린 상자는 이음새에서 잘린 조각이라
+                # 그 긴 변으로 재면 모티프가 티끌이 된다 (리어 실측: 무리 전체가
+                # 패널 폭의 10%였다).
+                ref = max(got.ref, SEAM_REF * min(pw, ph))
+                got = replace(got, at=(au, av), ref=ref)
         _anchor_memo[name] = got
         return got
 
