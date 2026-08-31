@@ -11,7 +11,7 @@ from ...game import fold as gfold, seam as gseam, surface as gsurf
 from ...i18n import msg
 from ...paths import run_file
 from ..catalog import Catalog, default_catalog_path
-from ..model import LayerPlan, rgb_to_hsb
+from ..model import UNITS_PER_SCALE, LayerPlan, rgb_to_hsb
 from .boxes import (
     CANVAS_UNITS, _clamp_box, _face_phase, _gap, _group_unit, _overlap, _rel,
     _union)
@@ -671,6 +671,13 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                            else {"center_v": _bumper_seed(media, name)})) \
                 + _motifs(motif_c, sm, cat, n=_n(7), shapes=motifs_v,
                           box=tsegs[0] if tsegs else None)
+            # **리어 데크에도 흩는다** — 블랙아웃은 지붕·필러만 덮고 데크는 본색
+            # 그대로다 (`roof_blackout`이 넓은 구간을 일부러 건너뛴다). 그런데
+            # 산포가 후드 구간에만 갇혀 있어서 데크가 늘 비어 있었다 — 레퍼런스의
+            # 데크에는 모티프가 있다 (KOTONE의 자홍 물감 · ARIS의 픽셀).
+            deck = _deck_box(tsegs, roof_sh) if name == ROLE_EXTRA else None
+            if deck is not None:
+                sh += _motifs(motif_c, sm, cat, n=_n(4), shapes=motifs_v, box=deck)
             # **전경 몫** — 이 면에 도안이 있으면 몇 장은 그 위로 얹는다 (옆면
             # `deco-front`와 같은 문법: 레퍼런스의 꽃·별은 팔·다리를 스치고
             # 지나가고, 전부 뒤에만 깔면 "배경에 스티커를 얹은" 꼴이 된다).
@@ -838,6 +845,27 @@ HOOD_MIN_FRAC_GLASS = 0.18
 # 면 유닛 (-sin r, cos r) 방향이다 — rot 295°가 머리를 +u로 보냈고 캡처가 그대로
 # 나왔다. gametext._place_xy의 CCW 오프셋 회전과 같은 규약이다.
 HOOD_ROT_SIGN = 1.0
+
+
+def _deck_box(tsegs: list, roof_sh: list[dict]) -> tuple | None:
+    """윗면 구간들에서 **블랙아웃이 안 덮은 뒤 구간**(리어 데크) 상자.
+
+    `tsegs`는 후드 구간부터의 목록이다. 블랙아웃 사각과 u가 절반 넘게 겹치는
+    구간은 지붕이므로 뺀다.
+    """
+    if len(tsegs) < 2:
+        return None
+    for b in reversed(tsegs[1:]):
+        bu0, _bv0, bu1, _bv1 = b
+        wid = max(1e-6, bu1 - bu0)
+        covered = 0.0
+        for r in roof_sh:
+            ru0 = r["x"] - r["sx"] * UNITS_PER_SCALE
+            ru1 = r["x"] + r["sx"] * UNITS_PER_SCALE
+            covered = max(covered, (min(bu1, ru1) - max(bu0, ru0)) / wid)
+        if covered < 0.5:
+            return b
+    return None
 
 
 def _hood_place(smap: gsurf.SurfaceMap, lk: Look, group_unit: float,

@@ -272,8 +272,16 @@ def surface_deco_shapes(colors: tuple[tuple[int, int, int], ...],
         # 앵커가 지붕 위에 앉아 후드 모티프 일곱이 다 버려졌다). 최대형
         # 반지름만큼은 안쪽이라야 큰 것이 모서리에서 반쪽으로 잘리지 않는다.
         hero = DECO_TIER_SIZE[0] * ref / 2.0
-        at = (min(max(anchor.at[0], p0 + hero), max(p0 + hero, p1 - hero)),
-              min(max(anchor.at[1], q0 + hero), max(q0 + hero, q1 - hero)))
+
+        def _in(v: float, lo: float, hi: float) -> float:
+            return min(max(v, lo + hero), max(lo + hero, hi - hero))
+
+        at = (_in(anchor.at[0], p0, p1), _in(anchor.at[1], q0, q1))
+        # 구름 중심도 **상자 안**이라야 한다 — 뭉치는 자리만 물리고 중심을 밖에
+        # 두면 후보가 통째로 상자 밖에 떠서 `_ok`에 전멸한다 (윗면 데크: 앵커가
+        # 후드 도안이라 후보 넷이 하나도 안 남았다).
+        if box is not None:
+            cx, cy = _in(cx, p0, p1), _in(cy, q0, q1)
     else:
         # 뿌리를 못 찾은 면 — 면 상자 한가운데에서 자란다. 도안이 어느 면에도
         # 안 앉았거나(있을 수 없다) 이 면으로 오는 접기 변환이 하나도 안 풀리는
