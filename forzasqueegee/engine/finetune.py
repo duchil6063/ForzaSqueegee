@@ -20,7 +20,12 @@ celfit 배치는 영역별 그리디다: 채점판이 자기 영역 ROI만 보�
   실측으로 닫혔다) — 그전까지는 주입이 그 축을 조용히 빼고 써서 여기서 밀면
   도안과 인게임이 갈렸다. `FS_SKEW=0`이면 예전처럼 안 민다.
 - 실루엣 px를 새로 노출하는 이동은 **무조건 기각** — holes 게이트(4px+
-  군집 0)가 패스 후에도 성립한다.
+  군집 0)가 패스 후에도 성립한다. 그 자는 이 패스의 1x 반올림 소유자
+  래스터이므로, §18 봉인이 끝에서 거는 **2배 표본·반올림 없는** 자격을
+  그 위에 따로 얹는다 (`_HARD2X`) — 두 자가 갈리면 여기서 통과한 이동이
+  봉인의 자에서는 새 미커버가 된다 (실측 P0 11장: 이 단이 판당 130~260
+  표본을 새로 열었다. 자격을 얹으니 그것이 0이 되고 봉인 도형이 11장 전부
+  줄었다).
 - 캔버스 rect 밖 돌출을 늘리는 이동도 기각 — 밖은 채점이 못 보는 무벌점
   구간이라 열어 두면 경계 레이어가 그리로 샌다 (celfit 가드와 같은 논리).
 - 결정적 (난수 없음, 순서 고정).
@@ -39,6 +44,7 @@ from .celart import CelArt
 from .celfit import _poly_px
 from .celfit.affine import step_visible
 from .celfit.chain import _GAP_TOL, placed_line
+from .celfit.coverage import HardCoverage
 from .celfit.descriptor import width_shape_ok
 from .celfit.stroke import _STROKE_BULGE, _STROKE_END
 from .model import Layer, LayerPlan
@@ -111,6 +117,20 @@ _AXES = ((("x", 0.5),), (("y", 0.5),), (("x", 1.0),), (("y", 1.0),),
 _SKEW_AXIS = (("skew", 0.01),)
 _SKEW_ON = os.environ.get("FS_SKEW", "0") != "0" and \
     os.environ.get("FS_FT_SKEW", "1") != "0"
+# **하드 커버리지 자격** (기본 켜짐 · `FS_FT_HARD2X=0`으로 끈다) — 이동이 §18
+# 진실(2배 표본 · 꼭짓점 반올림 없음)에서 새 미커버 표본을 열면 기각한다.
+#
+# 아래 `try_move`의 "실루엣 신규 노출" 기각은 이 패스의 **1x 반올림 소유자
+# 래스터**를 본다. 그 래스터는 렌더와 같은 자라 색 비용을 재는 데는 맞지만,
+# 봉인이 끝에서 거는 자격은 다른 자다 (`celfit.coverage`: 반올림은 도안에 없는
+# 틈을 만들고 있는 틈을 지운다). 그래서 두 자가 **같은 이동에 다른 답**을 내고,
+# 미세 조정이 "구멍 안 열었다"고 받은 이동이 봉인의 자에서는 새 표본이 된다
+# (실측 P0 11장: s4_ft가 판당 130~260 표본을 새로 연다).
+#
+# 자격은 **더하는** 것이지 갈아 끼우는 것이 아니다. 1x 자는 값의 자
+# (`holes.count_hole_clusters`의 4px+ 게이트)가 여전히 서는 자리라 그대로 두고,
+# 그 위에 진실의 자를 얹는다 — 둘 다 통과한 이동은 봉인의 자에서도 통과다.
+_HARD2X = os.environ.get("FS_FT_HARD2X", "1") != "0"
 
 
 def _win_mask(cat: Catalog, lay: Layer, upp: float, w: int, h: int
@@ -209,6 +229,9 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         boxes[i], masks[i], exts[i] = _win_mask(cat, l, upp, w, h)
         x0, y0, x1, y1 = boxes[i]
         owner[y0:y1, x0:x1][masks[i]] = i
+
+    # §18 자격의 자 — 스택 전수 한 번 (그 뒤로는 받은 이동만 증분 반영)
+    hard = HardCoverage(plan, cel, cat) if _HARD2X else None
 
     # 이음 게이트 채비 (_P_JND 아래 문서) — 같은 획의 끝끼리 짝을 맺는다
     _jgate = os.environ.get("FS_FT_JGATE", "1") != "0"
@@ -345,6 +368,8 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
 
     def commit(i: int, cand: Layer, data) -> None:
         ysA, xsA, ysD, xsD, u, box_n, m_n, ext_n = data
+        if hard is not None:
+            hard.swap(layers[i], cand)
         if len(ysD):
             owner[ysD, xsD] = u
         if len(ysA):
@@ -353,12 +378,14 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         layers[i] = cand
 
     accepts = 0
+    hard_rej = 0                           # 1x는 통과했는데 §18 자격이 막은 수
     moved = np.zeros(n, bool)
     gain = 0.0
     _axes = _AXES + (_SKEW_AXIS,)
     todo = list(range(n)) if only is None else [i for i in only if 0 <= i < n]
     if not todo:
-        return {"moved_layers": 0, "accepts": 0, "cost_gain": 0.0}
+        return {"moved_layers": 0, "accepts": 0, "cost_gain": 0.0,
+                "hard_rejects": 0}
     for p in range(max_passes):
         pass_accepts = 0
         for si, i in enumerate(todo):
@@ -376,7 +403,11 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                 z = z.quantized()
                 if not (_jgate and widens_joint(i, z)):
                     r = try_move(i, z)
-                    if r is not None and r[0] <= _EPS:
+                    ok = r is not None and r[0] <= _EPS
+                    if ok and hard is not None and hard.opens(layers[i], z):
+                        ok = False
+                        hard_rej += 1
+                    if ok:
                         commit(i, z, r[1])
                         gain -= min(r[0], 0.0)
                         accepts += 1
@@ -419,6 +450,9 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         res = try_move(i, cand)
                         if res is None or res[0] > -_EPS:
                             break
+                        if hard is not None and hard.opens(layers[i], cand):
+                            hard_rej += 1
+                            break
                         commit(i, cand, res[1])
                         gain -= res[0]
                         accepts += 1
@@ -431,7 +465,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     if progress:
         progress(1.0, msg("미세 조정 완료"))
     stats = {"moved_layers": int(moved.sum()), "accepts": accepts,
-             "cost_gain": round(gain, 0),
+             "cost_gain": round(gain, 0), "hard_rejects": hard_rej,
              # §14 — 이 패스가 끝난 뒤 전단을 쓰는 레이어 수
              "skew_layers": sum(1 for l in layers if l.skew)}
     log(msg("  {tag} 미세 조정: 레이어 {moved}/{total}개 이동 (수락 {n}회)",

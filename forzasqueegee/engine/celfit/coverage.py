@@ -83,12 +83,16 @@ def _layer_mask(cat: Catalog, lay, upp: float, w: int, h: int, ss: int):
 
 
 def counts(layers: list, cat: Catalog, upp: float, w: int, h: int,
-           ss: int = _SS) -> np.ndarray:
-    """표본마다 **몇 장이 덮고 있나** (uint8, 255에서 포화).
+           ss: int = _SS, dtype=np.uint8) -> np.ndarray:
+    """표본마다 **몇 장이 덮고 있나** (기본 uint8, 255에서 포화).
 
     뺄셈 마스크는 그 자리의 셈을 0으로 되돌린다 (프루닝 소유자 모델과 같은 뜻).
+
+    `dtype`은 **셈을 되돌릴 때**만 넓힌다 (`HardCoverage`) — 포화한 셈은 빼면
+    틀리기 때문이다. 읽기만 하는 자리는 0·1·2+만 가르면 되므로 uint8 그대로다.
     """
-    cnt = np.zeros((h * ss, w * ss), np.uint8)
+    cnt = np.zeros((h * ss, w * ss), dtype)
+    cap = int(np.iinfo(dtype).max)
     for lay in layers:
         got = _layer_mask(cat, lay, upp, w, h, ss)
         if got is None:
@@ -99,7 +103,7 @@ def counts(layers: list, cat: Catalog, upp: float, w: int, h: int,
         if lay.mask:
             box[mb] = 0
         else:
-            box[mb & (box < 255)] += 1     # 255에서 포화 (0·1·2+만 구분하면 된다)
+            box[mb & (box < cap)] += 1     # 상한에서 포화 (0·1·2+만 가르면 된다)
     return cnt
 
 
@@ -131,6 +135,84 @@ def need_px(hard: np.ndarray, ss: int = _SS) -> np.ndarray:
     """ss 격자 구멍 → **그 표본을 품은 1x 픽셀** (메움·성장이 겨눌 자리)."""
     h2, w2 = hard.shape
     return hard.reshape(h2 // ss, ss, w2 // ss, ss).any(axis=(1, 3))
+
+
+class HardCoverage:
+    """§18 진실을 **도중에도** 묻는 증분 자 — 이 교체가 새 미커버를 여나.
+
+    봉인은 파이프라인 맨 끝에서 이 모듈의 자로 판정한다: 2배 표본 격자에서,
+    꼭짓점을 **반올림하지 않고**, 실루엣 내부(테 제외)에 아무도 안 덮은 표본이
+    있나. 그런데 그 앞 단들은 각자의 래스터로 "구멍 안 열었다"를 묻는다 —
+    전역 미세 조정(`finetune._win_mask`)은 꼭짓점을 1x 격자로 반올림한 소유자
+    래스터를 본다. 그 반올림이 도안에 없는 틈을 만들고 있는 틈을 지우므로
+    (`geometry.poly_mask` 문서), 두 자는 **같은 이동에 다른 답**을 낸다:
+    미세 조정이 통과시킨 이동이 봉인의 자에서는 새 표본을 여는 일이 실제로
+    있다 (실측: 표준 판당 s4_ft가 130~260 표본을 새로 연다).
+
+    그래서 커버리지 자격을 묻는 자리는 전부 **여기 하나**를 쓴다. 이 클래스는
+    새 2배 마스크 구현이 아니다 — `counts`·`_layer_mask`·`sil_core` 그대로이고,
+    더한 것은 "스택 전체를 매번 다시 세지 않는다"는 증분뿐이다.
+
+    판정은 **스택 수준**이다. 비켜난 표본이라도 다른 레이어가 이미 덮고 있으면
+    (`cnt > 1`) 퇴행이 아니다 — 자격은 "아무도 안 덮나"이지 "이 장이 덮나"가
+    아니다.
+    """
+
+    def __init__(self, plan: LayerPlan, cel: CelArt, cat: Catalog,
+                 ss: int = _SS) -> None:
+        self.cat = cat
+        self.ss = ss
+        self.upp = plan.units_per_px
+        self.w, self.h = cel.size
+        self.core = _upsample(sil_core(cel, self.upp), ss)
+        # 셈을 **되돌려야** 하므로 포화하지 않는 폭으로 센다
+        self.cnt = counts(plan.layers, cat, self.upp, self.w, self.h, ss,
+                          dtype=np.uint16)
+        self._memo: dict = {}
+
+    def _mask(self, lay):
+        """레이어 → (마스크, x0, y0). 받은 이동은 `opens`·`swap`이 잇달아 같은
+        두 자세를 묻는다 — 그 한 왕복만 기억한다 (기하가 키라 안전하다)."""
+        k = (lay.shape, lay.x, lay.y, lay.sx, lay.sy, lay.rot, lay.skew)
+        if k not in self._memo:
+            if len(self._memo) > 64:
+                self._memo.clear()
+            self._memo[k] = _layer_mask(self.cat, lay, self.upp,
+                                        self.w, self.h, self.ss)
+        return self._memo[k]
+
+    def opens(self, old, new) -> bool:
+        """`old`를 `new`로 갈면 **아무도 안 덮는 표본**이 새로 생기나."""
+        mo = self._mask(old)
+        mn = self._mask(new)
+        if mo is None:
+            return False                   # 덮던 것이 없으면 열 것도 없다
+        m_o, ox, oy = mo
+        # 비켜나는 표본 = 옛 마스크 ∖ 새 마스크. 새 마스크를 옛 창에 겹친다
+        vac = m_o.copy()
+        if mn is not None:
+            m_n, nx, ny = mn
+            x0 = max(ox, nx); y0 = max(oy, ny)
+            x1 = min(ox + m_o.shape[1], nx + m_n.shape[1])
+            y1 = min(oy + m_o.shape[0], ny + m_n.shape[0])
+            if x0 < x1 and y0 < y1:
+                vac[y0 - oy:y1 - oy, x0 - ox:x1 - ox] &= ~m_n[
+                    y0 - ny:y1 - ny, x0 - nx:x1 - nx]
+        if not vac.any():
+            return False
+        sub = (slice(oy, oy + m_o.shape[0]), slice(ox, ox + m_o.shape[1]))
+        return bool((vac & self.core[sub] & (self.cnt[sub] == 1)).any())
+
+    def swap(self, old, new) -> None:
+        """받아들인 교체를 셈에 반영한다 (증분)."""
+        got = self._mask(old)
+        if got is not None:
+            m, x0, y0 = got
+            self.cnt[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][m] -= 1
+        got = self._mask(new)
+        if got is not None:
+            m, x0, y0 = got
+            self.cnt[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][m] += 1
 
 
 def unique_layers(plan: LayerPlan, cel: CelArt, cat: Catalog, ss: int = _SS,
