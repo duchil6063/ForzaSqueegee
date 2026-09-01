@@ -4,7 +4,7 @@ r"""배포 꾸러미를 짓는다 — `dist/ForzaSqueegee-<판>.zip`.
 실행에 필요한 것뿐이고(개발 문서·도구·기록은 안 들어간다), 거기에 **라이선스가
 요구하는 것**이 붙는다.
 
-    python tools/make_dist.py            # dist/ForzaSqueegee-1.3.0.zip
+    python tools/make_dist.py            # dist/ForzaSqueegee-1.3.1.zip
     python tools/make_dist.py --check    # 무엇이 들어가는지만 센다
 
 ## 무거운 것은 안 싣는다 — 받는다
