@@ -24,7 +24,7 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
 2. **조리법이 모르는 덩어리는 도안으로 받는다** (`_adopt`). 도안 그룹을 선으로
    가르면 조각은 `FS:` 머리를 잃고, 사람이 직접 그린 도형도 그렇다. 베낀 사본은
    머리를 그대로 두고 이름 뒤에 " (Copy)"가 붙는다(`FS:decal-1 (Copy)`) — 머리가
-   아니라 **이름 문법**(`MADE_CHUNK`)이 구성기 몫을 가른다 — 그것이 **지금 차에
+   아니라 **조리법이 그것을 다시 지을 수 있느냐**(`_claimed`)가 구성기 몫을 가른다 — 그것이 **지금 차에
    실린 그림**이다. 그래서 면 아래 `FS:` 없는 덩어리는
    레이어를 면 유닛 그대로 도안 파일로 떠서 항등 배치로 조리법에 올리고, 꾸밈은
    그 위에 짓는다. 다음 굽기부터는 `FS:decal-<n>` 덩어리라 1번 규칙을 탄다.
@@ -32,9 +32,11 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
 
 ## 시키지 않은 것은 안 한다
 
-**꾸밈은 부르기 전에는 안 짠다** (사용자 지시 2026-08-27). 도안을 올리면 올라가는
-것은 **그 면의 그 도안뿐**이다 — 띠·산포 모티프·지붕 블랙아웃은 [Grow Decoration]을
-누른 뒤에야 선다. 면을 넘긴 몫도 이웃 면에 안 간다: 감아 돌리려면 편집기에서
+**꾸밈은 부를 때만 짠다** (사용자 지시 2026-08-27 · 2026-09-01). 도안을 올리면
+올라가는 것은 **그 면의 그 도안뿐**이다 — 띠·산포 모티프·지붕 블랙아웃은
+[Grow Decoration]·[자동 꾸밈]을 누른 **그 판에만** 선다. 도안을 건드리는 다음
+명령(도안 올리기·좌우 대칭·자동 자리)은 꾸밈을 도로 끈다 (`hush_deco`) — 고른
+계열·이름 글자는 조리법에 남으니 다시 누르면 그 설정으로 자란다. 면을 넘긴 몫도 이웃 면에 안 간다: 감아 돌리려면 편집기에서
 도안을 이음선으로 **가르고**([Edit → Split Selection at a Line]) 한쪽 그룹을 그
 면으로 옮긴다.
 
@@ -74,6 +76,24 @@ ADOPTED_DIR = "adopted"
 # 그대로 두고 " (Copy)"를 붙이므로(`FS:decal-1 (Copy)`) 머리만 보면 구성기 몫과
 # 안 갈린다. 그 사본은 조리법이 모르는 그림이라 `_adopt`가 도안으로 받는다.
 MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text)(?:-[A-Za-z0-9_.]+)*$")
+DECAL_CHUNK = re.compile(r"^decal-(\d+)(?:-.*)?$")
+
+
+def _claimed(chunk: str, live: set[int], deco_on: bool) -> bool:
+    """이 덩어리를 **조리법이 다시 지을 수 있나** (`_adopt`가 건너뛰어도 되나).
+
+    이름이 구성기 문법이라는 것만으로는 모자란다 — 조리법이 없거나(다른 이름으로
+    저장하면 `.3so`만 따라간다) 그 도안이 조리법에서 빠졌으면 **아무도 그것을 다시
+    안 짓는다**. 그때 건너뛰면 차에 실린 그림이 통째로 사라진다.
+
+    - `decal-<n>…` — 그 번호의 도안이 조리법에 살아 있을 때만 (넘친 조각은 이웃
+      면에 앉으므로 면은 안 본다).
+    - `deco` · `shapes` · `text` — 꾸밈이 켜져 있을 때만 (꺼진 판에서는 안 자란다).
+    """
+    m = DECAL_CHUNK.match(chunk)
+    if m:
+        return int(m.group(1)) in live
+    return deco_on if MADE_CHUNK.match(chunk) else False
 
 
 # ────────────────────────────── 조리법 ──────────────────────────────
@@ -101,11 +121,12 @@ class Studio:
 
 def _blank_state() -> dict:
     return {"version": STATE_VERSION, "car": None, "media": None,
-            # **꾸밈은 부르기 전에는 안 짠다** (사용자 지시 2026-08-27
-            # "자동 적용 금지"). 도안을 올리면 올라가는 것은 그 도안뿐이고,
-            # 띠·모티프·지붕 블랙아웃은 [Grow Decoration]을 누른 뒤에야 선다.
-            # 한 번 켜면 그 뒤 굽기에는 계속 실린다 — 되돌리는 것은
-            # [Drop Decoration]이다.
+            # **꾸밈은 부를 때만 짠다** (사용자 지시 2026-08-27 "자동 적용 금지",
+            # 2026-09-01 "부를 때만"). 도안을 올리면 올라가는 것은 그 도안뿐이고,
+            # 띠·모티프·지붕 블랙아웃은 [Grow Decoration]·[자동 꾸밈]을 누른
+            # 그 판에만 선다 — 도안을 건드리는 다음 명령이 도로 끈다
+            # (`hush_deco`). 고른 계열·이름 글자는 남으니 다시 누르면 그 설정으로
+            # 자란다.
             "paint": None, "deco": False, "motif": None, "designs": [],
             # 글자 — 기본 꺼짐. 켜면 캐릭터 이름(+작품명)이 꾸밈의 한 요소로
             # 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져 있으면 안 선다.
@@ -264,7 +285,9 @@ def _adopt(st: Studio) -> None:
 
     편집기에서 도안 그룹을 [선으로 가르기]로 가르면 조각은 `FS:` 머리를 잃는다.
     베낀 사본은 머리를 그대로 두고 이름 뒤에 " (Copy)"가 붙는다 — 그래서 구성기
-    몫인지는 머리가 아니라 이름 문법(`MADE_CHUNK`)이 가른다. 그 덩어리들이 지금
+    몫인지는 머리가 아니라 **조리법이 그것을 다시 지을 수 있느냐**가 가른다
+    (`_claimed`) — 조리법 없이 열린 판(`.3so`만 옮겨 온 것)은 그 안의
+    `FS:decal-…`이 곧 도안이다. 그 덩어리들이 지금
     차에 실린 그림인데 조리법은 모르니 꾸밈이 "올린 도안이 없다"로 섰다. 그래서
     **지금 프로젝트에 있는 것이 도안**이다: 면 아래 조리법 밖 덩어리마다 레이어를 면 유닛 그대로 도안 파일로 뜨고, 항등
     배치(x·y 0 · 캔버스 1유닛 = 면 1유닛 · 회전 0)로 조리법에 올린다. 배치·색을
@@ -277,6 +300,8 @@ def _adopt(st: Studio) -> None:
     종전처럼 원본 노드째 남아 다시 구울 때 그대로 실린다 (`_restore_foreign`).
     """
     gu = _group_unit_of(st)
+    live = set(decal_numbers(st.designs))
+    deco_on = bool(st.state.get("deco"))
     leftover: dict[str, list] = {}
     added = 0
     for node in (st.doc.get("root") or {}).get("children") or []:
@@ -297,7 +322,8 @@ def _adopt(st: Studio) -> None:
             name = str(kid.get("name") or "")
             if (kid.get("kind") == "group"
                     and name.startswith(project.CHUNK_PREFIX)
-                    and MADE_CHUNK.match(name[len(project.CHUNK_PREFIX):])):
+                    and _claimed(name[len(project.CHUNK_PREFIX):],
+                                 live, deco_on)):
                 continue                       # 구성기 몫 — 조리법이 이미 안다
             layers, keep = _peel(kid, gm)
             if keep is not None:
@@ -520,6 +546,7 @@ def act_load_design(st: Studio, design: str | Path, surface: str) -> str:
          "scale": 0.25, "rot": 0.0, "mirror": False}
     st.designs.append(d)
     _auto_place_one(st, d)
+    hush_deco(st)
     return f"{Path(design).name} → {surface}"
 
 
@@ -641,12 +668,28 @@ def _targets(st: Studio, surface: str | None, groups: list | None, *,
     return list(st.designs)
 
 
+def hush_deco(st: Studio) -> None:
+    """**꾸밈은 부를 때만 자란다** (사용자 지시 2026-09-01).
+
+    도안을 건드리는 명령(도안 올리기·좌우 대칭·자동 자리)은 조리법의 `deco`를
+    끈다. 안 그러면 [자동 꾸밈]을 한 번 누른 뒤로는 도안 하나 올릴 때마다 **옛
+    설정으로 짠 꾸밈**(못 박은 계열·옛 캐릭터 이름 글자)이 새 판에 따라 들어온다
+    — 시킨 적 없는 일이다. 고른 계열·이름은 조리법에 그대로 남으니 [자동 꾸밈]을
+    다시 누르면 그 설정으로 다시 자란다."""
+    if not st.state.get("deco"):
+        return
+    st.state["deco"] = False
+    st.notes.append(msg("꾸밈은 부를 때만 자란다 — 이번 판은 도안만 올린다. "
+                        "다시 자라게 하려면 [자동 꾸밈]을 누르세요"))
+
+
 def act_auto_place(st: Studio, surface: str | None,
                    groups: list | None = None) -> str:
     """고른 도안(또는 이 면·전부)을 자동 자리로 되돌린다."""
     hit = _targets(st, surface, groups, what=msg("자동 배치"), fallback_all=True)
     for d in hit:
         _auto_place_one(st, d)
+    hush_deco(st)
     return msg("도안 {n}장을 자동 자리로", n=len(hit))
 
 
@@ -655,7 +698,8 @@ def act_decoration(st: Studio, on: bool) -> str:
 
     **부르기 전에는 안 짠다** (사용자 지시 2026-08-27 "자동 적용 금지") — 도안을
     올리는 것과 꾸밈이 자라는 것은 별개의 일이고, 후자는 사람이 시킬 때만 한다.
-    한 번 켠 뒤로는 그 조리법에 남아 다음 굽기에도 실린다."""
+    켠 것은 이 판에만 실린다 — 도안을 건드리는 다음 명령이 도로 끈다
+    (`hush_deco`)."""
     st.state["deco"] = bool(on)
     return (msg("꾸밈을 짠다 (띠·모티프·지붕)") if on
             else msg("꾸밈을 뺀다 — 도안만 올린다"))
@@ -821,6 +865,7 @@ def act_mirror(st: Studio, surface: str | None,
         done.append(f"{d['surface']} → {dst}")
     if not done:
         raise ValueError(msg("대칭할 면을 못 찾았다"))
+    hush_deco(st)
     return msg("좌우 대칭: {done}", done=" · ".join(done))
 
 
