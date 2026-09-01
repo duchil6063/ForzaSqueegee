@@ -91,7 +91,8 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
                 shapes: tuple[str, ...] | None = None,
                 mode: str = "rocker", center_v: float | None = None,
                 cat: Catalog | None = None, rot: float = 0.0,
-                height: float | None = None) -> list[dict]:
+                height: float | None = None, anchor_u: float | None = None,
+                top_v: float | None = None) -> list[dict]:
     """**관통 요소** — 옆면의 문법을 이웃 면으로 이어 가는 도형 명세.
 
     레퍼런스의 배경 요소는 한 면에서 끝나지 않고 여러 면을 관통해 전체를
@@ -122,6 +123,15 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
 
     `max_sx`는 이 면의 스케일 축 상한이다 (`surface_sx_cap`과 함께 걸린다).
     상한을 넘는 길이는 **짧게 자르지 않고 나눠 깐다** (`band_tiles`).
+
+    ## 이음새에서 만나는 자리
+
+    `anchor_u`·`top_v`는 **이음새를 건너온 값**이다 (`compose.seams`):
+
+    - `anchor_u` (macro) — 기울인 띠의 중심선이 지나야 하는 u. 이음선 위다.
+    - `top_v` (rocker) — 옆면 하부 투톤의 **윗선**이 이 면에서 갖는 높이.
+
+    둘 다 없으면 면이 제 상자로 잡는다 (옛 자 — 이음새를 못 푸는 차).
     """
     q0, q1 = (box[1], box[3]) if box is not None else (smap.paint[1], smap.paint[3])
     hh = q1 - q0
@@ -134,7 +144,7 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
         cap = min(cap, max_sx)
     tiles = band_tiles(u0, u1, cap)
     if mode == "macro":
-        # **옆면의 큰 색면이 이음새를 건너온 것** (`atlas.carry_band`).
+        # **옆면의 큰 색면이 이음새를 건너온 것** (`compose.seams.carry`).
         #
         # 로커 띠와 갈리는 자리 셋: 색이 판 색이고(무채 잉크가 아니다), 높이와
         # 각을 옆면에서 받아 오며(제 면의 몫으로 잡지 않는다), 찢긴 윗선이
@@ -144,11 +154,15 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
         # 놓고 전부 같은 각으로 돌리면 계단이 진다.
         hb = height if height is not None else ROCKER_FRAC * hh
         cv = center_v if center_v is not None else (q0 + q1) / 2
+        # **중심선이 지나야 하는 자리**는 이음선 위다 (`anchor_u`) — 면 한가운데를
+        # 기준으로 기울이면 이음새에서 `tan(각) × (이음선 − 가운데)`만큼 어긋난
+        # 채로 만난다 (`compose.seams` 문서). 없으면 옛 자(면 가운데)로 물러난다.
+        au = anchor_u if anchor_u is not None else fcx
         tr = math.radians(rot)
         out2 = []
         for tx, tsx in tiles:
             out2.append({"shape": "A_01", "x": rnd(tx, 1),
-                         "y": rnd(cv + (tx - fcx) * math.tan(tr), 1),
+                         "y": rnd(cv + (tx - au) * math.tan(tr), 1),
                          "sx": rnd(tsx / max(0.2, math.cos(tr)), 3),
                          "sy": rnd(hb / 2 / UNITS_PER_SCALE, 4),
                          "rot": rnd(rot % 360.0, 1), "rgb": list(color)})
@@ -166,7 +180,16 @@ def flow_shapes(color: tuple[int, int, int], smap: gsurf.SurfaceMap,
     # 아래쪽 몫이 범퍼 밑면이라 화면에 안 나온다). `center_v`(범퍼 로케이터)가
     # 있으면 **그 높이에 앉힌다** — 리어처럼 상자가 보이는 면보다 넓은 면은
     # 상자 몫으로는 못 앉는다 (`game.locators.bumper_v`).
-    if center_v is not None:
+    if top_v is not None:
+        # **옆면 로커의 윗선이 이음새를 건너온 것** — 눈이 따라가는 것은 두 면의
+        # 밴드 두께가 아니라 그 **윗선**이다. 아래는 각 면이 제 밑선까지 채운다
+        # (범퍼 밑면은 어차피 안 보이고, 면 마스크가 남는 것을 자른다).
+        top = top_v
+        # 밑선은 상자 아래를 조금 문 자리이되, **적어도 로커 두께만큼은** 내려간다
+        # — 건너온 윗선이 상자 아래끝보다 낮게 떨어지는 면(내접 상자를 준
+        # 프론트)에서 밴드 높이가 음수가 되지 않게 한다.
+        lo = min(q0 - 0.10 * hh, top - ROCKER_FRAC * hh)
+    elif center_v is not None:
         half = ROCKER_FRAC * hh / 2
         lo, top = center_v - half, center_v + half
     else:

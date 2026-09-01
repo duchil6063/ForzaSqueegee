@@ -141,6 +141,36 @@ def _ok(fit: tuple[float, float, float], role: str = "wordmark") -> bool:
     return draw >= DRAWABLE_MIN and occ <= occlude_max(role) and prot <= 0.02
 
 
+def seam_margin(fld: CompositionField, p: TextPose) -> float:
+    """포즈 상자에서 **프레임 양 끝(= 앞·뒤 이음새)**까지의 여유 (프레임 폭의 몫).
+
+    옆면 프레임은 차체 밴드 통째라 그 u 양 끝이 곧 앞·뒤 패널 경계다. 음수면
+    이미 넘어간 것이다.
+    """
+    r = math.radians(p.rot)
+    c, s = math.cos(r), math.sin(r)
+    hw, hh = p.w / 2, p.h / 2
+    xs = [p.x + dx * c - dy * s
+          for dx, dy in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
+    fx0, fx1 = fld.frame_box[0], fld.frame_box[2]
+    return min(min(xs) - fx0, fx1 - max(xs)) / max(1.0, fx1 - fx0)
+
+
+# 글자가 이음새에서 지켜야 하는 여유 (프레임 폭의 몫).
+#
+# 글자의 이음새 정책은 **피하기**다 (`compose.seams.ROLE_POLICY`): 이름이
+# 패널 경계를 넘으면 그 자리에서 잘리고, 안 잘려도 모서리의 곡률에서 글자가
+# 휘어 안 읽힌다. 사람이 만든 이타샤의 워드마크는 예외 없이 한 패널 안에 선다.
+#
+# 실측 T0(33판 · 글자 그룹 58벌): 여유의 중앙값은 프레임 폭의 0.259지만 **둘이
+# 0**이었다 — 그 둘이 이음새에 그대로 걸려 있었다. 0.02면 그 둘만 걸린다.
+SEAM_PAD = 0.02
+
+
+def _seam_ok(fld: CompositionField, p: TextPose) -> bool:
+    return seam_margin(fld, p) >= SEAM_PAD
+
+
 def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
             away: float, min_h: float, avoid: np.ndarray | None = None) -> TextPose | None:
     """포즈를 규칙에 맞게 **밀고, 그래도 안 되면 줄인다**.
@@ -151,7 +181,7 @@ def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
     """
     fy0, fy1 = fld.frame_box[1], fld.frame_box[3]
     for _ in range(8):
-        if _ok(pose_fit(fld, p, avoid), p.role):
+        if _ok(pose_fit(fld, p, avoid), p.role) and _seam_ok(fld, p):
             return p
         best, bs = None, -1.0
         # 밀어 보기 — 축 방향(인물 반대쪽) 몇 단, 수직 방향 몇 단
@@ -162,16 +192,19 @@ def _settle(fld: CompositionField, p: TextPose, axis: tuple[float, float],
                 if not (fy0 + 0.4 * q.h <= q.y <= fy1 - 0.4 * q.h):
                     continue
                 draw, occ, prot = pose_fit(fld, q, avoid)
-                if _ok((draw, occ, prot), p.role):
+                sm = seam_margin(fld, q)
+                if _ok((draw, occ, prot), p.role) and sm >= SEAM_PAD:
                     return q
-                sc = draw - 0.5 * occ - prot
+                # 이음새를 넘은 만큼은 **못 그리는 자리와 같은 무게**로 벌한다 —
+                # 넘긴 몫은 패널 경계에서 잘린다
+                sc = draw - 0.5 * occ - prot + min(0.0, sm - SEAM_PAD)
                 if sc > bs:
                     best, bs = q, sc
         if p.height * 0.85 < min_h:
             return None
         base = best if best is not None else p
         p = TextPose(**{**base.__dict__, "height": base.height * 0.85})
-    return p if _ok(pose_fit(fld, p, avoid), p.role) else None
+    return p if (_ok(pose_fit(fld, p, avoid), p.role) and _seam_ok(fld, p)) else None
 
 
 def _run_length(fld: CompositionField, x: float, y: float, axis: tuple[float, float],

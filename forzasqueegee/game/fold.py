@@ -133,6 +133,42 @@ def _grids(smap: SurfaceMap) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return m, us, vs
 
 
+def edge_profile(smap: SurfaceMap, axis: str, sign: float
+                 ) -> tuple[np.ndarray, np.ndarray] | None:
+    """마스크 끝선의 **줄별 값** — (훑는 축 좌표, 그 줄의 끝선). 없으면 None.
+
+    `edge_line`이 한 번에 하나씩 묻던 것을 한 판에 다 낸다. 이음선을 토막마다
+    다시 재려면(`_seam_segments`) 같은 마스크를 여덟 번 훑게 되는데, 그러면 판
+    한 장이 3초에서 19초가 된다 (2026-09-01 실측). 값은 마스크만의 함수라
+    지도에 붙여 캐시한다 — 마스크 배열이 바뀌면 키가 어긋나 다시 잰다.
+    """
+    m = smap.mask
+    key = (id(m), m.shape, axis, float(sign))
+    cache = smap.__dict__.setdefault("_edge_prof", {})
+    if key in cache:
+        return cache[key]
+    got = _edge_profile(smap, axis, sign)
+    if len(cache) > 32:
+        cache.clear()
+    cache[key] = got
+    return got
+
+
+def _edge_profile(smap: SurfaceMap, axis: str, sign: float
+                  ) -> tuple[np.ndarray, np.ndarray] | None:
+    m, us, vs = _grids(smap)
+    if m.size <= 1 or not m.any():
+        return None
+    keep, val = ((us, vs) if axis == "v" else (vs, us))   # (훑는 축, 재는 축)
+    sub = m if axis == "v" else m.T                        # 열 = 훑는 줄, 행 = 재는 축
+    # v는 행 0이 위(v1), u는 열 0이 왼쪽(u0) — 재는 축의 배열 순서에 맞춰 끝을 고른다
+    first = (sign > 0) if axis == "v" else (sign < 0)
+    idx = (np.argmax(sub, 0) if first
+           else sub.shape[0] - 1 - np.argmax(sub[::-1], 0))
+    ok = sub.any(0)
+    return keep[ok], val[idx[ok]]
+
+
 def edge_line(smap: SurfaceMap, axis: str, sign: float,
               lo: float | None = None, hi: float | None = None) -> float | None:
     """마스크의 **끝선** — `axis`('u'|'v')를 `sign` 방향으로 갔을 때의 마지막 자리.
@@ -140,25 +176,47 @@ def edge_line(smap: SurfaceMap, axis: str, sign: float,
     다른 축의 구간 `[lo, hi]`(유닛)에 든 줄만 본다. 넘치는 그림이 걸친 구간에서
     재라는 것이 이 인자다. 마스크가 그 구간에 없으면 None.
     """
-    m, us, vs = _grids(smap)
-    if m.size <= 1 or not m.any():
+    prof = edge_profile(smap, axis, sign)
+    if prof is None:
         return None
-    axes = (us, vs) if axis == "v" else (vs, us)   # (훑는 축, 재는 축)
-    keep, val = axes
+    keep, val = prof
     sel = np.ones(len(keep), bool)
     if lo is not None:
         sel &= keep >= lo
     if hi is not None:
         sel &= keep <= hi
-    sub = m[:, sel] if axis == "v" else m[sel].T   # 열 = 훑는 줄, 행 = 재는 축
-    if not sub.size or not sub.any():
-        return None
-    # v는 행 0이 위(v1), u는 열 0이 왼쪽(u0) — 재는 축의 배열 순서에 맞춰 끝을 고른다
-    first = (sign > 0) if axis == "v" else (sign < 0)
-    idx = (np.argmax(sub, 0) if first
-           else sub.shape[0] - 1 - np.argmax(sub[::-1], 0))
-    got = val[idx[sub.any(0)]]
+    got = val[sel]
     return float(np.quantile(got, EDGE_Q)) if len(got) else None
+
+
+# 이음선을 몇 토막으로 재나 (공유 축 방향). 한 수(중앙값)로 재던 옛 자는 이음선이
+# 기운 짝에서 그 기울기를 통째로 잃는다 — 옆면의 뒤 모서리는 벨트라인 근처와
+# 범퍼 근처가 수십 유닛 다르다.
+SEAM_BINS = 8
+
+
+@dataclass(frozen=True)
+class SeamSegment:
+    """이음새의 한 토막 — **공유 좌표 구간에서 잰** 양쪽 이음선.
+
+    `t0`·`t1`은 src의 공유 좌표(면 유닛), `src_edge`·`dst_edge`는 그 구간에서
+    잰 두 면의 끝선이다. `perp`는 이 토막이 내는 수직 방향 이동
+    (`dst_perp = flip·src_perp + perp`)이고 `confidence`는 그 값이 면 전체의
+    값과 얼마나 어긋나는가다 — 크게 어긋나는 토막은 두 마스크가 그 자리에서
+    서로 다른 것을 쥔 것이라(미러·스포일러·범퍼가 감아 도는 자리) 이어 붙이면
+    자리가 틀어진다. 그게 **왜곡 위험**이다.
+    """
+
+    t0: float
+    t1: float
+    src_edge: float
+    dst_edge: float
+    perp: float
+    confidence: float
+
+    @property
+    def mid(self) -> float:
+        return 0.5 * (self.t0 + self.t1)
 
 
 @dataclass
@@ -168,6 +226,12 @@ class Fold:
     `A`·`b`는 면 유닛 아핀이다: `(u', v') = A·(u, v) + b`. 차체 면끼리는 A가 부호
     순열이라 그룹 배치(이동·균등 스케일·회전·미러)로 **그대로** 낼 수 있다 —
     캔버스에 구울 것이 없다.
+
+    아핀 하나는 **면 전체를 한 자로** 설명한다. 이음선이 공유 축을 따라 기운
+    짝에서는 그 한 자가 이음새 양 끝에서 어긋나므로, 같은 변환을 공유 축
+    구간마다 다시 잰 것이 `segments`다 (조각별 등거리 — 수직 이동만 토막마다
+    다르고 방향·배율은 그대로다). 비면 아핀 하나로 물러난다 (유리 이음새·
+    되짚기가 안 서는 차).
     """
 
     src: str
@@ -177,6 +241,7 @@ class Fold:
     edge: float                    # 이음선 (src 유닛)
     A: np.ndarray = field(default_factory=lambda: np.eye(2))
     b: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    segments: tuple[SeamSegment, ...] = ()
     # 이음새 띠의 **건너편 끝** (src 유닛) — 유리 구멍처럼 목적 면이 src의 한
     # 구간에만 사는 짝이 쓴다. None이면 이음선 너머 전부다. 넘침 조각을 자르는
     # 자가 이걸 본다: 구멍 너머(지붕 뒤쪽)의 레이어는 유리가 아니라 제 면이
@@ -185,11 +250,70 @@ class Fold:
     why: str = ""
 
     def to(self, u, v) -> tuple[np.ndarray, np.ndarray]:
-        """src 유닛 → dst 유닛 (배열도 받는다)."""
+        """src 유닛 → dst 유닛 (배열도 받는다). 면 전체를 한 자로 — 아핀 하나."""
         u = np.asarray(u, float)
         v = np.asarray(v, float)
         return (self.A[0, 0] * u + self.A[0, 1] * v + self.b[0],
                 self.A[1, 0] * u + self.A[1, 1] * v + self.b[1])
+
+    # ---- 조각별 이음새 ----
+    @property
+    def shared_axis(self) -> str:
+        """이음선을 따라 달리는 src 축 — 넘치는 축의 반대다."""
+        return "v" if self.axis == "u" else "u"
+
+    def _perp_index(self) -> int:
+        """dst에서 **수직 좌표**(이음선을 가로지르는 쪽)의 인덱스."""
+        col = self.A[:, 0 if self.axis == "u" else 1]
+        return int(np.argmax(np.abs(col)))
+
+    def segment_at(self, t: float) -> SeamSegment | None:
+        """공유 좌표 `t`(src 유닛)를 담는 토막. 없으면 가장 가까운 토막."""
+        if not self.segments:
+            return None
+        for sg in self.segments:
+            if sg.t0 <= t <= sg.t1:
+                return sg
+        return min(self.segments, key=lambda sg: abs(sg.mid - t))
+
+    def to_local(self, u: float, v: float) -> tuple[float, float]:
+        """src 유닛 → dst 유닛, **그 자리의 이음선**으로 (조각별 등거리).
+
+        토막이 없으면 `to`와 같다. 있으면 수직 좌표만 그 토막의 이동을 쓴다 —
+        공유 좌표(이음선을 따라 달리는 쪽)는 등거리라 토막마다 다를 것이 없다.
+        """
+        du, dv = (float(x) for x in self.to(u, v))
+        sg = self.segment_at(v if self.shared_axis == "v" else u)
+        if sg is None:
+            return du, dv
+        pi = self._perp_index()
+        si = 0 if self.axis == "u" else 1
+        flip = float(self.A[pi, si])
+        out = [du, dv]
+        out[pi] = flip * (u if si == 0 else v) + sg.perp
+        return out[0], out[1]
+
+    def seam_tangent(self, t: float) -> tuple[float, float]:
+        """이음선의 **기울기** (src 쪽, dst 쪽) — 공유 좌표 한 유닛당 끝선 변화.
+
+        두 값이 다르면 이음새가 양쪽에서 다른 각으로 놓인 것이다 (이어 붙인
+        띠가 이음새에서 꺾여 보이는 자리). 토막이 둘 미만이면 (0, 0).
+        """
+        if len(self.segments) < 2:
+            return 0.0, 0.0
+        sg = self.segment_at(t)
+        i = self.segments.index(sg)
+        j = min(len(self.segments) - 1, i + 1) if i == 0 else i - 1
+        a, b_ = (self.segments[i], self.segments[j])
+        dt = a.mid - b_.mid
+        if abs(dt) < 1e-6:
+            return 0.0, 0.0
+        return ((a.src_edge - b_.src_edge) / dt,
+                (a.dst_edge - b_.dst_edge) / dt)
+
+    def confidence_at(self, t: float) -> float:
+        sg = self.segment_at(t)
+        return 1.0 if sg is None else float(sg.confidence)
 
     def over(self, box: tuple[float, float, float, float]) -> float:
         """이 상자가 이음선을 **넘은 양** (면 유닛). 안 넘으면 0."""
@@ -293,9 +417,50 @@ def fold(maps: dict[str, SurfaceMap], src: str, dst: str,
     b[d_i] = e_d - d_s * d_d * e_s
     A[dh_i, sh_i] = sgn
     b[dh_i] = off
+    segs = _seam_segments(sm, dm, s_ax=s_ax, d_ax=d_ax, d_s=d_s, d_d=d_d,
+                          sh_i=sh_i, d_i=d_i, sgn=sgn, off=off,
+                          flip=d_s * d_d, perp0=float(b[d_i]),
+                          lo=lo, hi=hi)
     return Fold(src=src, dst=dst, axis=s_ax, sign=d_s, edge=float(e_s), A=A, b=b,
+                segments=segs,
                 why=f"이음선 {src} {s_ax}={e_s:.0f} → {dst} {d_ax}={e_d:.0f}"
-                    f"({how}) · 공유 {shared}축 {why}")
+                    f"({how}) · 공유 {shared}축 {why}"
+                    + (f" · 토막 {len(segs)}" if segs else ""))
+
+
+def _seam_segments(sm: SurfaceMap, dm: SurfaceMap, *, s_ax: str, d_ax: str,
+                   d_s: float, d_d: float, sh_i: int, d_i: int,
+                   sgn: float, off: float, flip: float, perp0: float,
+                   lo: float | None, hi: float | None,
+                   n: int = SEAM_BINS) -> tuple[SeamSegment, ...]:
+    """이음선을 공유 축 `n`토막으로 다시 잰다 (`Fold.segments`).
+
+    토막마다 양쪽 마스크의 끝선을 그 구간에서만 재고, 그 짝이 내는 수직 이동을
+    면 전체의 값과 견줘 신뢰를 매긴다. 한쪽 마스크가 그 구간에 없으면 토막을
+    안 낸다 — 없는 자리를 어림으로 메우면 조각별 자가 아니라 잡음이 된다.
+    """
+    s_lo = sm.paint[sh_i] if lo is None else max(sm.paint[sh_i], lo)
+    s_hi = sm.paint[sh_i + 2] if hi is None else min(sm.paint[sh_i + 2], hi)
+    span = s_hi - s_lo
+    if span <= 1e-6:
+        return ()
+    ext = abs(dm.paint[d_i + 2] - dm.paint[d_i]) or 1.0
+    out: list[SeamSegment] = []
+    for k in range(n):
+        t0 = s_lo + span * k / n
+        t1 = s_lo + span * (k + 1) / n
+        es = edge_line(sm, s_ax, d_s, lo=t0, hi=t1)
+        if es is None:
+            continue
+        a, b_ = sgn * t0 + off, sgn * t1 + off
+        ed = edge_line(dm, d_ax, -d_d, lo=min(a, b_), hi=max(a, b_))
+        if ed is None:
+            continue
+        perp = float(ed - flip * es)
+        conf = max(0.0, 1.0 - abs(perp - perp0) / (SEAM_TOL * ext))
+        out.append(SeamSegment(t0=float(t0), t1=float(t1), src_edge=float(es),
+                               dst_edge=float(ed), perp=perp, confidence=conf))
+    return tuple(out) if len(out) >= 2 else ()
 
 
 def _same_metric(sm: SurfaceMap, dm: SurfaceMap, shared: str,
