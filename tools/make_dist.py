@@ -90,11 +90,16 @@ def main() -> int:
     if a.check:
         return 0
 
-    out = ROOT / "dist" / f"ForzaSqueegee-{version()}.zip"
+    ver = version()
+    out = ROOT / "dist" / f"ForzaSqueegee-{ver}.zip"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # 최상위를 폴더 하나로 감싼다 — 다운로드 폴더에 그대로 풀어도 파일 350여 개가
+    # 흩어지지 않고, 풀린 그 폴더가 곧 프로그램 자리다 (`runtime/`·`out/`·`work/`이
+    # 다 그 안에 놓인다).
+    top = f"ForzaSqueegee-{ver}"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in files:
-            z.write(ROOT / p, p.as_posix())
+            z.write(ROOT / p, f"{top}/{p.as_posix()}")
     print(f"\n{out}  ({out.stat().st_size / 1e6:.1f}MB)")
     print("  모델과 FLS 편집기는 안 실렸다 — 쓸 때 릴리스에서 받는다 (release.json)")
     return 0
