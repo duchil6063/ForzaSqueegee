@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+
 import cv2
 import numpy as np
 
@@ -17,8 +19,8 @@ from ..model import Layer, LayerPlan
 from ..celart.marks import _MARK_DE
 from ..price import _HOLE_PRICE
 from ..stop import stop_here
-from .geometry import (_SUB_BITS, _layer, _mask_px, _min_span,
-                       _poly_px, poly_bbox, poly_mask)
+from .geometry import (_layer, _mask_px, _min_span, _poly_px,
+                       poly_bbox, poly_mask)
 from .vocabulary import _FILL_SHAPE
 
 
@@ -88,6 +90,12 @@ def count_hole_clusters(plan: LayerPlan, cel: CelArt, cat: Catalog,
 # 성장이 감수하는 색 단차의 상한 (ΔE×px) — **값의 자**다. §18 봉인은 이
 # 자를 안 쓴다 (`harm_per_px` 참조).
 _GROW_HARM = 90.0
+# **한쪽 성장** — 스케일 한 스텝에 게임 이동 한 칸(0.5유닛)을 짝지어 한 변만
+# 내미는 수. 새 자유도가 아니라 이미 있는 두 축의 묶음이고, 배치 단이 이미
+# 같은 수를 쓴다 (`layered.grow_fill`의 SHIFTS). 상수도 새것이 없다 —
+# 0.5는 게임 이동 스텝, 0.01은 스케일 스텝이다.
+_ONE_STEP = 0.5
+_ONE_SIDED = os.environ.get("FS_GROW_ONESIDE", "1") != "0"
 
 
 def _growable(cat: Catalog, lay: Layer, ink_long: bool = False) -> bool:
@@ -116,14 +124,31 @@ def _growable(cat: Catalog, lay: Layer, ink_long: bool = False) -> bool:
 
 
 def _owner_map(plan: LayerPlan, cat: Catalog, upp: float, w: int, h: int,
-               ss: int) -> np.ndarray:
-    """표본마다 **맨 위 레이어 index** (배경 -1) — 성장의 가시성 판정용."""
+               ss: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """표본마다 (**맨 위** 레이어 index, **그 밑** index, 덮은 장수).
+
+    셋을 한 바퀴에 만든다 — 셋 다 같은 래스터를 봐야 한다. 맨 위는 성장의
+    가시성 판정, 그 밑은 **비켜난 자리에 드러나는 색**(한쪽 성장의 해악),
+    장수는 **비켜나도 구멍이 안 열리나**(자격)를 답한다. 배경은 -1이다.
+    """
     own = np.full((h * ss, w * ss), -1, np.int32)
+    under = np.full((h * ss, w * ss), -1, np.int32)
+    cnt = np.zeros((h * ss, w * ss), np.uint8)
     for i, lay in enumerate(plan.layers):
-        for p in _poly_px(cat, lay, upp, w, h):
-            cv2.fillPoly(own, [np.round(p * ss * (1 << _SUB_BITS)).astype(np.int32)],
-                         i, shift=_SUB_BITS)
-    return own
+        polys = _poly_px(cat, lay, upp, w, h)
+        box = poly_bbox(polys, w, h, ss, pad=1) if polys else None
+        if box is None:
+            continue
+        x0, y0, x1, y1 = box
+        m = poly_mask(polys, (y1 - y0, x1 - x0), x0 / ss, y0 / ss, ss)
+        o = own[y0:y1, x0:x1]; u = under[y0:y1, x0:x1]; c = cnt[y0:y1, x0:x1]
+        if lay.mask:
+            o[m] = -1; u[m] = -1; c[m] = 0
+            continue
+        u[m] = o[m]
+        o[m] = i
+        c[m & (c < 255)] += 1
+    return own, under, cnt
 
 
 def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
@@ -162,6 +187,14 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
     자리가 얻는 자리보다 훨씬 넓으면 그 자체가 새 얼룩이라 비례 상한은 둔다).
 
     `ink_long`이면 선화 획도 **긴 축으로만** 키운다 (`_growable` 문서).
+
+    수는 **사다리 두 단**이다 (`_ONE_STEP` 문서). 대칭 한 스텝이 다 진 뒤에만
+    **한쪽 성장**(스케일 + 이동 한 칸)을 묻는다 — 대칭은 구멍 쪽으로 나가면서
+    반대편도 같이 나가므로, 그쪽이 남의 색을 물거나 실루엣을 넘으면 구멍 쪽도
+    함께 진다. 이동을 짝지으면 무는 둘레가 절반이고, 그 대신 반대 변이
+    물러설 수 있어 두 값을 더 문다: 비켜난 자리가 **혼자 덮던 자리면 기각**
+    (구멍이 열린다 — 자격), 보이던 자리면 **그 밑 색**이 드러나는 만큼을
+    얻는 쪽과 같은 자로 해악에 더한다.
     """
     w, h = cel.size
     upp = plan.units_per_px
@@ -175,8 +208,32 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
     tgt = cv2.cvtColor(cel.flat_render(), cv2.COLOR_RGB2LAB).astype(np.float32)
     if ss > 1:
         tgt = np.repeat(np.repeat(tgt, ss, axis=0), ss, axis=1)
-    owner = _owner_map(plan, cat, upp, w, h, ss)
+    owner, under, cnt = _owner_map(plan, cat, upp, w, h, ss)
     area = float(ss * ss)                  # 표본 → 1x px 환산
+    white = cv2.cvtColor(np.full((1, 1, 3), 255, np.uint8),
+                         cv2.COLOR_RGB2LAB)[0, 0].astype(np.float32)
+    mv = int(np.ceil(_ONE_STEP / max(upp, 1e-6) * ss)) + 1
+
+    def _worth(box) -> bool:
+        """한쪽 사다리를 밟을 값이 있나 — **정확한 지레짐작**이다.
+
+        한쪽 후보는 대칭 후보를 이동 한 칸(`_ONE_STEP`) 옮긴 것이므로 bbox가
+        정확히 그만큼만 넓다. 그 창 안에 겨눌 자리가 하나도 없으면 어느
+        후보든 이득이 0이라 어차피 진다 — 결과는 그대로이고 래스터만 안 뜬다
+        (실측 P0-01 봉인 단, 같은 프로세스 등뒤 대조: 성장 837회로 **같고**
+        시간이 10.9 → 7.4초).
+        """
+        if box is None:
+            return False
+        x0 = max(0, box[0] - mv); y0 = max(0, box[1] - mv)
+        x1 = min(w * ss, box[2] + mv); y1 = min(h * ss, box[3] + mv)
+        if x0 >= x1 or y0 >= y1:
+            return False
+        if need is not None:
+            return bool(need[y0:y1, x0:x1].any())
+        return bool(((owner[y0:y1, x0:x1] == -1)
+                     & sil[y0:y1, x0:x1]).any())
+
     grown = 0
     for _ in range(passes):
         changed = 0
@@ -196,52 +253,123 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
             # 큰다** (실측 W1-01: 미커버 8,859표본에 성장 58회). 한 축만
             # 키우면 문는 둘레가 절반이라 같은 상한에서 훨씬 자주 통과한다.
             # 순서가 곧 동점 우선순위다 (둘 다 → 가로 → 세로).
-            for gx, gy in axes:
-                big = Layer(**{**lay.__dict__})
-                if gx:
-                    big.sx = round(big.sx + (0.01 if big.sx >= 0 else -0.01), 4)
-                if gy:
-                    big.sy = round(big.sy + (0.01 if big.sy >= 0 else -0.01), 4)
-                polys = _poly_px(cat, big, upp, w, h)
-                box = poly_bbox(polys, w, h, ss, pad=2)
-                if box is None:
-                    continue
-                x0, y0, x1, y1 = box
-                shape = (y1 - y0, x1 - x0)
-                g = (poly_mask(polys, shape, x0 / ss, y0 / ss, ss)
-                     & ~poly_mask(cur, shape, x0 / ss, y0 / ss, ss))
-                if not g.any():
-                    continue
-                own = owner[y0:y1, x0:x1]
-                vis = g & (own < i)           # 위에 아무도 없는 성장분
-                ben = int(np.count_nonzero(
-                    vis & (need[y0:y1, x0:x1] if need is not None
-                           else (own == -1) & sil[y0:y1, x0:x1])))
-                if ben == 0:
-                    continue
-                spill = np.count_nonzero(vis & ~sil[y0:y1, x0:x1]) / area
-                oth = vis & (own >= 0)
-                harm = 0.0
-                if oth.any():
-                    # 목표 대비 오차가 **얼마나 늘어나나** (위 문서). 줄어드는
-                    # 자리는 0으로 두고 세지 않는다 — 이득으로 치면 성장이
-                    # 수리를 흉내 내며 커지고, 그것은 이 손의 일이 아니다.
-                    # JND 아래 증가는 화면이 안 바뀐다 (§15와 같은 자)
-                    t = tgt[y0:y1, x0:x1][oth]
-                    d_new = np.linalg.norm(lab_of[i][None] - t, axis=1)
-                    d_old = np.linalg.norm(lab_of[own[oth]] - t, axis=1)
-                    harm = float(np.maximum(d_new - d_old - _MARK_DE,
-                                            0.0).sum()) / area
-                cap = _GROW_HARM if harm_per_px is None                     else max(_GROW_HARM, harm_per_px * ben / area)
-                if spill > 2 or harm > cap:
-                    continue
-                if best is None or ben > best[0]:
-                    best = (ben, big, vis, x0, y0, x1, y1)
+            #
+            # 그래도 **양쪽**으로 자라는 것은 그대로다. 그래서 사다리를 한 단
+            # 더 둔다: 대칭이 다 진 뒤에만 **한쪽 성장**(스케일 + 이동 한 칸)을
+            # 묻는다. 대칭으로 되는 자리에서 안 묻는 것은, 이동이 붙으면 반대
+            # 변이 물러서서 그 밑 색이 드러나기 때문이다 — 같은 일을 하는 두
+            # 수 중 **안 움직이는 쪽**이 늘 옳다. 새 자유도가 아니라 이미 있는
+            # 두 축의 묶음이고, 배치 단이 이미 같은 수를 쓴다
+            # (`layered.grow_fill`의 SHIFTS)
+            rungs = [tuple((gx, gy, 0.0, 0.0) for gx, gy in axes)]
+            if _ONE_SIDED:
+                # 걸음은 배치 단과 **같은 넷**이다 (`layered.grow_fill`의
+                # SHIFTS에서 제자리를 뺀 것) — 이 손이 새 수를 발명하지
+                # 않는다는 것이 요점이라 그 목록을 그대로 쓴다
+                rungs.append(tuple(
+                    (gx, gy, mx, my) for gx, gy in axes
+                    for mx, my in ((_ONE_STEP, 0.0), (-_ONE_STEP, 0.0),
+                                   (0.0, _ONE_STEP), (0.0, -_ONE_STEP))))
+            sym_box = None                # 대칭 후보 bbox 합 (아래 지레짐작용)
+            for ri, rung in enumerate(rungs):
+                if best is not None:
+                    break
+                if ri and not _worth(sym_box):
+                    break                 # 도달 범위 안에 겨눌 자리가 없다
+                for gx, gy, mx, my in rung:
+                    big = Layer(**{**lay.__dict__})
+                    if gx:
+                        big.sx = round(
+                            big.sx + (0.01 if big.sx >= 0 else -0.01), 4)
+                    if gy:
+                        big.sy = round(
+                            big.sy + (0.01 if big.sy >= 0 else -0.01), 4)
+                    if mx or my:
+                        big.x = round(big.x + mx, 4)
+                        big.y = round(big.y + my, 4)
+                    polys = _poly_px(cat, big, upp, w, h)
+                    box = poly_bbox(polys, w, h, ss, pad=2)
+                    if box is None:
+                        continue
+                    x0, y0, x1, y1 = box
+                    if not (mx or my):
+                        sym_box = box if sym_box is None else (
+                            min(sym_box[0], x0), min(sym_box[1], y0),
+                            max(sym_box[2], x1), max(sym_box[3], y1))
+                    shape = (y1 - y0, x1 - x0)
+                    nm = poly_mask(polys, shape, x0 / ss, y0 / ss, ss)
+                    om = poly_mask(cur, shape, x0 / ss, y0 / ss, ss)
+                    g = nm & ~om
+                    if not g.any():
+                        continue
+                    own = owner[y0:y1, x0:x1]
+                    vis = g & (own < i)       # 위에 아무도 없는 성장분
+                    ben = int(np.count_nonzero(
+                        vis & (need[y0:y1, x0:x1] if need is not None
+                               else (own == -1) & sil[y0:y1, x0:x1])))
+                    if ben == 0:
+                        continue
+                    spill = np.count_nonzero(vis & ~sil[y0:y1, x0:x1]) / area
+                    oth = vis & (own >= 0)
+                    harm = 0.0
+                    if oth.any():
+                        # 목표 대비 오차가 **얼마나 늘어나나** (위 문서).
+                        # 줄어드는 자리는 0으로 두고 세지 않는다 — 이득으로
+                        # 치면 성장이 수리를 흉내 내며 커지고, 그것은 이 손의
+                        # 일이 아니다. JND 아래 증가는 화면이 안 바뀐다 (§15)
+                        t = tgt[y0:y1, x0:x1][oth]
+                        d_new = np.linalg.norm(lab_of[i][None] - t, axis=1)
+                        d_old = np.linalg.norm(lab_of[own[oth]] - t, axis=1)
+                        harm = float(np.maximum(d_new - d_old - _MARK_DE,
+                                                0.0).sum()) / area
+                    # **비켜난 자리** — 이동을 짝지은 수에만 있다. 대칭
+                    # 스케일은 중심에서 밖으로만 자라므로 물러서는 변이
+                    # 없고, 그 자리에서 이 셈을 하면 도형 원점이 어긋난
+                    # 어휘에서 래스터 부스러기가 성장을 통째로 막는다
+                    # (실측: 봉인 성장 642 → 303회). 값을 무는 것은 값을
+                    # 만드는 수뿐이다
+                    lost = (om & ~nm) if (mx or my) else None
+                    if lost is not None and lost.any():
+                        # 둘을 묻는다:
+                        # (1) 자격 — 혼자 덮고 있었으면 구멍이 열린다.
+                        #     미커버는 값이 아니라 자격이므로 무조건 기각이다.
+                        # (2) 값 — 보이던 자리는 **그 밑 색**이 드러난다.
+                        #     얻는 쪽과 같은 자로 재어 같은 상한에 넣는다
+                        if (lost & (cnt[y0:y1, x0:x1] == 1)
+                                & sil[y0:y1, x0:x1]).any():
+                            continue
+                        seen = lost & (own == i)
+                        if seen.any():
+                            u = under[y0:y1, x0:x1][seen]
+                            t = tgt[y0:y1, x0:x1][seen]
+                            d_old = np.linalg.norm(lab_of[i][None] - t, axis=1)
+                            d_new = np.where(u[:, None] >= 0,
+                                             lab_of[np.maximum(u, 0)],
+                                             white[None]) - t
+                            harm += float(np.maximum(
+                                np.linalg.norm(d_new, axis=1) - d_old
+                                - _MARK_DE, 0.0).sum()) / area
+                    cap = (_GROW_HARM if harm_per_px is None
+                           else max(_GROW_HARM, harm_per_px * ben / area))
+                    if spill > 2 or harm > cap:
+                        continue
+                    if best is None or ben > best[0]:
+                        best = (ben, big, g, vis, lost, x0, y0, x1, y1)
             if best is None:
                 continue
-            _ben, big, vis, x0, y0, x1, y1 = best
+            _ben, big, g, vis, lost, x0, y0, x1, y1 = best
             plan.layers[i] = big
-            owner[y0:y1, x0:x1][vis] = i
+            own = owner[y0:y1, x0:x1]
+            und = under[y0:y1, x0:x1]
+            und[vis] = own[vis]               # i가 맨 위가 된 자리의 새 밑
+            own[vis] = i
+            c = cnt[y0:y1, x0:x1]
+            if lost is not None and lost.any():   # 비켜난 자리 — 밑이 올라온다
+                back = lost & (own == i)
+                own[back] = und[back]
+                und[back] = -1                # 그 밑은 모른다 (보수적)
+                c[lost & (c > 0)] -= 1
+            c[g & (c < 255)] += 1
             grown += 1
             changed += 1
         if not changed:

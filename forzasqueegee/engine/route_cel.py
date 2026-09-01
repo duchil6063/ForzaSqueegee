@@ -481,6 +481,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                                line_mask, cel.labels < 0, stats)
         if n_j:
             log(msg("  교차점 정리: 끝 마디 {n}회 이동 (도형 0장)", n=n_j))
+    _snap("s6_junc")                       # 봉인 **직전** — 빚의 원장이 끊기는 자리
     # §18 **봉인** — 여기가 기하를 만지는 마지막 손이다. 위의 모든 단은 값을
     # 물어 λ와 거래하지만 이 단은 안 한다: 실루엣 안에 안 칠한 표본이 하나라도
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).
