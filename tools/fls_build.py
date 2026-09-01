@@ -404,9 +404,13 @@ def package() -> int:
         print("   " + dirty.replace("\n", "\n   "))
         return 2
     head = _head()
+    patches = sorted(PATCH_DIR.glob("*.patch"))
     out = ROOT / "dist"
     out.mkdir(parents=True, exist_ok=True)
-    stem = f"ForzaLiveryStudio-itasha-{PIN[:12]}"
+    # 패치 수도 이름에 넣는다 — 업스트림 고정점이 같아도 우리 패치가 늘면 **다른
+    # 바이너리**다. 이름이 갈려야 옛 판을 적어 둔 `release.json`을 가진 사람의
+    # sha256 대조가 안 깨진다 (`tools/get_fls.py`가 받은 뒤 그것을 본다).
+    stem = f"ForzaLiveryStudio-itasha-{PIN[:12]}-p{len(patches)}"
     binary_zip, source_zip = f"{stem}-win64.zip", f"{stem}-source.zip"
 
     # ── 대응 소스: 고정 커밋 + 패치가 얹힌 그 트리 그대로 ──
@@ -416,7 +420,7 @@ def package() -> int:
     src_path.write_bytes(raw)
     with zipfile.ZipFile(src_path, "a", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         z.writestr("BUILD.md", _build_md())
-        for p in sorted(PATCH_DIR.glob("*.patch")):
+        for p in patches:
             z.write(p, f"patches/{p.name}")
         z.writestr("COMMIT", f"upstream {PIN}\nfork     {head}\n")
     print(f"  {src_path.name}  ({src_path.stat().st_size / 1e6:.1f}MB)")
