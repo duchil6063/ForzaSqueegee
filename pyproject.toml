@@ -1,6 +1,6 @@
 [project]
 name = "forzasqueegee"
-version = "1.1.0"
+version = "1.3.0"
 description = "FH6 리버리 제작 보조 툴 — 이미지를 인게임 비닐 도형 레이어로 변환하고 오버레이로 안내"
 # 상한은 고정한 꾸러미가 받는 범위다 — PySide6 6.11.2가 <3.15이고
 # onnxruntime 1.29.0도 3.15 휠이 없다. 넘겨 두면 설치가 뒤엉킨 채 죽는다.
