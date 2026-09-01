@@ -70,9 +70,38 @@ _OVERRIDE: Path | None = None          # 이번 실행만 (CLI `--game-dir`)
 
 
 def settings_file() -> Path:
-    """못 박은 설치 폴더를 적어 두는 자리 (`work/`는 저장소가 안 따라간다)."""
+    """못 박은 게임 자리를 적어 두는 파일 (`work/`는 저장소가 안 따라간다).
+
+    설치 폴더(`install_dir`)와 저장 컨테이너 뿌리(`save_dir` — `savedir`)가
+    한 파일에 산다. 그래서 쓰기는 **읽고 고쳐 쓴다** — 한쪽을 못 박는 것이
+    다른 쪽을 지우면 안 된다.
+    """
     from ..paths import work_root
     return work_root() / "state" / "gamedir.json"
+
+
+def read_settings() -> dict:
+    """저장 파일 그대로 (없거나 깨졌으면 빈 칸)."""
+    try:
+        raw = json.loads(settings_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def write_setting(key: str, value: str | None) -> None:
+    """열쇠 하나만 고쳐 쓴다. `None`이면 지운다 (남는 값이 없으면 파일도)."""
+    raw = read_settings()
+    if value is None:
+        raw.pop(key, None)
+    else:
+        raw[key] = value
+    f = settings_file()
+    if not raw:
+        f.unlink(missing_ok=True)
+        return
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(raw, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def _root_of(p: str | Path | None) -> Path | None:
@@ -112,11 +141,7 @@ def _steam_roots() -> list[Path]:
 
 def saved_dir() -> Path | None:
     """저장 파일에 적힌 폴더 (검사 없이 적힌 그대로). 없으면 None."""
-    try:
-        raw = json.loads(settings_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    d = raw.get("install_dir")
+    d = read_settings().get("install_dir")
     return Path(d) if d else None
 
 
@@ -179,18 +204,15 @@ def set_install_dir(path: str | Path | None) -> Path | None:
     `media/Cars`가 없는 자리는 거절한다 — 받아 두면 다음 실행이 통째로
     프리셋으로 물러나는데 사람은 못 박았다고 믿는다.
     """
-    f = settings_file()
     if path is None:
-        f.unlink(missing_ok=True)
+        write_setting("install_dir", None)
         _clear_caches()
         return None
     root = _root_of(path)
     if root is None:
         raise ValueError(msg("FH6 설치 폴더가 아니다 (media/Cars가 없다) — {path}",
                              path=path))
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"install_dir": str(root)}, ensure_ascii=False, indent=1),
-                 encoding="utf-8")
+    write_setting("install_dir", str(root))
     _clear_caches()
     return root
 

@@ -33,7 +33,11 @@ class _FlsOps:
 
         `ask_where`면 어디에 놓을지 묻는다 — 게임 저장 폴더에 바로 놓으면 저장
         그리드에 그대로 뜬다 (인게임 적용의 '파일 저장' 갈래). 안 물으면 도안
-        폴더 옆에 적는다."""
+        폴더 옆에 적는다.
+
+        묻는 자리는 **게임 저장 컨테이너 뿌리에서 열린다** (`savedir`가 찾는다)
+        — 못 찾으면 도안 폴더에서 연다. 사람이 고른 자리가 컨테이너 뿌리면
+        못 박아 둔다 (다음부터는 훑기 없이 바로 그 자리다)."""
         from ...engine.fls import bridge
 
         if self.plan is None:
@@ -41,11 +45,13 @@ class _FlsOps:
             return
         out = self._fls_out_dir()
         if ask_where:
+            out = self._game_save_dir() or out
             got = QFileDialog.getExistingDirectory(
                 self, tr("gui.apply.ingame.file.where"), str(out))
             if not got:
                 return
             out = Path(got)
+            self._pin_game_save_dir(out)
         try:
             folder, st = bridge.plan_folder(self.plan, out)
         except BaseException as e:            # noqa: BLE001 — 창이 죽으면 안 된다
@@ -58,6 +64,28 @@ class _FlsOps:
             self.show_log.setChecked(True)
         self._msg(tr("gui.fls.exported", n=st["layers"],
                      folder=self._rel(folder)))
+
+    def _game_save_dir(self) -> Path | None:
+        """게임 저장 컨테이너 뿌리 — 놓으면 저장 그리드에 뜨는 그 자리."""
+        from ...game import savedir
+
+        try:
+            root, src = savedir.resolve()
+        except OSError:
+            return None
+        if root is None:
+            return None
+        self._log(tr("gui.fls.save_dir", path=root, src=src))
+        return root
+
+    def _pin_game_save_dir(self, picked: Path) -> None:
+        """고른 자리가 컨테이너 뿌리면 못 박아 둔다 (아니면 조용히 넘어간다)."""
+        from ...game import savedir
+
+        try:
+            savedir.set_save_dir(picked)
+        except (OSError, ValueError):
+            pass
 
     def _export_fls_proj(self, where: Path) -> str | None:
         """FLS 판 — `.3so` 프로젝트 하나. 반환은 파일 이름 (실패하면 None).
