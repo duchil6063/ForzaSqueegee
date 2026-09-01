@@ -448,8 +448,6 @@
  "글자를 뺀다": "Text removed",
  "글자에 쓸 장수 상한 (층을 낮추는 시험용 레버)": "Layer cap for the text (a test lever that forces lower tiers)",
  "기본값 — 저장된 것이 없다": "default — nothing saved",
- "기울기 {n}장": "{n} skewed layers",
- "기울기가 든 레이어가 {n_skew}/{total}장 있다 — 레코드의 기울기 자리를\n  모른다. 마스크와 같은 사정인데 이쪽은 오래 안 막혀 있었다: 주입이 기울기만\n  빼고 나머지를 써서 **플랜 렌더와 인게임이 조용히 갈렸다** (실측 7장에서 픽셀\n  0.70~1.89% · 셀 일치도 lpips +0.0026~+0.0185). 창 조작(`run`)도 그 도구가 없어\n  멈춘다 — 기울기를 안 내는 판으로 다시 구울 것 (--force로 무시)": "{n_skew}/{total} layers carry skew — the record's skew slot is\n  unknown. Same story as masks, but this one went unnoticed for a while: injection\n  wrote everything but skew and **the plan render and the in-game result quietly\n  diverged** (measured on 7 layers: pixels 0.70~1.89% · cel match lpips\n  +0.0026~+0.0185). Window control (`run`) lacks the tool too and stops —\n  re-bake a plan that emits no skew (--force to override)",
  "기울기가 든 레이어는 못 그린다 (skew={skew}) — driver에 축이 없다": "cannot draw a layer with skew (skew={skew}) — the driver has no such axis",
  "기존 플랜의 경계 밖 돌출을 덮는 4밴드 마스크 미니 플랜 생성 (인게임 캔버스에 추가 적용용)": "build a 4-band mask mini-plan covering a plan's overhang past the border (applied on top of the in-game canvas)",
  "꼬리 성장 후": "after tail grow",
@@ -944,5 +942,7 @@
  "도형 맞춤 글자가 예산 {free:,}장에 안 든다 — 게임 글꼴로 간다": "shape-fitted text does not fit in {free:,} layers — falling back to the game font",
  "모르는 텍스트 엔진: {engine} (있는 것: {engines})": "Unknown text engine: {engine} (available: {engines})",
  "옆면 글자 그룹 {n}벌 — {what} {m:,}장": "{n} side text group(s) — {what}, {m:,} layers",
- "auto · script · brush · graffiti · racing · techno · minimal (기본 auto: 구성 계열이 고른다. 스타일이 글꼴을 고른다)": "auto · script · brush · graffiti · racing · techno · minimal (default auto: the composition family picks one, and the style picks the font)"
+ "auto · script · brush · graffiti · racing · techno · minimal (기본 auto: 구성 계열이 고른다. 스타일이 글꼴을 고른다)": "auto · script · brush · graffiti · racing · techno · minimal (default auto: the composition family picks one, and the style picks the font)",
+ "게임이 못 내는 기울기 {n}장": "{n} layers with unreachable skew",
+ "게임이 그대로 못 내는 기울기가 {n}/{total}장 있다 (예: {sample}) —\n  기울기는 0.01 격자 위여야 하고 확인된 범위(±{cap})를 벗어나면 안 된다.\n  플랜을 다시 구울 것 (--force로 무시)": "{n}/{total} layers carry a skew the game cannot reproduce exactly (e.g. {sample}) —\n  skew must sit on the 0.01 input grid and stay within the verified range (±{cap}).\n  Re-bake the plan (--force to override)"
 }

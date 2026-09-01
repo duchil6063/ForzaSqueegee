@@ -49,6 +49,7 @@ import numpy as np
 
 from ..i18n import msg
 from ..paths import find_run_file, run_file
+from .celfit.affine import representable
 from .stop import Cancelled, stop_here, stopping
 
 # 작업 해상도 — **짧은 변** 기준. 긴 변 기준이면 세로로 긴 구도에서 인물의 폭이
@@ -377,18 +378,27 @@ def _reach_check(plan, cat) -> dict:
     수치는 멀쩡하고 인게임만 갈렸다. 그래서 **자를 여기에 하나 세운다**: 값이
     싸고(플랜만 읽는다) 게임이 없어도 돌고, `make`의 판정 줄에 바로 뜬다.
 
+    기울기 쪽은 2026-09-01에 자리를 찾아(레코드 +0x70) 주입·저장 왕복이
+    실측으로 닫혔다. 그래서 이 자가 묻는 것이 "그 축을 쓰나"에서 **"쓴 값이
+    게임 입력 격자 위인가"**로 바뀌었다 — 자를 지운 것이 아니라 옮긴 것이다.
+
     인게임 대조는 이 자가 못 보는 것까지
     보지만 게임이 켜져 있어야 한다 — 둘은 겹치는 자가 아니라 층이 다르다.
     """
     trans = sorted({l.shape for l in plan.layers
                     if l.shape in cat.shapes and not cat[l.shape].opaque})
-    n_skew = sum(1 for l in plan.layers if abs(l.skew) > 1e-9)
+    # **기울기는 이제 도달한다** — 주입이 레코드 +0x70에 쓰고 저장 왕복도
+    # 정확하다 (2026-09-01 인게임 실측). 그래서 자가 "기울기가 있나"에서
+    # **"게임이 그대로 낼 수 있는 값인가"**로 바뀌었다: 유한하고 · 확인된 범위
+    # 안이고 · 입력 격자(0.01) 위인가. 검사를 지우는 것이 아니라 옮긴 것이다 —
+    # 이 자를 세운 까닭(렌더가 게임과 다르게 그리는 축을 잡는다)은 그대로다.
+    n_skew = sum(1 for l in plan.layers if not representable(l.skew))
     n_mask = sum(1 for l in plan.layers if l.mask)
     bad = []
     if trans:
         bad.append(msg("반투명 도형 {kinds}", kinds="·".join(trans)))
     if n_skew:
-        bad.append(msg("기울기 {n}장", n=n_skew))
+        bad.append(msg("게임이 못 내는 기울기 {n}장", n=n_skew))
     if n_mask:
         bad.append(msg("마스크 {n}장", n=n_mask))
     return {"id": "reach", "ok": not bad,

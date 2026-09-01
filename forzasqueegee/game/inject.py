@@ -36,10 +36,13 @@ FH6에는 `CLiveryGroup` RTTI가 없어 그룹 객체로 못 가고, 레코드 �
 - **도형 id 표**는 `catalog/fh6_layout.json`의 `shape_ids`(457종)에 있고 선택
   가능·단색 353종을 전부 덮는다. 규칙은 **id = 100·페이지 + 페이지 안 번호**다
 - **알파는 색 4바이트의 넷째다** — a8 128짜리 한 장으로 확인했다
-- **마스크·기울기 자리는 아직 모른다** — 레코드에서 못 찾았다. 지금 파이프라인은
-  두 노선 다 이 둘을 안 내지만(실측 0장), 들어오면 `apply_plan`이 **막는다** —
-  그냥 쓰면 그 축만 빠진 채 그려져 플랜과 인게임이 조용히 갈린다. 배치의
-  좌표하강은 기울기 축을 아예 안 민다 (`engine/celfit/scoring._descend`)
+- **기울기는 +0x70이다** (2026-09-01 실측, 색 바로 앞). 주입이 쓰고, 저장 →
+  다시 열기 왕복도 정확하다 (실루엣 IoU 0.9737 — 기울기 0인 대조군 0.9768과
+  같다). 근거·검증 절차는 `catalog/fh6_layout.json`의 `_skew`에 있다.
+  `apply_plan`이 막는 것은 이제 "기울기가 있나"가 아니라 **"게임이 그대로 낼 수
+  있는 값인가"**다 (`skew_ok`)
+- **마스크 자리는 아직 모른다** — 레코드에서 못 찾았다. 들어오면 `apply_plan`이
+  막는다: 그냥 쓰면 일반 레이어로 그려져 플랜과 인게임이 조용히 갈린다
 
 ## 도형 id가 다시 연 그룹에서 안 먹던 자리 (65차, 닫힘)
 
@@ -78,6 +81,7 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..engine.celfit.affine import SKEW_MAX, representable
 from ..engine.model import Layer, LayerPlan
 from ..i18n import msg
 
@@ -111,6 +115,15 @@ class _MBI(ctypes.Structure):
                 ("__align2", wintypes.DWORD)]
 
 
+def skew_ok(v: float) -> bool:
+    """이 기울기를 게임이 **그대로** 낼 수 있나 — 도달 검사와 같은 자.
+
+    `celfit.affine`이 정본이다 (`pipeline._reach_check`도 그것을 쓴다) — 자를
+    두 벌 두면 도안 판정과 주입 판정이 갈린다.
+    """
+    return representable(v)
+
+
 @dataclass(frozen=True)
 class Layout:
     """레이어 구조체 배치. `catalog/fh6_layout.json`에서 읽는다 (61차 확정).
@@ -125,6 +138,7 @@ class Layout:
     position: int = 0x18            # 레이어 → x, y (float 2, 캔버스 유닛)
     scale: int = 0x28               # 레이어 → sx, sy (float 2)
     rotation: int = 0x50            # 레이어 → 회전 (float, 도)
+    skew: int = 0x70                # 레이어 → 기울기 (float) — 2026-09-01 실측
     parent: int = 0x60              # 레이어 → 부모 그룹 객체 (65차)
     color: int = 0x74               # 레이어 → **RGBA** (byte 4)
     shape_id: int = 0x7A            # 레이어 → 도형 id (u16)
@@ -427,7 +441,7 @@ def _read_span(layout: Layout) -> int:
     값까지 플랜과 정확히 맞았다 — 게임이 지운 것이 아니라 **우리가 너무 많이 읽은
     것**이었다. 필드는 전부 앞쪽 0x7c 안에 있으므로 그만 읽는다."""
     return max(layout.position + 8, layout.scale + 8, layout.rotation + 4,
-               layout.color + 4, layout.shape_id + 2)
+               layout.skew + 4, layout.color + 4, layout.shape_id + 2)
 
 
 def _record(p: Proc, addr: int, layout: Layout) -> dict | None:
@@ -438,9 +452,11 @@ def _record(p: Proc, addr: int, layout: Layout) -> dict | None:
     x, y = struct.unpack_from("<ff", raw, layout.position)
     sx, sy = struct.unpack_from("<ff", raw, layout.scale)
     (rot,) = struct.unpack_from("<f", raw, layout.rotation)
-    if any(v != v for v in (x, y, sx, sy, rot)):      # NaN
+    (skew,) = struct.unpack_from("<f", raw, layout.skew)
+    if any(v != v for v in (x, y, sx, sy, rot, skew)):      # NaN
         return None
     return {"addr": addr, "x": x, "y": y, "sx": sx, "sy": sy, "rot": rot,
+            "skew": skew,
             "rgba": tuple(raw[layout.color:layout.color + 4]),
             "shape_id": struct.unpack_from("<H", raw, layout.shape_id)[0]}
 
@@ -827,15 +843,18 @@ def apply_plan(plan_path: str | Path, *, force: bool = False,
                   "  창 조작(`run`)은 마스크 위저드를 쓰므로 그쪽으로 올릴 것 (--force로 무시)",
                   n_mask=n_mask))
         return 2
-    n_skew = sum(1 for l in plan.layers if abs(l.skew) > 1e-9)
-    if n_skew and not force:
-        print(msg("기울기가 든 레이어가 {n_skew}/{total}장 있다 — 레코드의 "
-                  "기울기 자리를\n  모른다. 마스크와 같은 사정인데 이쪽은 오래 안 막혀"
-                  " 있었다: 주입이 기울기만\n  빼고 나머지를 써서 **플랜 렌더와 인게임이"
-                  " 조용히 갈렸다** (실측 7장에서 픽셀\n  0.70~1.89% · 셀 일치도 lpips"
-                  " +0.0026~+0.0185). 창 조작(`run`)도 그 도구가 없어\n  멈춘다 — 기울기를"
-                  " 안 내는 판으로 다시 구울 것 (--force로 무시)",
-                  n_skew=n_skew, total=len(plan.layers)))
+    # 기울기는 이제 **주입이 쓴다** (레코드 +0x70, 2026-09-01 실측 — 저장 왕복
+    # 까지 확인). 그래서 막는 자리가 "기울기가 있나"에서 **"게임이 그대로 낼
+    # 수 있는 값인가"**로 바뀌었다: 유한하고, 확인된 범위 안이고, 입력 격자
+    # (0.01) 위여야 한다 (`celfit.affine.representable`)
+    bad_skew = [l for l in plan.layers if not skew_ok(l.skew)]
+    if bad_skew and not force:
+        print(msg("게임이 그대로 못 내는 기울기가 {n}/{total}장 있다 (예: {sample})"
+                  " —\n  기울기는 0.01 격자 위여야 하고 확인된 범위(±{cap})를 벗어나면"
+                  " 안 된다.\n  플랜을 다시 구울 것 (--force로 무시)",
+                  n=len(bad_skew), total=len(plan.layers),
+                  sample=", ".join(f"{l.skew:g}" for l in bad_skew[:3]),
+                  cap=f"{SKEW_MAX:g}"))
         return 2
     ids = layout.shape_ids or {}
     unknown = sorted({l.shape for l in plan.layers} - set(ids))
@@ -1013,6 +1032,10 @@ def write_plan_to_table(p: Proc, table: int, plan: LayerPlan, layout: Layout,
         ok = p.write(ptr + layout.position, struct.pack("<ff", lay.x, lay.y))
         ok &= p.write(ptr + layout.scale, struct.pack("<ff", lay.sx, lay.sy))
         ok &= p.write(ptr + layout.rotation, struct.pack("<f", lay.rot % 360.0))
+        # 기울기 — 레코드 +0x70 (2026-09-01 실측). 인접 +0x38·+0x48의 AABB
+        # 캐시는 안 고친다: 렌더에 안 쓰이고, 안 고친 채로 그림·저장 모두
+        # 정상이었다 (`catalog/fh6_layout.json`의 `_skew`)
+        ok &= p.write(ptr + layout.skew, struct.pack("<f", lay.skew))
         r, gg, b = lay.rgb()
         av = int(round(max(0.0, min(100.0, lay.alpha)) / 100.0 * 255.0))
         ok &= p.write(ptr + layout.color, bytes((r, gg, b, av)))
