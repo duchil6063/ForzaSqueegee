@@ -367,6 +367,29 @@ def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                           np.ones((3, 3), np.uint8)).astype(bool)
     stats["ink_near"] = round(float((near_ink & lm).sum())
                               / max(1, int(lm.sum())), 4)
+    # **면이 맡기로 한 경계는 "못 그린 선"이 아니다.** `ink_near`는 선 지도
+    # **전체**를 분모로 써서 "선화 모델을 얼마나 따랐나"를 잰다 — 표현 결정
+    # (`engine._fill_owns`)이 일부러 뺀 선이 그대로 감점이 된다. 병리 감지용
+    # 검사(`route_cel`의 `ink`)는 그 자로 물으면 안 되므로, **긋기로 한 선**만
+    # 분모에 넣은 자를 따로 낸다. 억제가 없으면 두 값은 같다.
+    own_m = None
+    rec = stats.get("_rec")
+    for st in getattr(rec, "strokes", ()) if rec is not None else ():
+        if st.dropped != "fill_owns" or len(st.path) < 2:
+            continue
+        if own_m is None:
+            own_m = np.zeros((h, w), np.uint8)
+        rx0, ry0 = st.roi[0], st.roi[1]
+        pp = np.stack([st.path[:, 1] + rx0, st.path[:, 0] + ry0],
+                      axis=1).round().astype(np.int32)
+        cv2.polylines(own_m, [pp], False, 1,
+                      max(1, int(round(max(st.width, 1.0)))))
+    if own_m is not None:
+        keep = lm & ~cv2.dilate(own_m, k5).astype(bool)
+        stats["ink_near_drawn"] = round(float((near_ink & keep).sum())
+                                        / max(1, int(keep.sum())), 4)
+    else:
+        stats["ink_near_drawn"] = stats["ink_near"]
     stats["ink_stray"] = round(float((ink & ~near_line).sum())
                                / max(1, int(ink.sum())), 4)
     stats["outline_cover"] = stats["outline_src"] = None

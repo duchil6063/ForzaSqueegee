@@ -32,9 +32,10 @@ from . import intent as I
 from .evidence import (EvidenceMaps, fill_neighborhood, junction_degrees,
                        sample)
 from .geometry import _min_span
-from .graph import (_CONF, _DE, _DETAIL_W, _ISO_LEN_REL, _LINE_FRAG_REL,
-                    _SIL, _SUP_OK, FEATURE, NOISE, TEXTURE, LogicalStroke,
-                    classify, continue_strokes, texture_representatives)
+from .graph import (_BND, _CONF, _DE, _DETAIL_W, _ISO_LEN_REL, _LINE_FRAG_REL,
+                    _SIL, _SUP_OK, COLOR_BOUNDARY, FEATURE, NOISE, TEXTURE,
+                    LogicalStroke, classify, continue_strokes,
+                    texture_representatives)
 from .grammar import (_FAT_MAX_MUL, _FAT_MIN_AREA, _LINE_W_REL, _WCAP_CV,
                       _fill_fat, _patch_seams)
 from .merge import merge_costrokes
@@ -370,6 +371,82 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
     return rec
 
 
+# ── §3·§4 표현 결정 — 이 경계를 **선이 맡나 면이 맡나** ────────────────
+# `_ink_mul` ②(§22)가 이미 "색이 그 자리를 설명하나"를 묻지만, 그 항은
+# **거의 안 뜬다**: 실측(표준 11장, 그린 COLOR_BOUNDARY 3,678획) §22가 실제로
+# 뜨는 획은 **3.8%**이고 배수 평균이 1.006이다 — 사실상 무동작이다. 옛 주석은
+# 이것을 "잉크 λ가 안 문다"로 적었지만, 안 문 것은 λ가 아니라 게이트다.
+#
+# **까닭은 `max`다.** 게이트가 쓰는 신뢰도는 `max(basic, _DETAIL_W·detail)`인데,
+# `detail`은 이름 그대로 **세부선 추출기**라 톤 경계마다 뜬다 — 억제 대상과
+# 그린 획의 중앙이 0.935 vs 0.969로 거의 같다(갈림 0.03). 반면 `basic`은
+# 0.284 vs 0.908로 잘 갈린다(0.69). `max`가 그 갈림을 **`detail`로 덮어**
+# 둘 다 `_CONF`(0.55) 위로 올려놓는다. §22를 살리려면 `basic`만 봐야 한다.
+#
+# 여기서는 모델 신뢰도를 아예 안 쓴다 — 아래 `ink_trough`가 갈림 **1.35**로
+# 가장 세고, 모델이 없거나 폴백일 때도 성립하는 **원화 자체의 자**다.
+#
+# **묻는 것을 바꾼다.** "선화 모델이 헷갈리나"가 아니라 **원화에 진짜 선이
+# 그어져 있나**를 묻는다. 사람이 그은 선은 제가 가르는 두 면보다 어둡다 —
+# 그 골(`ev.ink_trough`)이 없으면 그 자리는 두 색이 만나는 **이음매**일 뿐이고,
+# 선화 모델이 거기 선을 놓은 것은 색이 갈리기 때문이지 선이 있어서가 아니다.
+#
+# 골이 **부호로** 갈린다는 것이 요점이다: 이음매의 표본 픽셀은 양옆 색의
+# 혼합이라 반드시 둘 중 어두운 쪽보다 밝다 (골 ≤ 0). 진짜 선은 둘 다보다
+# 어둡다 (골 > 0). 그래서 문턱이 값이 아니라 **0 언저리**다 — 아래 상수는
+# 표본 어긋남·안티에일리어싱 몫의 여유일 뿐이다.
+#
+# 네 조건이 다 서야 면이 맡는다 (하나라도 어긋나면 선이 맡는다):
+#   ① 원화에 선이 없다        골 < `_OWN_TROUGH`
+#   ② 색이 실제로 갈린다      `side_de` ≥ `_OWN_DE` × `_DE`
+#   ③ 양옆이 다른 **면**이다  `bnd` ≥ `_BND` (면이 실제로 경계를 낸다)
+#   ④ 실루엣이 아니다         `sil` < `_SIL` (테는 언제나 잉크)
+_OWN_TROUGH = float(os.environ.get("FS_OWN_TROUGH", 0.02))
+_OWN_DE = float(os.environ.get("FS_OWN_DE", 2.0))      # `_DE` 배수
+_OWN = os.environ.get("FS_OWN", "1") != "0"
+
+
+def _fill_owns(s, pol) -> bool:
+    """이 경계를 **선 없이 색면 둘이** 그려도 되나 (cel 노선만).
+
+    line 노선에는 절대 안 건다 (`pol.fill_below`) — 거기는 받쳐 줄 색면이 없어
+    선이 빠지면 그 자리가 통째로 빈다. 선화 자체가 출력 목적인 노선의 의미를
+    훼손하지 않는 자리가 여기다.
+    """
+    if not (_OWN and pol.fill_below) or s.role != COLOR_BOUNDARY:
+        return False
+    ev = s.ev
+    return (ev.ink_trough < _OWN_TROUGH
+            and ev.side_de >= _OWN_DE * _DE
+            and ev.bnd >= _BND
+            and ev.sil < _SIL)
+
+
+def owned_pairs(strokes, pol) -> set:
+    """**통째로** 면이 맡을 수 있는 경계 짝 — 사람은 윤곽을 반만 안 지운다.
+
+    획 하나씩 판정하면 한 윤곽의 가운데 토막만 빠져 **선이 끊긴다**. 실측
+    (표준 3장, 획별 판정): 선 도형이 14.0% 줄었지만 긴 획 끊김이 **+15.4%**로
+    세 판 다 퇴행했다 — 사람이 안 하는 짓이고, 끊긴 윤곽은 장수를 아낀 만큼
+    도로 물어낸다.
+
+    그래서 단위를 **가르는 면 짝**(`ev.side_pair`)으로 올린다. 같은 두 면을
+    가르는 획들은 한 윤곽이므로(이어긋기가 이미 이 짝을 본다 —
+    `evidence.StrokeEvidence.side_pair`), 그 윤곽의 획이 **하나라도** 진짜
+    선이면(잉크 골이 깊거나 실루엣이거나) 윤곽을 통째로 지킨다.
+    """
+    if not (_OWN and pol.fill_below):
+        return set()
+    cand: set = set()
+    keep: set = set()
+    for s in strokes:
+        pr = tuple(s.ev.side_pair)
+        if pr == (-1, -1):
+            continue
+        (cand if _fill_owns(s, pol) else keep).add(pr)
+    return cand - keep
+
+
 def _ink_mul(s, pol, base: float) -> float:
     """이 획의 잉크 가격 **배수** — 사람이 생략할 선일수록 비싸다.
 
@@ -387,10 +464,16 @@ def _ink_mul(s, pol, base: float) -> float:
     ② **경계 설명력** (§22, cel 노선만) — 이 선을 안 그어도 **색이 그 자리를
        설명하나**. 양옆 색차가 역할 판정의 색 문턱(`_DE`)을 넘고 선화 신뢰도가
        그 문턱(`_CONF`)에 못 미치면, 그 자리의 경계는 색면이 이미 그린다.
-       사람도 색이 또렷이 갈리는 자리에는 선을 겹쳐 긋지 않는다. 반대로 양옆
-       색이 같은데 선 증거가 세면 이 배수가 1이라 그대로 지켜진다 — 그 선은
-       색으로는 절대 안 생기는 구조다. line 노선에는 안 건다 (`fill_below`):
-       거기는 받쳐 줄 색면이 없어 선이 빠지면 그 자리가 통째로 빈다.
+       line 노선에는 안 건다 (`fill_below`): 거기는 받쳐 줄 색면이 없어 선이
+       빠지면 그 자리가 통째로 빈다.
+
+       **이 항은 거의 안 뜬다** (실측 3.8% · 배수 평균 1.006). `conf`가
+       `max(basic, _DETAIL_W·detail)`인데 `detail`이 톤 경계마다 떠서
+       (억제 대상 0.935 ↔ 그린 획 0.969) `basic`의 갈림(0.284 ↔ 0.908)을
+       덮는다 — 둘 다 `_CONF` 위로 올라가 게이트가 0이 된다.
+       "선을 그을까 말까"의 실질 판단은 여기가 아니라 **표현 결정**
+       (`_fill_owns`)이 한다 — 거기는 모델의 확신이 아니라 **원화에 선이
+       그어져 있나**(`ev.ink_trough`)를 묻는다.
 
     ④ **원천이 하나인가** (§25) — 아래 코드 주석. ⑤ **분리 이득** (§26) —
        유일하게 값을 **깎는** 항이다.
@@ -471,13 +554,15 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
     # 잉크가 나가도 되는 자리 — 선 밴드 안. line 노선은 그 위에 배경까지 뺀다
     # (덮어 줄 면이 없어 흰 바탕에 자국이 그대로 남는다)
     allow = near_all if pol.fill_below else (near_all & ~bg_all)
-    n = n_cheap = n_joint = 0
+    n = n_cheap = n_joint = n_owned = 0
     placed: list = []
     owners: list = []
     total = max(1, len(rec.strokes))
     # 지금까지 그은 잉크 — **덮임 판정의 기준**이다 (`candidates.evaluate`).
     # 이미 놓인 덩어리 채움도 여기 실린다. 갱신은 놓은 도형의 bbox 안에서만
     ink_so_far = _ink_map(plan.layers, cat, upp, w, h)
+    # 면이 통째로 맡을 수 있는 경계 짝 — 획 하나씩이 아니라 **윤곽 단위**다
+    own_pairs = owned_pairs(rec.strokes, pol)
     for k, s in enumerate(rec.strokes):
         if progress and (k & 15) == 0:
             progress(k / total, msg("획 {cur}/{total}", cur=k + 1, total=total))
@@ -489,6 +574,13 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
                     n=len(rec.strokes) - k))
             break
         sc = s.sc
+        # **면이 맡는 경계는 안 긋는다** (§3·§4) — 값이 아니라 **표현 결정**이라
+        # 가격 앞에 선다. 값으로 물으면 이 획들은 언제나 이긴다 (획은 정의상
+        # 값이 높은 자리다) — §22가 못 문 까닭이 그것이다 (`_fill_owns`).
+        if _fill_owns(s, pol) and tuple(s.ev.side_pair) in own_pairs:
+            s.dropped = "fill_owns"
+            n_owned += 1
+            continue
         # 가격 — 획 하나가 단위다. 사람은 획을 한 번에 긋거나 아예 안 긋는다.
         # 정책이 가격을 무는 역할만 문다 (실루엣·고립 특징은 면제 — 길이로
         # 값을 매기면 구조적으로 지는데, 빠지면 그 자리 경계가 통째로 없어진다)
@@ -554,7 +646,12 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
                        len(plan.layers)))
         owners.append(s)
     rec.stats["cheap_strokes"] = n_cheap
+    # §9 계측 — 색면이 맡아 안 그은 획 (A/B가 읽는 자)
+    rec.stats["fill_owned_strokes"] = n_owned
     rec.stats["joint_moves"] = n_joint
+    if n_owned:
+        log(msg("  색면이 맡는 경계 {n}개 — 선을 안 긋는다 (원화에 선이 없고 "
+                "양옆 색이 갈린다)", n=n_owned))
     if n_cheap:
         log(msg("  가격 미달 획 {n_cheap}개 생략 (값 < λ) — 그은 획 {n_placed}개",
                 n_cheap=n_cheap, n_placed=len(placed)))

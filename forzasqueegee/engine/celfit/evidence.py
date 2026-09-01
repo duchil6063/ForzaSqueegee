@@ -76,6 +76,16 @@ class StrokeEvidence:
     # 먼저, 결정적). 잠정 색 영역이 있을 때만 뜬다 (없으면 (-1,-1)).
     # 이어긋기가 이것을 본다: 가르는 짝이 다른 두 간선은 한 획이 아니다
     side_pair: tuple = (-1, -1)
+    # **잉크 골** — 경로가 제 양옆보다 얼마나 더 어두운가 (원화 어두움 차).
+    # "여기 진짜 선이 그어져 있나"를 원화에 직접 묻는 자다. 사람이 그은 선은
+    # 제가 가르는 두 면보다 어둡다 — 그래서 골이 깊으면 그 선은 색면이 못
+    # 대신한다. 골이 얕으면 그 자리는 **두 색이 만나는 이음매**일 뿐이고,
+    # 선화 모델이 거기에 선을 그린 것은 색이 갈리기 때문이지 선이 있어서가
+    # 아니다 (`engine._fill_owns`).
+    #
+    # 검다/밝다가 아니라 **양옆 대비**인 것이 요점이다: 어두운 머리칼과 어두운
+    # 옷이 만나는 자리는 `dark`가 높아도 골이 0이라 색면이 가른다.
+    ink_trough: float = 0.0
     length: float = 0.0         # 경로 길이 px
     continuity: float = 0.0     # 선 지도 위에 실제로 얹힌 표본 비율
     bridged: float = 0.0        # 다리(이은 구간)로 채운 표본 비율
@@ -312,6 +322,13 @@ def sample(path: np.ndarray, wmed: float, widths: np.ndarray,
         ev.sil = float(np.mean((la < 0) | (lb < 0) | maps.sil[gy[idx], gx[idx]]))
         d = lab_img[ay, ax] - lab_img[by, bx]
         ev.side_de = float(np.median(np.sqrt((d * d).sum(axis=1))))
+        # **잉크 골** — 경로 어두움 − 양옆 중 **더 어두운 쪽**. 더 어두운 쪽을
+        # 쓰는 것이 요점이다: 밝은 쪽만 보면 어두운 면에 붙은 경계가 전부
+        # "선이 있다"로 읽힌다. 표본 자리는 `side_de`가 쓰는 그 짝이라
+        # 새로 재는 것이 없다.
+        ev.ink_trough = float(np.median(
+            maps.dark[gy[idx], gx[idx]]
+            - np.maximum(maps.dark[ay, ax], maps.dark[by, bx])))
         # 가르는 면 짝 — 양옆에서 가장 잦은 라벨 (배경 -1은 그대로 쓴다:
         # 실루엣을 가르는 것도 하나의 짝이다)
         if ev.bnd > 0.0:

@@ -568,10 +568,18 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     if not classic:
         # 선 도안 커버리지 — line 노선과 같은 자·같은 문턱 (병리 감지용.
         # 획 밑을 면이 받치므로 문턱은 그대로 0.88이면 충분하다)
+        #
+        # **분모는 "긋기로 한 선"이다** (`ink_near_drawn`). `ink_near`는 선 지도
+        # 전체를 분모로 써서 "선화 모델을 얼마나 따랐나"를 재는데, 표현 결정
+        # (`celfit.engine._fill_owns`)이 **일부러** 뺀 경계가 그대로 감점이 되어
+        # 정상 판마다 이 검사가 뜬다 (실측 11번 판 79.2%). 병리 검사는 "그리기로
+        # 한 것을 못 그렸나"를 물어야 하므로 억제한 경계는 분모에서 뺀다.
+        # 억제가 없으면 두 값은 같다.
         checks.insert(3, {
-            "id": "ink", "ok": stats["ink_near"] >= 0.88,
+            "id": "ink", "ok": stats["ink_near_drawn"] >= 0.88,
             "text": msg("선 커버리지 {near:.1%} (±1px · 정밀 {cover:.1%})",
-                        near=stats["ink_near"], cover=stats["ink_cover"])})
+                        near=stats["ink_near_drawn"],
+                        cover=stats["ink_cover"])})
         if stats.get("skipped_strokes"):
             checks[1] = {"id": "budget", "ok": False,
                          "text": msg("예산 소진 — 획 {n}개 못 그림 (영역 {m}개)",
