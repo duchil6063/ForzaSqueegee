@@ -70,8 +70,10 @@ def line_of(d, lay: Layer, upp: float, w: int, h: int):
         return _bar_line(d, lay, upp, w, h)
     th = np.radians(lay.rot)
     c, s = np.cos(th), np.sin(th)
-    p = (d.center * np.array([lay.sx, lay.sy], np.float64)) \
-        @ np.array([[c, s], [-s, c]], np.float64)
+    p = d.center * np.array([lay.sx, lay.sy], np.float64)
+    if lay.skew:                           # 전단 — 회전 **전** (`geometry._poly_px`)
+        p = p + np.stack([p[:, 1] * lay.skew, np.zeros(len(p))], axis=1)
+    p = p @ np.array([[c, s], [-s, c]], np.float64)
     p += np.array([lay.x, lay.y], np.float64)
     px = np.stack([p[:, 0] / upp + w / 2.0, h / 2.0 - p[:, 1] / upp], axis=1)
     if len(px) < 3:
@@ -102,6 +104,8 @@ def _bar_line(d, lay: Layer, upp: float, w: int, h: int):
     th = np.radians(lay.rot)
     c, s_ = np.cos(th), np.sin(th)
     v = np.array([ex, 0.0]) if ex >= ey else np.array([0.0, ey])
+    if lay.skew:                           # 전단 — 회전 전 (짧은 축이 기울면
+        v = np.array([v[0] + lay.skew * v[1], v[1]])    # 장축 방향이 바뀐다)
     v = np.array([c * v[0] - s_ * v[1], s_ * v[0] + c * v[1]])
     o = np.array([lay.x, lay.y], np.float64)
 
@@ -241,7 +245,8 @@ def bulge_of(desc, lay: Layer) -> float:
     """
     if desc is None or not desc.stroke_ok or len(desc.center) < 5:
         return 1.0
-    w, _mid, length = placed_widths(desc.center, desc.halfw, lay.sx, lay.sy)
+    w, _mid, length = placed_widths(desc.center, desc.halfw, lay.sx, lay.sy,
+                                    lay.skew)
     if length <= 1e-9 or len(w) < 5:
         return 1.0
     med = float(np.median(w))

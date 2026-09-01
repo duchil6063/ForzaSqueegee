@@ -45,8 +45,13 @@ def _bar_geom(lay: Layer, upp: float, w: int, h: int):
     """막대 레이어 → (중심 px, 축 단위벡터, 반길이 px, 반폭 px).
 
     `geometry._layer`의 역이다 — 같은 식이라 왕복이 정확하다.
+
+    **전단이 들면 반길이가 는다.** 로컬 ±1 상자가 `x → sx·p + skew·sy·q`로
+    가므로 x의 최대가 `|sx| + |skew·sy|`다 (y 쪽은 안 바뀐다 — 전단은 y를
+    안 건드린다). 이 값이 짝을 고르는 자라, 안 고치면 기울어진 막대의
+    "축으로 이어지나" 판정이 짧게 잡혀 이을 짝을 놓친다.
     """
-    a = abs(lay.sx) * UNITS_PER_SCALE / upp
+    a = (abs(lay.sx) + abs(lay.skew * lay.sy)) * UNITS_PER_SCALE / upp
     b = abs(lay.sy) * UNITS_PER_SCALE / upp
     th = -np.radians(lay.rot)              # 이미지 y-down 각
     cx = lay.x / upp + w / 2.0

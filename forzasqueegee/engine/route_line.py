@@ -14,6 +14,7 @@ import numpy as np
 
 from ..i18n import msg
 from ..paths import run_file
+from .celfit.affine import report as skew_report
 from .pipeline import (_one_region, _reach_check, _source_bundle, read_rgba,
                        write_png)
 
@@ -223,6 +224,7 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
                      near=stats["ink_near"], cover=stats["ink_cover"])},
         _reach_check(plan, cat),
     ]
+    stats.update(skew_report(plan.layers))          # §14 기울기 계측
     if outline is not None:
         # 원화 탓과 배치 탓을 가른다 — outline_src(테에 선 지도가 있는 몫)가
         # 상한이다. 상한과의 차의 몸통(표준 10장 실측 6~11%p)은 최소 도형보다

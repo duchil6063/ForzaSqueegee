@@ -47,6 +47,7 @@ import numpy as np
 from ..catalog import Catalog
 from ..celart.rag import complexity
 from ..model import Layer, LayerPlan
+from . import policy as _policy
 from .fill import _grow_step, _place_fat, _seed_moment
 from .scoring import _MIN_GAIN, _STROKE_R, _Scorer, _descend
 from .vocabulary import _FILL_SHAPES, _FILL_WIN
@@ -91,15 +92,26 @@ def _place_whole(sc: _Scorer, cat: Catalog, color, vocab: tuple[str, ...]
         step = len(ys) // 40000 + 1
         ys, xs = ys[::step], xs[::step]
     pw = np.stack([xs, ys], axis=1).astype(np.float64)
-    best = None
+    best = plain = None
     for name in vocab:
-        for alt in _seed_moment(sc, pw, name, color, cat):
+        # 전 아핀 씨앗을 나란히 세운다 (§8) — 바탕 **한 장**이 몸통을 얼마나
+        # 담느냐가 잔차 보정 장수를 정하므로, 전단이 값을 하는 자리가 여기다
+        for alt in _seed_moment(sc, pw, name, color, cat,
+                                skew=_policy.skew_fill_default()):
             s = sc.score_val(alt)
             if best is None or s > best[0]:
                 best = (s, alt)
+            if not alt.skew and (plain is None or s > plain[0]):
+                plain = (s, alt)
     if best is None:
         return None
-    return _descend(sc, best[1], color, passes=3)
+    got = _descend(sc, best[1], color, passes=3, skew=best[1].skew != 0.0)
+    # **전단 없는 안도 하강까지** (§5) — 씨앗 점수는 결과 순위가 아니다
+    if got[1].skew and plain is not None:
+        alt = _descend(sc, plain[1], color, passes=3)
+        if alt[0] >= got[0]:
+            return alt
+    return got
 
 
 def _cand_value(sc: _Scorer, q: Layer, price: float, free: bool) -> tuple:
@@ -286,16 +298,24 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
             continue
         ys, xs = np.nonzero(cm)
         pw = np.stack([xs, ys], axis=1).astype(np.float64)
-        best = None
+        best = plain = None
         for name in _FILL_SHAPES:
-            for alt in _seed_moment(sc, pw, name, color, cat):
+            for alt in _seed_moment(sc, pw, name, color, cat,
+                                    skew=_policy.skew_fill_default()):
                 s = sc.score_val(alt)
                 if best is None or s > best[0]:
                     best = (s, alt)
+                if not alt.skew and (plain is None or s > plain[0]):
+                    plain = (s, alt)
         if best is None:
             sc.commit(cm)
             continue
-        gain, q = _descend(sc, best[1], color, passes=3)
+        gain, q = _descend(sc, best[1], color, passes=3,
+                           skew=best[1].skew != 0.0)
+        if q.skew and plain is not None:   # §5 — 전단 없는 안도 하강까지
+            g0, q0 = _descend(sc, plain[1], color, passes=3)
+            if g0 >= gain:
+                gain, q = g0, q0
         if gain < 3.0:
             sc.commit(cm)                  # 이 덩어리는 포기 (무한루프 방지)
             continue

@@ -447,12 +447,23 @@ def descriptors(cat: Catalog, log=None) -> dict[str, ShapeDesc]:
 
 
 # ── 놓인 뒤의 폭 — **닫힌 식** (라스터를 다시 안 뜬다) ────────────────
-def placed_profile(center: np.ndarray, halfw: np.ndarray,
-                   sx: float, sy: float) -> tuple[float, float, float, float]:
-    """도형을 (sx, sy)로 놓았을 때의 (테이퍼, 폭/길이, 폭 중앙값, 길이).
+def _placed_g(t: np.ndarray, sx: float, sy: float, skew: float) -> np.ndarray:
+    """|M t| — 놓인 뒤 접선의 길이. `M = Sk(skew)·diag(sx, sy)`.
 
-    선형사상 M = diag(sx, sy)에서 중심선의 단위 접선 t와 반폭 r을 가진 띠
-    조각은 폭이 `r·|det M| / |M t|`로 간다 (법선 성분 중 M t에 수직인 몫).
+    **전단은 `det M`을 안 바꾼다** (`Sk`의 행렬식이 1이다). 그래서 폭 식
+    `r·|det M| / |M t|`에서 전단이 드는 자리는 분모 하나뿐이고, 폭이 접선
+    방향에 따라 갈리는 정도만 달라진다. 회전은 폭에 무관하다 (`|R M t| = |M t|`).
+    """
+    return np.hypot(sx * t[:, 0] + skew * sy * t[:, 1], sy * t[:, 1])
+
+
+def placed_profile(center: np.ndarray, halfw: np.ndarray,
+                   sx: float, sy: float,
+                   skew: float = 0.0) -> tuple[float, float, float, float]:
+    """도형을 (sx, sy, skew)로 놓았을 때의 (테이퍼, 폭/길이, 폭 중앙값, 길이).
+
+    선형사상 M = Sk(skew)·diag(sx, sy)에서 중심선의 단위 접선 t와 반폭 r을 가진
+    띠 조각은 폭이 `r·|det M| / |M t|`로 간다 (법선 성분 중 M t에 수직인 몫).
     그래서 라스터를 다시 뜨지 않고도 **놓인 뒤의 폭 프로파일**을 얻는다 —
     후보마다 묻는 자리라 값이 싸야 한다.
 
@@ -467,7 +478,7 @@ def placed_profile(center: np.ndarray, halfw: np.ndarray,
     d = np.diff(center, axis=0)
     seg = np.hypot(d[:, 0], d[:, 1])
     t = d / np.maximum(seg, 1e-12)[:, None]           # 마디별 단위 접선
-    g = np.hypot(sx * t[:, 0], sy * t[:, 1])
+    g = _placed_g(t, sx, sy, skew)
     w = halfw[:-1] * abs(sx * sy) / np.maximum(g, 1e-12)
     if len(w) < 5:
         return 1.0, 0.0, 0.0, 0.0
@@ -485,7 +496,8 @@ def placed_profile(center: np.ndarray, halfw: np.ndarray,
 
 
 def placed_widths(center: np.ndarray, halfw: np.ndarray,
-                  sx: float, sy: float) -> tuple[np.ndarray, np.ndarray, float]:
+                  sx: float, sy: float,
+                  skew: float = 0.0) -> tuple[np.ndarray, np.ndarray, float]:
     """놓인 뒤의 **폭 프로파일 전체** — (마디별 폭, 마디 중점의 호길이 비율, 길이).
 
     `placed_profile`은 이 프로파일을 세 수로 접는다 (테이퍼·폭/길이·중앙값).
@@ -501,7 +513,7 @@ def placed_widths(center: np.ndarray, halfw: np.ndarray,
     d = np.diff(center, axis=0)
     seg = np.hypot(d[:, 0], d[:, 1])
     t = d / np.maximum(seg, 1e-12)[:, None]
-    g = np.hypot(sx * t[:, 0], sy * t[:, 1])
+    g = _placed_g(t, sx, sy, skew)
     w = 2.0 * halfw[:-1] * abs(sx * sy) / np.maximum(g, 1e-12)
     ml = seg * g
     cum = np.concatenate([[0.0], np.cumsum(ml)])
@@ -521,7 +533,8 @@ def layer_width_px(cat: Catalog, lay, upp: float) -> float:
     d = descriptors(cat).get(lay.shape)
     if d is None or not d.stroke_ok or len(d.center) < 3:
         return 0.0
-    return placed_profile(d.center, d.halfw, lay.sx, lay.sy)[2] / max(upp, 1e-9)
+    return placed_profile(d.center, d.halfw, lay.sx, lay.sy,
+                          lay.skew)[2] / max(upp, 1e-9)
 
 
 # ── 획 어휘 판정 — 손 목록이 아니라 서술자가 고른다 ──────────────────

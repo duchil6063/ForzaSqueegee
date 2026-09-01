@@ -43,6 +43,8 @@ import numpy as np
 from ..catalog import Catalog
 from ..model import Layer
 from . import chain
+from .affine import SKEW_STEP as _SKEW_STEP
+from .affine import step_visible
 from .descriptor import descriptors
 from .geometry import _min_span, _poly_px
 from .scoring import _PEN_LINE
@@ -58,6 +60,9 @@ _W_BULGE = float(os.environ.get("FS_JUNC_BULGE_W", 2.0))
 _PASSES = int(os.environ.get("FS_JUNC_PASSES", 2))
 # 0이면 이 단을 안 돈다 (스윕 스위치)
 _ON = float(os.environ.get("FS_JUNC", 1.0))
+# 접합점 보정에 기울기 한 칸을 후보로 넣나 (§10)
+_SKEW_ON = (os.environ.get("FS_SKEW", "0") != "0"
+            and os.environ.get("FS_JUNC_SKEW", "1") != "0")
 
 
 def _win_of(cat: Catalog, lay: Layer, upp: float, w: int, h: int, pad: int = 2):
@@ -232,16 +237,26 @@ def close_gaps(plan, cat: Catalog, upp: float, size: tuple[int, int],
                 # 자라는 수도 함께 물어본다 (`layered.grow_fill`의 그 짝)
                 gx, gy = (ds, 0.0) if abs(lay.sx) >= abs(lay.sy) else (0.0, ds)
                 mx, my = st * tw[0], -st * tw[1]
-                cands = [(st, 0.0, 0.0, 0.0), (-st, 0.0, 0.0, 0.0),
-                         (0.0, st, 0.0, 0.0), (0.0, -st, 0.0, 0.0),
-                         (0.0, 0.0, gx, gy), (0.0, 0.0, ds, ds),
-                         (mx, my, 0.0, 0.0), (mx, my, gx, gy)]
-                for dx, dy, dsx, dsy in cands:
+                cands = [(st, 0.0, 0.0, 0.0, 0.0), (-st, 0.0, 0.0, 0.0, 0.0),
+                         (0.0, st, 0.0, 0.0, 0.0), (0.0, -st, 0.0, 0.0, 0.0),
+                         (0.0, 0.0, gx, gy, 0.0), (0.0, 0.0, ds, ds, 0.0),
+                         (mx, my, 0.0, 0.0, 0.0), (mx, my, gx, gy, 0.0)]
+                # **기울기 한 칸** (§10) — 끝을 억지로 밀어 붙이는 대신 마디를
+                # 살짝 기울여 접선을 맞추는 수다. 이동·스케일과 같은 게임 격자
+                # 이고, 받는 자격도 같다 (창 비용 + 제 선 지도 손해). 지금
+                # 전단을 쓰는 마디는 0으로 돌아가는 수도 함께 본다
+                if _SKEW_ON and step_visible(cat, lay):
+                    cands += [(0.0, 0.0, 0.0, 0.0, dk)
+                              for dk in (_SKEW_STEP, -_SKEW_STEP)]
+                    if lay.skew:
+                        cands.append((0.0, 0.0, 0.0, 0.0, -lay.skew))
+                for dx, dy, dsx, dsy, dk in cands:
                     q = Layer(**{**lay.__dict__})
                     q.x = lay.x + dx
                     q.y = lay.y + dy
                     q.sx = lay.sx + (dsx if lay.sx >= 0 else -dsx)
                     q.sy = lay.sy + (dsy if lay.sy >= 0 else -dsy)
+                    q.skew = lay.skew + dk
                     if abs(q.sx) < 0.01 or abs(q.sy) < 0.01:
                         continue
                     q = q.quantized()

@@ -265,7 +265,8 @@ def stroke_metrics(plan: LayerPlan, rec, cat: Catalog, upp: float,
             d = descriptors(cat).get(lay.shape)
             if d is None or not d.stroke_ok or len(d.center) < 5:
                 continue
-            pw, _m, L = placed_widths(d.center, d.halfw, lay.sx, lay.sy)
+            pw, _m, L = placed_widths(d.center, d.halfw, lay.sx, lay.sy,
+                                      lay.skew)
             if L <= 0 or len(pw) < 5:
                 continue
             med = float(np.median(pw))

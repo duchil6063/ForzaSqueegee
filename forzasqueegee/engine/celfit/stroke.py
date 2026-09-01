@@ -30,6 +30,8 @@ from .skeleton import (_cross2, _paths, _prune_spurs, _rdp_idx, _resample,
                        _thin)
 from . import chain
 from . import intent as I
+from . import affine as A
+from . import policy as _policy
 from .descriptor import placed_profile, placed_widths
 from .vocabulary import bar_for, min_stroke_width_px, stroke_vocab
 
@@ -178,7 +180,7 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
               wmed: float, color, ink: bool, left: int, forms: tuple,
               sid: int = -1, depth: int = 0, strict: bool = False,
               wcap: float = 0.0, wprof: np.ndarray | None = None,
-              grammar: bool = False, it=None) -> int:
+              grammar: bool = False, it=None, skew_ok=None) -> int:
     """경로 하나를 획으로 — **곡선이 기본이고 막대는 직선일 때만**.
 
     ① 확실히 직선이면(`_is_straight`) 막대가 맞는 도형이다 ② 아니면 곡선 한
@@ -204,7 +206,7 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
         return 0
     if not _is_straight(path, wmed):
         arc = _try_curve(sc, forms, path, wmed, color, ink, sid,
-                         line=grammar, wprof=wprof)
+                         line=grammar, wprof=wprof, skew_ok=skew_ok)
         if arc is not None:
             _, mfin = sc.score(arc[1])
             sc.commit(mfin)
@@ -224,15 +226,16 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
                 a = _fit_path(plan, sc, dt, path[:i + 1], wmed, color, ink,
                               left, forms, sid, depth + 1, strict, wcap,
                               None if wprof is None else wprof[:i + 1],
-                              grammar, it.sub(0, i + 1) if it else None)
+                              grammar, it.sub(0, i + 1) if it else None,
+                              skew_ok)
                 b = _fit_path(plan, sc, dt, path[i:], wmed, color, ink,
                               left - a, forms, sid, depth + 1, strict, wcap,
                               None if wprof is None else wprof[i:], grammar,
-                              it.sub(i) if it else None)
+                              it.sub(i) if it else None, skew_ok)
                 return a + b
     return _fit_segments(plan, sc, dt, path, wmed, color, ink, left, sid,
                          strict=strict, wcap=wcap, forms=forms, wprof=wprof,
-                         grammar=grammar, it=it)
+                         grammar=grammar, it=it, skew_ok=skew_ok)
 
 
 def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
@@ -240,7 +243,7 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
                   left: int, sid: int = -1, strict: bool = False,
                   wcap: float = 0.0, forms: tuple | None = None,
                   wprof: np.ndarray | None = None,
-                  grammar: bool = False, it=None) -> int:
+                  grammar: bool = False, it=None, skew_ok=None) -> int:
     """마디 사슬 (최후 수단) — 폭 비례 허용오차로 마디를 끊고 **마디마다 도형을
     고른다**: 그 마디의 원래 호가 직선이면 막대(A_22), 굽었으면 곡선이다.
 
@@ -297,7 +300,7 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
         best_c = None
         if forms is not None and not _is_straight(arc, wpx) and len(arc) >= 10:
             best_c = _try_curve(sc, forms, arc, wpx, color, ink, sid, race=True,
-                                line=grammar,
+                                line=grammar, skew_ok=skew_ok,
                                 wprof=None if wprof is None else wprof[a:b + 1])
         theta = float(np.arctan2(p1[0] - p0[0], p1[1] - p0[1]))
         # 막대 도형은 **목표 폭이 고른다** — 둥근사각의 폭 눈금이 최소 도형 폭
@@ -366,21 +369,27 @@ def _path_worth(sc: _Scorer, path: np.ndarray, wmed: float) -> float:
 _FORMS: dict = {}      # 프로세스 1회 계측 (수요 적응 재생성이 다시 안 돌게)
 
 
-def _placed_form(i: int, sx: float, sy: float) -> tuple[float, float, float]:
-    """도형 i를 (sx, sy)로 놓았을 때의 (테이퍼, 폭/길이, 폭 [캔버스 유닛]).
+def _placed_form(i: int, sx: float, sy: float,
+                 skew: float = 0.0) -> tuple[float, float, float]:
+    """도형 i를 (sx, sy, skew)로 놓았을 때의 (테이퍼, 폭/길이, 폭 [캔버스 유닛]).
 
     식은 `descriptor.placed_profile` 하나다 — 배치가 고르는 폭과 계측이 재는
     폭이 같은 자여야 "폭을 맞췄다"가 검증 가능한 말이 된다.
+
+    **전단은 반드시 여기까지 와야 한다** (§6): 획 도형 문법 넷은 전부 놓인 뒤의
+    폭을 묻는데, 전단은 접선이 눌린 축을 향하는 자리에서 폭을 바꾼다. 자에
+    전단을 안 넣으면 "중심선은 잘 맞는데 폭이 찌그러진" 후보가 게이트를 그대로
+    통과한다.
     """
     U, W = _FORMS.get("u"), _FORMS.get("w")
     if U is None or W is None:
         return 1.0, 0.0, 0.0
-    taper, slim, wmed, _L = placed_profile(U[i], W[i], sx, sy)
+    taper, slim, wmed, _L = placed_profile(U[i], W[i], sx, sy, skew)
     return taper, slim, wmed
 
 
 def _prof_pen(i: int, sx: float, sy: float, wtgt: np.ndarray,
-              upp: float) -> float:
+              upp: float, skew: float = 0.0) -> float:
     """**폭 프로파일 어긋남**을 px² 넓이로 — 후보 순위의 항 (`_W_PROF` 문서).
 
     도형 i를 (sx, sy)로 놓았을 때의 마디별 폭(닫힌 식, `descriptor.
@@ -394,7 +403,7 @@ def _prof_pen(i: int, sx: float, sy: float, wtgt: np.ndarray,
     U, W = _FORMS.get("u"), _FORMS.get("w")
     if U is None or W is None or not len(wtgt):
         return 0.0
-    w, mid, length = placed_widths(U[i], W[i], sx, sy)
+    w, mid, length = placed_widths(U[i], W[i], sx, sy, skew)
     if length <= 1e-9 or len(w) < 2:
         return 0.0
     tgt = np.interp(mid, np.linspace(0.0, 1.0, len(wtgt)), wtgt)
@@ -402,7 +411,7 @@ def _prof_pen(i: int, sx: float, sy: float, wtgt: np.ndarray,
 
 
 def _tang_pen(i: int, sx: float, sy: float, th: float,
-              X: np.ndarray, wpx: float) -> float:
+              X: np.ndarray, wpx: float, skew: float = 0.0) -> float:
     """**끝 접선 어긋남** — 도형의 양끝이 경로와 얼마나 다른 방향으로 나가나.
 
     아핀 맞춤(`_affine_fit`)은 대응점 **거리**만 줄인다 — 끝에서 어느 방향으로
@@ -424,7 +433,10 @@ def _tang_pen(i: int, sx: float, sy: float, th: float,
     R = np.array([[c, -sn], [sn, c]], np.float64)
 
     def d(v):
-        v = R @ (v * np.array([sx, sy], np.float64))
+        v = v * np.array([sx, sy], np.float64)
+        if skew:                           # 전단 — 회전 전 (`geometry._poly_px`)
+            v = np.array([v[0] + skew * v[1], v[1]])
+        v = R @ v
         n = float(np.hypot(*v))
         return v / n if n > 1e-12 else None
 
@@ -440,8 +452,9 @@ def _tang_pen(i: int, sx: float, sy: float, th: float,
     return _W_TANG * max(wpx, 1.0) * out
 
 
-def _end_ratio(i: int, sx: float, sy: float) -> float:
-    """도형 i를 (sx, sy)로 놓았을 때 **양끝 폭 중 가는 쪽 / 중앙 폭** (`_STROKE_END`).
+def _end_ratio(i: int, sx: float, sy: float, skew: float = 0.0) -> float:
+    """도형 i를 (sx, sy, skew)로 놓았을 때 **양끝 폭 중 가는 쪽 / 중앙 폭**
+    (`_STROKE_END`).
 
     `placed_profile`이 일부러 빼는 양끝을 여기서는 그것만 본다 — 두 자가 같은
     닫힌 식(`descriptor.placed_widths`)을 쓰므로 새 계측이 붙지 않는다.
@@ -449,15 +462,15 @@ def _end_ratio(i: int, sx: float, sy: float) -> float:
     U, W = _FORMS.get("u"), _FORMS.get("w")
     if U is None or W is None:
         return 1.0
-    w, _mid, length = placed_widths(U[i], W[i], sx, sy)
+    w, _mid, length = placed_widths(U[i], W[i], sx, sy, skew)
     if length <= 1e-9 or len(w) < 5:
         return 1.0
     med = float(np.median(w))
     return float(min(w[0], w[-1])) / med if med > 1e-9 else 1.0
 
 
-def _bulge_ratio(i: int, sx: float, sy: float) -> float:
-    """도형 i를 (sx, sy)로 놓았을 때 **최대 폭 / 중앙 폭** (`_STROKE_BULGE`).
+def _bulge_ratio(i: int, sx: float, sy: float, skew: float = 0.0) -> float:
+    """도형 i를 (sx, sy, skew)로 놓았을 때 **최대 폭 / 중앙 폭** (`_STROKE_BULGE`).
 
     `_end_ratio`가 끝을 묻는다면 이쪽은 **몸통이 부푸는가**를 묻는다. 부푸는
     까닭이 도형 자체가 아니라 **비등방 스케일**이라는 것이 요점이다: 놓인 폭은
@@ -469,7 +482,7 @@ def _bulge_ratio(i: int, sx: float, sy: float) -> float:
     U, W = _FORMS.get("u"), _FORMS.get("w")
     if U is None or W is None:
         return 1.0
-    w, _mid, length = placed_widths(U[i], W[i], sx, sy)
+    w, _mid, length = placed_widths(U[i], W[i], sx, sy, skew)
     if length <= 1e-9 or len(w) < 5:
         return 1.0
     med = float(np.median(w))
@@ -586,14 +599,39 @@ def _affine_fit(U: np.ndarray, X: np.ndarray):
     return th, sx, sy, np.maximum(res, 0.0)
 
 
+# 튜닝 계측용 (동작에는 영향 없음). `skew_*`는 §14의 자다:
+#   skew_cand  전 아핀 후보를 몇 벌 지어 봤나 (실제로 놓인 장수는 `affine.report`)
 _CURVE_STATS = {"paths": 0, "tried": 0, "ok": 0, "short": 0, "flat": 0,
-                "nofit": 0, "lowgain": 0, "notline": 0}   # 튜닝 계측용 (동작에는 영향 없음)
+                "nofit": 0, "lowgain": 0, "notline": 0, "skew_cand": 0}
+
+
+def _use_skew(flag) -> bool:
+    """이 자리에서 전단 후보를 지을까 — `None`이면 노선 정책의 기본값."""
+    return _policy.skew_stroke_default() if flag is None else bool(flag)
+
+
+def _form_ext_y(i: int) -> float:
+    """어휘 `i` 중심선의 로컬 y 반경 — `affine.step_matters`가 쓰는 지렛대.
+
+    전단은 로컬 y에 비례해 x를 민다. 도형이 y로 안 뻗어 있으면(곧고 납작한
+    막대꼴) 한 스텝이 미는 거리가 이동 양자에도 못 미쳐 이 축이 무동작이다.
+    """
+    U = _FORMS.get("u")
+    if U is None or i >= len(U):
+        return 0.0
+    return float(np.abs(U[i][:, 1]).max())
+
+
+def _affine_full(U: np.ndarray, X: np.ndarray):
+    """전 아핀 맞춤 — `affine.fit_full`의 얇은 껍데기 (순환 임포트 회피)."""
+    return A.fit_full(U, X)
 
 
 def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
                color, ink: bool = False, sid: int = -1, race: bool = False,
                line: bool = False, gate: bool = True,
-               wprof: np.ndarray | None = None) -> tuple[float, Layer] | None:
+               wprof: np.ndarray | None = None,
+               skew_ok=None) -> tuple[float, Layer] | None:
     """경로 전체를 곡선 도형 **한 장**으로 — 되면 (점수, 레이어), 아니면 None.
 
     `race=True`는 **겨루기 모드**다 (`_fit_segments`의 마디): 자격 게이트를
@@ -650,6 +688,62 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
                             (sc.h / 2 - (ry0 + path[:, 0])) * sc.upp],
                            axis=1), _FORM_N)
     th, sx, sy, res = _affine_fit(U, X)
+    # ── **전 아핀 후보를 기존 후보 옆에 세운다** (§3·§6) ──────────────
+    # 기존 `skew=0` 안은 하나도 안 지운다 (§5). 여기서 하는 일은 어휘마다
+    # "전단까지 써서 맞춘 자세"를 **한 벌 더** 만들어 같은 줄에 세우는 것뿐이고,
+    # 순위·게이트·하강·후보 경쟁이 전부 두 벌을 같은 자로 견준다.
+    #
+    # 더하는 자리를 좁게 잡는다 (§4):
+    # - 회전 대칭이 큰 도형(원·고리)은 전단해 봐야 회전 + 비등방 스케일과
+    #   같은 상이라 자유도만 겹친다 (`affine.skew_useful`)
+    # - 양자화해서 0이 되는 전단은 기존 후보와 **같은 레이어**라 뺀다
+    # - 맞춘 전단이 이동 양자(0.5유닛)도 못 미는 자리는 무동작이라 뺀다
+    #   (`affine.shear_visible`. **한 스텝이 아니라 맞춘 크기로 묻는다** —
+    #    씨앗의 값은 큰 전단에 있으므로 한 스텝으로 물으면 획 어휘가 통째로
+    #    걸려 후보가 하나도 안 선다: 획 도형의 `sy`는 폭이라 0.1 언저리다)
+    fidx = np.arange(len(names))           # 후보 → 어휘 색인
+    skw = np.zeros(len(names), np.float64)
+    if _use_skew(skew_ok):
+        rot2, sx2, sy2, sk2, res2 = _affine_full(U, X)
+        keep = []
+        for i in range(len(names)):
+            k = A.q_skew(sk2[i])
+            if k == 0.0 or not A.representable(k):
+                continue
+            if not np.isfinite(res2[i]) or abs(sx2[i]) < 0.01 or abs(sy2[i]) < 0.01:
+                continue
+            if not A.skew_useful(sc.cat, names[i]):
+                continue
+            if not A.shear_visible(k, sy2[i], _form_ext_y(i)):
+                continue
+            # **전단이 획의 폭 모양을 나쁘게 만들면 안 된다** (§6의 금지 조항:
+            # "centerline 오차만 줄이고 획 폭이 찌그러지는 후보는 금지").
+            # 새 문턱을 안 세운다 — **같은 도형을 전단 없이 놓았을 때**와
+            # 견줘, 끝이 더 뾰족해지거나 몸통이 더 부풀면 뺀다. 절대 자
+            # (`_STROKE_END`·`_STROKE_BULGE`)는 그대로 뒤에서 또 묻는다.
+            #
+            # 이 자가 없으면 전단이 폭을 무너뜨린다: 놓인 폭이
+            # `2·반폭·|sx·sy| / |M·t̂|`인데 전단은 `det M`을 안 바꾸고 `|M·t̂|`만
+            # 키우므로, 큰 전단은 획을 슬리버로 만든다. 실측(표준 11장, 이 자
+            # 없이): 채택 전단의 중앙이 **1.44**·p90 5.6·최대 14.25까지 갔고
+            # 뾰족한 끝이 0.029 → 0.178(+508%) · 밴드 밖 스필 +117%였다.
+            if (_end_ratio(i, sx2[i], sy2[i], k)
+                    < _end_ratio(i, sx[i], sy[i], 0.0) - 1e-9):
+                continue
+            if (_bulge_ratio(i, sx2[i], sy2[i], k)
+                    > _bulge_ratio(i, sx[i], sy[i], 0.0) + 1e-9):
+                continue
+            keep.append(i)
+        if keep:
+            ki = np.asarray(keep, int)
+            _CURVE_STATS["skew_cand"] += len(ki)
+            fidx = np.concatenate([fidx, ki])
+            skw = np.concatenate([skw, np.array(
+                [A.q_skew(sk2[i]) for i in keep], np.float64)])
+            th = np.concatenate([th, np.radians(rot2[ki])])
+            sx = np.concatenate([sx, sx2[ki]])
+            sy = np.concatenate([sy, sy2[ki]])
+            res = np.concatenate([res, res2[ki]])
     ok = (np.abs(sx) >= 0.01) & (np.abs(sy) >= 0.01) & np.isfinite(res)
     if not ok.any():
         _CURVE_STATS["nofit"] += 1
@@ -658,7 +752,16 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     # 잔차 순으로 보되, line 노선은 **선에 적합한 도형만** 후보에 남긴다 —
     # 놓인 뒤의 폭 프로파일로 거른다 (`_STROKE_TAPER`·`_STROKE_SLIM`). 걸러 낸
     # 만큼 뒤에서 채워야 후보 수가 안 줄어 어휘가 좁아지지 않는다
-    rank = np.argsort(np.where(ok, res, np.inf))
+    if len(fidx) > len(names):
+        # **동점은 `|skew|`가 작은 쪽이 이긴다** (§5) — 잔차가 사실상 같으면
+        # 전단 없는 안을 쓴다. 필요 없는 전단이 도안에 퍼지지 않게 하는 자리다.
+        # (전단 후보가 하나도 안 붙은 판은 아래 `argsort` 그대로 간다 — 정렬
+        #  방식을 바꾸면 잔차가 정확히 같은 짝의 순서가 흔들려, 기울기를 끈
+        #  판이 기존과 바이트가 달라진다. 어휘가 도형마다 뒤집은 사본을 함께
+        #  들고 있어(`_stroke_forms`) 그 동점이 실제로 난다.)
+        rank = np.lexsort((np.abs(skw), np.where(ok, res, np.inf)))
+    else:
+        rank = np.argsort(np.where(ok, res, np.inf))
     order, n_shape = [], 0
     # 가늘기 자는 **이 호가 요구하는 비**보다 엄할 수 없다 — 폭 wtgt를 호
     # 길이만큼 긋는 도형의 폭/길이는 정확히 wtgt/L이라, 절대 자(0.065)를 그대로
@@ -670,8 +773,12 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     for i in rank:
         if not ok[i] or len(order) >= _CURVE_TOP:
             break
+        # 획 도형 문법은 **놓인 뒤의 폭**을 묻는다 — 전단이 그 폭을 바꾸므로
+        # 자에도 전단이 들어가야 한다 (§6: "중심선 오차만 줄이고 획 폭이
+        # 찌그러지는 후보는 금지"). 넷 다 같은 닫힌 식을 쓴다
+        fi, kk = int(fidx[i]), float(skw[i])
         if line:
-            tp, sl, wu = _placed_form(int(i), float(sx[i]), float(sy[i]))
+            tp, sl, wu = _placed_form(fi, float(sx[i]), float(sy[i]), kk)
             if tp > _STROKE_TAPER or sl > slim_lim:
                 n_shape += 1
                 continue
@@ -683,14 +790,14 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
                 n_shape += 1
                 continue
             # **끝 뭉툭함** — 뾰족한 끝은 획이 아니라 잎사귀다 (`_STROKE_END`)
-            if (prof_fit and _end_ratio(int(i), float(sx[i]),
-                                        float(sy[i])) < _STROKE_END):
+            if (prof_fit and _end_ratio(fi, float(sx[i]),
+                                        float(sy[i]), kk) < _STROKE_END):
                 n_shape += 1
                 continue
             # **몸통 배부름** — 비등방 스케일이 만든 쐐기다 (`_STROKE_BULGE`)
             if (prof_fit and _STROKE_BULGE > 0.0
-                    and _bulge_ratio(int(i), float(sx[i]),
-                                     float(sy[i])) > _STROKE_BULGE):
+                    and _bulge_ratio(fi, float(sx[i]), float(sy[i]),
+                                     kk) > _STROKE_BULGE):
                 n_shape += 1
                 continue
         order.append(i)
@@ -699,28 +806,36 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     Xm = X.mean(axis=0)
     cands = []
     for i in order:
-        lay = Layer(shape=names[i],
-                    x=float(Xm[0] - (c[i] * sx[i] * m[i, 0]
-                                     - s[i] * sy[i] * m[i, 1])),
-                    y=float(Xm[1] - (s[i] * sx[i] * m[i, 0]
-                                     + c[i] * sy[i] * m[i, 1])),
+        fi, kk = int(fidx[i]), float(skw[i])
+        # 중심선 무게중심을 목표 무게중심에 맞춘다 — 선형부가 `R·Sk·S`라
+        # 전단이 들면 그 이동도 전단을 타야 한다. `kk == 0`이면 항이 통째로
+        # 빠져 기존 식 그대로다 (`0.0`을 더해 `-0.0`을 뒤집지도 않는다)
+        dx = c[i] * sx[i] * m[fi, 0] - s[i] * sy[i] * m[fi, 1]
+        dy = s[i] * sx[i] * m[fi, 0] + c[i] * sy[i] * m[fi, 1]
+        if kk:
+            dx += c[i] * kk * sy[i] * m[fi, 1]
+            dy += s[i] * kk * sy[i] * m[fi, 1]
+        lay = Layer(shape=names[fi],
+                    x=float(Xm[0] - dx), y=float(Xm[1] - dy),
                     sx=float(sx[i]), sy=float(sy[i]),
-                    rot=float(np.degrees(th[i]) % 360.0),
+                    rot=float(np.degrees(th[i]) % 360.0), skew=kk,
                     color=tuple(int(v) for v in color), alpha=100.0,
                     label="ink" if ink else "cel", stroke=sid)
         # **폭 프로파일**을 점수와 같은 저울에 얹는다 (`_W_PROF`) — 가운데
         # 폭만 맞고 끝이 뾰족한 물방울이 여기서 진다
-        pen = (_W_PROF * _prof_pen(int(i), float(sx[i]), float(sy[i]), wt,
-                                   sc.upp) if wt is not None else 0.0)
+        pen = (_W_PROF * _prof_pen(fi, float(sx[i]), float(sy[i]), wt,
+                                   sc.upp, kk) if wt is not None else 0.0)
         if prof_fit and _W_TANG > 0.0:
-            pen += _tang_pen(int(i), float(sx[i]), float(sy[i]), float(th[i]),
-                             X, wtgt)
-        cands.append((sc.score_val(lay) - pen, lay, pen, int(i)))
+            pen += _tang_pen(fi, float(sx[i]), float(sy[i]), float(th[i]),
+                             X, wtgt, kk)
+        cands.append((sc.score_val(lay) - pen, lay, pen, fi))
     if not cands:
         if n_shape:
             _CURVE_STATS["notline"] += 1
         return None
-    cands.sort(key=lambda t: -t[0])   # 안정 정렬 — 동점은 잔차 순위 그대로
+    # 안정 정렬 — 동점은 잔차 순위 그대로, 그 안에서도 전단이 얕은 쪽이 먼저
+    # (§5의 결정적 동점 규칙. 전단 후보가 없으면 둘째 키가 상수라 무동작이다)
+    cands.sort(key=lambda t: (-t[0], abs(t[1].skew)))
     # 조종 항 — 놓인 도형의 양끝·접선을 **이 경로 조각**에 맞춘다. 순위
     # 항(`_tang_pen`)이 후보를 고르는 자라면 이쪽은 고른 뒤 **어디에 세울지**의
     # 자다: 하강이 픽셀 이득만 보면 끝이 경로에서 미끄러진다 (`chain.steer`)
@@ -730,14 +845,18 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     for _, lay, pen, i in cands[:2]:                      # 상위 2개만 정밀 하강
         steer = (chain.steer(sc.cat, sc, anc_g, wtgt, sc.w, sc.h, lay)
                  if anc_g is not None else None)
-        gain, q = _descend(sc, lay, color, passes=3, steer=steer)
-        # 하강 뒤에도 같은 저울로 견준다 — 하강은 sx·sy·rot를 미므로 폭도
-        # 끝 방향도 바뀐다
+        # 전단 축은 **씨앗 둘레의 작은 격자 이웃**만 본다 (§9) — 연속 범위를
+        # 훑지 않는다. 씨앗이 이미 닫힌 해라 그 둘레 한두 칸이면 족하고,
+        # 0 쪽은 언제나 함께 물어본다 (`scoring._descend`의 `skew` 문서)
+        gain, q = _descend(sc, lay, color, passes=3, steer=steer,
+                           skew=lay.skew != 0.0)
+        # 하강 뒤에도 같은 저울로 견준다 — 하강은 sx·sy·rot·전단을 미므로
+        # 폭도 끝 방향도 바뀐다
         adj = gain
         if wt is not None:
-            adj -= _W_PROF * _prof_pen(i, q.sx, q.sy, wt, sc.upp)
+            adj -= _W_PROF * _prof_pen(i, q.sx, q.sy, wt, sc.upp, q.skew)
         if prof_fit and _W_TANG > 0.0:
-            adj -= _tang_pen(i, q.sx, q.sy, np.radians(q.rot), X, wtgt)
+            adj -= _tang_pen(i, q.sx, q.sy, np.radians(q.rot), X, wtgt, q.skew)
         if best is None or adj > best[0]:
             best = (adj, q, gain)
     if best is not None:

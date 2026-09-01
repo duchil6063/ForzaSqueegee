@@ -15,8 +15,10 @@ celfit 배치는 영역별 그리디다: 채점판이 자기 영역 ROI만 보�
 선화 획이 같은 잣대 위에서 함께 미세 조정된다.
 
 불변 보장:
-- 레이어 수·순서·색·도형 불변 — 기하(x·y·sx·sy·rot)만 움직인다 (skew는
-  주입이 안 쓰므로 건드리지 않는다).
+- 레이어 수·순서·색·도형 불변 — 기하(x·y·sx·sy·rot·skew)만 움직인다.
+  기울기 축은 2026-09-01에 열렸다 (레코드 +0x70을 찾아 주입·저장 왕복이
+  실측으로 닫혔다) — 그전까지는 주입이 그 축을 조용히 빼고 써서 여기서 밀면
+  도안과 인게임이 갈렸다. `FS_SKEW=0`이면 예전처럼 안 민다.
 - 실루엣 px를 새로 노출하는 이동은 **무조건 기각** — holes 게이트(4px+
   군집 0)가 패스 후에도 성립한다.
 - 캔버스 rect 밖 돌출을 늘리는 이동도 기각 — 밖은 채점이 못 보는 무벌점
@@ -35,6 +37,7 @@ from ..i18n import msg
 from .catalog import Catalog
 from .celart import CelArt
 from .celfit import _poly_px
+from .celfit.affine import step_visible
 from .celfit.chain import _GAP_TOL, placed_line
 from .model import Layer, LayerPlan
 from .stop import stop_here
@@ -83,6 +86,17 @@ _AXES = ((("x", 0.5),), (("y", 0.5),), (("x", 1.0),), (("y", 1.0),),
          (("sx", 0.01),), (("sy", 0.01),), (("rot", 0.1),), (("rot", 0.4),),
          (("x", 0.5), ("sx", -0.01)), (("x", 0.5), ("sx", 0.01)),
          (("y", 0.5), ("sy", -0.01)), (("y", 0.5), ("sy", 0.01)))
+# **기울기 축** (§11) — 배치에만 있고 여기에 없으면 기능이 절반만 구현된 것이다.
+# 스텝은 게임 입력 격자 그대로(0.01)이고 바깥 sign 루프가 양쪽을 본다.
+#
+# 축을 더하는 것만으로는 "모든 레이어에 전단을 낸다"가 안 된다 — `try_move`가
+# **엄격한 개선**(`< -_EPS`)일 때만 받으므로, 지금 `skew=0`인 레이어는 실제로
+# 목적함수가 좋아질 때만 들어온다. 반대 방향(0으로 돌아가기)도 같은 축이
+# 맡는다. 동률에서 0을 고르는 것만 축으로 안 되므로, 레이어마다 축을 밟기
+# **전에** 전단 0을 한 번 따로 묻는다 (§11의 "완전 동률이면 skew=0").
+_SKEW_AXIS = (("skew", 0.01),)
+_SKEW_ON = os.environ.get("FS_SKEW", "0") != "0" and \
+    os.environ.get("FS_FT_SKEW", "1") != "0"
 
 
 def _win_mask(cat: Catalog, lay: Layer, upp: float, w: int, h: int
@@ -327,6 +341,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     accepts = 0
     moved = np.zeros(n, bool)
     gain = 0.0
+    _axes = _AXES + (_SKEW_AXIS,)
     todo = list(range(n)) if only is None else [i for i in only if 0 <= i < n]
     if not todo:
         return {"moved_layers": 0, "accepts": 0, "cost_gain": 0.0}
@@ -337,7 +352,23 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             if progress and si % 250 == 0:
                 progress((p + si / len(todo)) / max_passes,
                          msg("미세 조정 {p}/{total}", p=p + 1, total=max_passes))
-            for combo in _AXES:
+            # **0으로 돌아갈 길을 먼저 연다** (§11) — 전단이 값을 잃은 자세로
+            # 흘러간 레이어는 접어야 한다. 비용이 **안 나빠지면** 받는다
+            # (엄격한 개선을 요구하면 완전 동률에서 전단이 그대로 남는다)
+            _skew_i = _SKEW_ON and step_visible(cat, layers[i])
+            if _skew_i and layers[i].skew:
+                z = Layer(**{**layers[i].__dict__})
+                z.skew = 0.0
+                z = z.quantized()
+                if not (_jgate and widens_joint(i, z)):
+                    r = try_move(i, z)
+                    if r is not None and r[0] <= _EPS:
+                        commit(i, z, r[1])
+                        gain -= min(r[0], 0.0)
+                        accepts += 1
+                        pass_accepts += 1
+                        moved[i] = True
+            for combo in (_axes if _skew_i else _AXES):
                 for sign in (1.0, -1.0):
                     for _ in range(_MAX_WALK):
                         lay = layers[i]
@@ -371,7 +402,9 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     if progress:
         progress(1.0, msg("미세 조정 완료"))
     stats = {"moved_layers": int(moved.sum()), "accepts": accepts,
-             "cost_gain": round(gain, 0)}
+             "cost_gain": round(gain, 0),
+             # §14 — 이 패스가 끝난 뒤 전단을 쓰는 레이어 수
+             "skew_layers": sum(1 for l in layers if l.skew)}
     log(msg("  {tag} 미세 조정: 레이어 {moved}/{total}개 이동 (수락 {n}회)",
             tag=msg(tag), moved=stats["moved_layers"], total=len(todo),
             n=accepts))

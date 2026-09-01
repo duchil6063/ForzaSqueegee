@@ -20,6 +20,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..celart import CelArt
 from ..model import Layer, LayerPlan
+from .affine import step_visible
 from .geometry import _ink_cover, _layer, _mask_px, _min_span, _poly_px
 from .scoring import _MIN_GAIN, _Scorer, _descend
 from .skeleton import _rdp
@@ -131,7 +132,15 @@ def _fill_fat(plan: LayerPlan, sc: _Scorer, cel: CelArt, upp: float,
 # 새 막대 한 장을 놓느니 이미 있는 도형을 한두 칸 늘리는 것이 맞다 — 레이어가
 # 예산이다. 세 칸까지 보는 것은 최소 스텝이 세로 구도에서 1.4px이라 12px 틈이
 # 그 안에 들기 때문이다. 늘리기가 원래 자리를 잃으면(오목 도형) 기각한다.
-_STRETCH = ((0.01, 0.0), (0.02, 0.0), (0.0, 0.01), (0.01, 0.01), (0.03, 0.0))
+_STRETCH = ((0.01, 0.0, 0.0), (0.02, 0.0, 0.0), (0.0, 0.01, 0.0),
+            (0.01, 0.01, 0.0), (0.03, 0.0, 0.0))
+# **기울기 한 칸도 같이 물어본다** (§10) — 새 도형(patch) 한 장을 사기 전에
+# 이웃 도형을 살짝 기울여 틈이 닫히는지 본다. 받는 조건은 늘리기와 똑같다
+# (덮던 자리를 잃지 않고, 새 잉크는 선 밴드 안). 0장이 1장보다 먼저다.
+_STRETCH_SKEW = ((0.0, 0.0, 0.01), (0.0, 0.0, -0.01),
+                 (0.0, 0.0, 0.02), (0.0, 0.0, -0.02))
+_SKEW_ON = (os.environ.get("FS_SKEW", "0") != "0"
+            and os.environ.get("FS_SEAM_SKEW", "1") != "0")
 # 이웃 도형 격자 칸 (px) — 틈 표본 하나가 보는 이웃 후보의 범위.
 _GRID = 16
 
@@ -181,10 +190,13 @@ def _stretch_cover(plan: LayerPlan, cat: Catalog, upp: float, w: int, h: int,
         if cov.all():
             break
         lay = plan.layers[k]
-        for dsx, dsy in _STRETCH:
+        for dsx, dsy, dsk in (_STRETCH + _STRETCH_SKEW
+                              if _SKEW_ON and step_visible(cat, lay)
+                              else _STRETCH):
             q = Layer(**{**lay.__dict__})
             q.sx = round(q.sx + dsx * (1.0 if q.sx >= 0 else -1.0), 4)
             q.sy = round(q.sy + dsy * (1.0 if q.sy >= 0 else -1.0), 4)
+            q.skew = round(q.skew + dsk, 4)
             q = q.quantized()
             bx0, by0, bx1, by1 = _lay_box(cat, q, upp, w, h, 2)
             box = (bx0, by0, bx1, by1)

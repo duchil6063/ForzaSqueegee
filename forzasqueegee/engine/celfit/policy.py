@@ -47,6 +47,13 @@ class RoutePolicy:
     max_shapes: int = 8              # 한 획에 쓸 도형 수 상한
     # 후보 비교에서 도형 수보다 기하 오차를 앞세울 여지 (0 = 도형 수 우선)
     err_weight: float = 0.0
+    # **기울기(전단)를 후보로 지어 볼까** — `_SKEW`가 기본을 준다.
+    # 획(선)과 면(채움)을 따로 켠다: 막대의 폭 방향이 비틀리면 사람이 그은
+    # 선보다 되레 어색해질 수 있어서(§7) 두 자리의 판정이 갈릴 수 있다.
+    # 끄면 기존 `skew=0` 경로만 남는다 — 후보를 **더하는** 스위치라 끈 판은
+    # 기존 결과와 바이트가 같다 (§13).
+    skew_stroke: bool = True
+    skew_fill: bool = True
     notes: str = ""
     extra: dict = field(default_factory=dict)
 
@@ -116,6 +123,16 @@ _SPAN_REL = float(os.environ.get("FS_STROKE_SPAN", 0.0225))
 # 아니라 면이다 (그 자리는 덩어리 채움·면 채움이 맡는다).
 _SHAPE_HARD = int(os.environ.get("FS_STROKE_MAX_HARD", 24))
 
+# **기울기(전단) 스위치** — `FS_SKEW=0`이면 두 노선 모두 기존 경로만 쓴다.
+# `FS_SKEW_STROKE`·`FS_SKEW_FILL`로 획·면을 따로 끌 수 있다 (A/B용).
+#
+# 기울기는 **후보를 더할 뿐 기존 후보를 지우지 않는다** — `skew=0` 안은 언제나
+# 경쟁에 남아 있고, 비기면 `|skew|`가 작은 쪽이 이긴다 (§5). 그래서 이 스위치를
+# 끈 판은 기존 결과와 바이트가 같다.
+_SKEW = os.environ.get("FS_SKEW", "0") != "0"
+_SKEW_STROKE = _SKEW and os.environ.get("FS_SKEW_STROKE", "1") != "0"
+_SKEW_FILL = _SKEW and os.environ.get("FS_SKEW_FILL", "1") != "0"
+
 # 무늬 단순화 — **기본 켬**. 지우는 것이 아니라 다발마다 **대표 가닥만
 # 남긴다** (`graph.texture_representatives`).
 #
@@ -146,6 +163,8 @@ LINE = RoutePolicy(
     fill_below=False,
     seam_repair=True,
     max_shapes=int(os.environ.get("FS_STROKE_MAX_LINE", 8)),
+    skew_stroke=_SKEW_STROKE,
+    skew_fill=_SKEW_FILL,
     notes="독립 표시 — 배경 스필 제한·carve 금지·획 연속성 우선",
 )
 
@@ -170,6 +189,8 @@ CEL = RoutePolicy(
     fill_below=True,
     seam_repair=True,
     max_shapes=int(os.environ.get("FS_STROKE_MAX_LINE", 8)),
+    skew_stroke=_SKEW_STROKE,
+    skew_fill=_SKEW_FILL,
     notes="면이 받친다 — overlap 허용·ink-free 고려·shared boundary 반영",
 )
 
@@ -181,6 +202,16 @@ CEL_FALLBACK = RoutePolicy(
        "notes": "선화 모델 없음 — 선·면 동시 배치, 덮개 허용"})
 
 POLICIES = {"line": LINE, "cel": CEL, "cel-fallback": CEL_FALLBACK}
+
+
+def skew_stroke_default() -> bool:
+    """획 자리의 기울기 기본값 (`FS_SKEW`·`FS_SKEW_STROKE`)."""
+    return _SKEW_STROKE
+
+
+def skew_fill_default() -> bool:
+    """면 자리의 기울기 기본값 (`FS_SKEW`·`FS_SKEW_FILL`)."""
+    return _SKEW_FILL
 
 
 def get(name: str) -> RoutePolicy:

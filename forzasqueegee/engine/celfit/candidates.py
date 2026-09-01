@@ -82,11 +82,16 @@ class Candidate:
     def n(self) -> int:
         return len(self.layers)
 
+    @property
+    def n_skew(self) -> int:
+        """이 안이 전단을 쓴 장수 (§14 계측)."""
+        return sum(1 for l in self.layers if l.skew)
+
     def summary(self) -> dict:
         return {"kind": self.kind, "n": self.n, "cover": round(self.cover, 4),
                 "stray": round(self.stray, 4), "breaks": self.breaks,
                 "seam_est": round(self.seam_est, 2),
-                "err": round(self.err, 4)}
+                "err": round(self.err, 4), "n_skew": self.n_skew}
 
 
 # ── 평가 — 양자화된 최종 라스터에서 잰다 ──────────────────────────────
@@ -228,7 +233,12 @@ def pick(cands: list[Candidate], pol) -> Candidate | None:
         # 짧은 틈에서는 실측 상수 `_SEAM_PER_BREAK`(1.48)가 바닥이다
         cost = c.n + (max(c.seam_est, _SEAM_PER_BREAK * c.breaks)
                       if pol.seam_repair else 0)
-        return (t[0], t[1], cost + pol.err_weight * c.err, c.err, c.kind)
+        # **끝까지 비기면 전단이 얕은 쪽** (§5) — 도형 수도 기하 오차도 같은
+        # 두 안이 있으면 필요 없는 전단을 안 남긴다. 전단이 없는 판에서는
+        # 이 키가 전부 0이라 순서가 안 바뀐다
+        skewness = sum(abs(l.skew) for l in c.layers)
+        return (t[0], t[1], cost + pol.err_weight * c.err, c.err,
+                round(skewness, 6), c.kind)
     return min(live, key=key)
 
 
@@ -339,7 +349,7 @@ def _place_chain(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
                  path: np.ndarray, idx: list[int], wmed: float, color,
                  sid: int, forms: tuple, wcap: float, strict: bool,
                  wprof: np.ndarray | None = None,
-                 grammar: bool = True, it=None) -> int:
+                 grammar: bool = True, it=None, skew_ok=None) -> int:
     """마디 분할대로 놓는다 — 마디마다 곡선과 막대를 같은 채점판에서 겨룬다."""
     from .stroke import _fit_path
 
@@ -352,7 +362,8 @@ def _place_chain(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
                        depth=3, strict=strict, wcap=wcap,
                        wprof=None if wprof is None
                        else wprof[idx[k]:idx[k + 1] + 1], grammar=grammar,
-                       it=it.sub(idx[k], idx[k + 1] + 1) if it else None)
+                       it=it.sub(idx[k], idx[k + 1] + 1) if it else None,
+                       skew_ok=skew_ok)
     return n
 
 
@@ -408,7 +419,8 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
         #    가린다 (§ curve gate를 후보 경쟁으로)
         def _one(sp: LayerPlan):
             got = _try_curve(sc, forms, path, wmed, color, True, sid,
-                             race=True, line=True, gate=False, wprof=wprof)
+                             race=True, line=True, gate=False, wprof=wprof,
+                             skew_ok=pol.skew_stroke)
             if got is not None:
                 _, mfin = sc.score(got[1])
                 sc.commit(mfin)
@@ -427,12 +439,13 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
                            lambda sp: _place_chain(sp, sc, dt, path, idx, wmed,
                                                    color, sid, forms, wcap,
                                                    pol.name == "line", wprof,
-                                                   it=it)))
+                                                   it=it,
+                                                   skew_ok=pol.skew_stroke)))
         # ③ 현행 재귀 분할 — 곡선이 안 되면 쪼개서 다시 곡선
         out.append(run("split", lambda sp: _fit_path(
             sp, sc, dt, path, wmed, color, True, max_shapes, forms, sid,
             strict=pol.name == "line", wcap=wcap, wprof=wprof,
-            grammar=True, it=it)))
+            grammar=True, it=it, skew_ok=pol.skew_stroke)))
         # ④ 단순화 두 단 — 같은 획을 더 적은 도형으로. `_fit_segments`는 마디가
         #    허용 장수를 넘으면 **허용오차를 키워** 마디를 줄이므로, 장수를
         #    조여 주는 것이 곧 "더 굵게 긋고 덜 쪼갠다"다. 두 단을 다 지어
@@ -441,11 +454,12 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
             out.append(run("coarse", lambda sp: _fit_segments(
                 sp, sc, dt, path, wmed, color, True,
                 max(2, max_shapes // 2), sid, strict=pol.name == "line",
-                wcap=wcap, forms=forms, wprof=wprof, grammar=True, it=it)))
+                wcap=wcap, forms=forms, wprof=wprof, grammar=True, it=it,
+                skew_ok=pol.skew_stroke)))
         out.append(run("simple", lambda sp: _fit_segments(
             sp, sc, dt, path, wmed, color, True, 2, sid,
             strict=pol.name == "line", wcap=wcap, forms=forms, wprof=wprof,
-            grammar=True, it=it)))
+            grammar=True, it=it, skew_ok=pol.skew_stroke)))
     finally:
         if band is not None:
             sc.set_band(None)

@@ -285,6 +285,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         log(msg("  채움 도형: {items}",
                 items=" · ".join(f"{k} {v}({100 * v / tot:.0f}%)"
                                  for k, v in top[:12])))
+    stats["skew_cand"] = _CURVE_STATS["skew_cand"]   # §14 — 지어 본 전 아핀 후보
     if _CURVE_STATS["paths"]:             # 획 어휘 튜닝용 계측
         log(msg("  곡선 획 {ok}/{paths} (직선 {flat}·짧음 {short}·부적합 {nofit}"
                 "·저득점 {lowgain}·획아님 {notline})",

@@ -14,6 +14,7 @@ import numpy as np
 
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE, Layer
+from .affine import SKEW_STEP as _SKEW_STEP
 from .geometry import _grad_alpha, _min_span, _poly_px
 
 
@@ -609,7 +610,7 @@ class _Scorer:
 
 
 def _descend(sc: _Scorer, lay: Layer, color, passes: int = 4,
-             steer=None) -> tuple[float, Layer]:
+             steer=None, skew: bool = False) -> tuple[float, Layer]:
     """좌표하강 — 축마다 ± 스텝, 개선 시 유지. 스텝은 패스마다 절반.
 
     `steer(layer) -> 벌점`은 **하강을 조종만 하는 항**이다 (px 점수 단위).
@@ -624,13 +625,21 @@ def _descend(sc: _Scorer, lay: Layer, color, passes: int = 4,
     이웃을 안 봐도 되는 것이 요점이라 재귀 분할이 경로를 어떻게 쪼개도 같은
     자가 선다.
 
-    **기울기(skew) 축은 없다.** 그릴 수 있는 축만 민다 — 두 출력 경로 어느
-    쪽도 기울기를 못 낸다: 창 조작에는 그 도구가 없고(`auto/run_plan`이 멈춘다),
-    주입은 레코드에서 그 자리를 못 찾아 **조용히 빼고 쓴다**(`game/inject`).
-    여기서 기울기를 밀면 그 이득은 점수판에만 남고 게임에는 안 올라가므로,
-    도안(렌더)과 인게임이 그만큼 갈린다. 실측(7장, 이 축을 넣고 구운 판을
-    skew=0으로 다시 렌더): 픽셀 0.70~1.89%가 어긋나고 셀 일치도 lpips가
-    +0.0026~+0.0185 나빠진다 — 상수 하나를 놓고 채택을 가르던 폭보다 크다.
+    **기울기(skew) 축은 `skew=True`일 때만 선다.** 오래 이 축이 아예 없었던
+    까닭은 그릴 수단이 없어서였다 — 주입이 레코드에서 그 자리를 못 찾아
+    **조용히 빼고 썼고**(`game/inject`), 그래서 도안(렌더)과 인게임이 갈렸다
+    (실측 7장: 픽셀 0.70~1.89% 어긋남 · 셀 일치도 lpips +0.0026~+0.0185).
+    2026-09-01에 그 자리를 찾았다 (레코드 +0x70 float32) — 주입·저장 왕복이
+    실측으로 확인됐으므로(실루엣 IoU 0.9737, 기울기 0인 대조군 0.9768과 같다)
+    전제가 낡았다. 이제 이 축의 이득은 게임에 그대로 올라간다.
+
+    그래도 **기본은 꺼져 있다**: 전단이 값을 하는 자리는 씨앗이 이미 전단을
+    문 자리뿐이라(`stroke._try_curve`·`layered._place_whole`), 모든 레이어에서
+    이 축을 밀면 값 없는 전단이 도안 전체에 퍼진다 (§5·§16). 켠 자리에서도
+    **0 쪽을 언제나 함께 물어본다** — 전단이 필요 없어진 자세로 하강이
+    흘러가면 도로 0으로 접혀야 한다 (§11).
+
+    스텝은 게임 입력 격자(0.01)의 배수다 — 연속 범위를 안 훑는다 (§9).
     """
     upp = sc.upp
 
@@ -639,7 +648,7 @@ def _descend(sc: _Scorer, lay: Layer, color, passes: int = 4,
 
     best = obj(lay)
     # (속성, 스텝 열) — px 감각의 스텝을 게임 단위로 환산
-    axes = (
+    axes = [
         ("x", (2.0 * upp, 1.0 * upp, 0.5 * upp)),
         ("y", (2.0 * upp, 1.0 * upp, 0.5 * upp)),
         ("sx", (2.0 * upp / UNITS_PER_SCALE, 1.0 * upp / UNITS_PER_SCALE,
@@ -647,9 +656,20 @@ def _descend(sc: _Scorer, lay: Layer, color, passes: int = 4,
         ("sy", (2.0 * upp / UNITS_PER_SCALE, 1.0 * upp / UNITS_PER_SCALE,
                 0.5 * upp / UNITS_PER_SCALE)),
         ("rot", (8.0, 3.0, 1.0)),
-    )
+    ]
+    if skew:
+        # 씨앗 둘레의 **작은 양자화 이웃**만 (§9): ±2 스텝 → ±1 스텝
+        axes.append(("skew", (2.0 * _SKEW_STEP, _SKEW_STEP, _SKEW_STEP)))
+    axes = tuple(axes)
     for p in range(passes):
         improved = False
+        if skew and lay.skew:
+            # **0으로 돌아갈 길을 늘 열어 둔다** — 전단이 값을 잃은 자세로
+            # 하강이 흘러가면 접어야 한다. 같은 점수면 0이 이긴다 (§11)
+            z = Layer(**{**lay.__dict__})
+            z.skew = 0.0
+            if obj(z) >= best - 1e-6:
+                best, lay, improved = obj(z), z, True
         for name, steps in axes:
             st = steps[min(p, len(steps) - 1)]
             for sign in (1.0, -1.0):

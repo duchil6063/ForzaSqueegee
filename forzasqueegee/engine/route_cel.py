@@ -12,6 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .celfit.affine import report as skew_report
 from .pipeline import _reach_check, _source_bundle, read_rgba, write_png
 from ..i18n import msg
 from ..paths import run_file
@@ -488,6 +489,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     stats.update(coverage.seal_coverage(plan, cel, cat, log=log,
                                         budget=shapes, weight=imp))
     stats.update(coverage.measure(plan, cel, cat))
+    stats.update(skew_report(plan.layers))          # §14 기울기 계측
     stats["hole_left"] = count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
                                              value=val, price=lam)
     stats["hole_specks"] = count_hole_clusters(plan, cel, cat)   # 1px+ 참고치

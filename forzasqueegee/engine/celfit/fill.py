@@ -15,13 +15,18 @@ import cv2
 import numpy as np
 
 from ..catalog import Catalog
-from ..model import Layer, LayerPlan
+from ..model import UNITS_PER_SCALE, Layer, LayerPlan
+from . import affine as A
+from . import policy as _policy
 from .geometry import _layer, _min_span
 from .scoring import _Scorer, _descend
 from .skeleton import _dt_along, _join_paths, _paths, _prune_spurs, _thin
 from .stroke import _FORM_RASTER, _fit_path, _path_worth
 from .vocabulary import (_FILL_BASE, _FILL_MARGIN, _FILL_MIN_R0,
                          _FILL_SHAPE, _FILL_SHAPES, _FILL_TMPL, _FILL_TOP)
+
+# 도형별 **전** 2차 모멘트 (중심, 공분산) — `_FILL_TMPL`의 짝 (프로세스 1회)
+_FILL_TMPL_FULL: dict = {}
 
 
 # **영역 껍질 컷** — 채움 도형이 못 맞춘 경계의 얇은 껍질을 막대로 쫓을 것인가
@@ -147,8 +152,91 @@ def _fill_tmpl(cat: Catalog, name: str) -> tuple[float, float, float, float]:
     return t
 
 
-def _seed_moment(sc: _Scorer, pw: np.ndarray, name: str, color,
+def _fill_tmpl_full(cat: Catalog, name: str):
+    """도형 단위 마스크의 **전 2차 모멘트** — (중심 (2,), 공분산 (2,2)).
+
+    `_fill_tmpl`은 로컬 x·y의 표준편차만 낸다 (교차 모멘트를 안 본다). 그것이
+    현행 씨앗이 대각 성분만 맞추는 까닭이고, 교차 모멘트가 0이 아닌 도형
+    (초승달·삼각·쐐기)에서 씨앗이 **애초에 모멘트가 안 맞는 자세**로 서는
+    까닭이다. 여기서는 세 성분을 다 들고 있는다.
+
+    단위는 `affine.linear`가 기대하는 그대로 — 로컬 × `UNITS_PER_SCALE`이라
+    여기서 나온 `sx`가 `Layer.sx`에 바로 들어간다. 좌표계는 도형 로컬(y-up)이고
+    캔버스도 y-up이라 뒤집을 것이 없다. 프로세스 1회 계측.
+    """
+    t = _FILL_TMPL_FULL.get(name)
+    if t is None:
+        sh = cat[name]
+        m = sh.rasterize(_FORM_RASTER)
+        pts_all = np.concatenate(sh.loops, axis=0)
+        lo = pts_all.min(axis=0)
+        span = np.maximum(pts_all.max(axis=0) - lo, 1e-6)
+        ys, xs = np.nonzero(m)
+        if len(ys) < 8:
+            t = (np.zeros(2), np.eye(2))
+        else:
+            lx = xs / (_FORM_RASTER - 1) * span[0] + lo[0]
+            ly = (_FORM_RASTER - 1 - ys) / (_FORM_RASTER - 1) * span[1] + lo[1]
+            p = np.stack([lx, ly], axis=1).astype(np.float64) * UNITS_PER_SCALE
+            t = (p.mean(axis=0), np.cov(p.T))
+        _FILL_TMPL_FULL[name] = t
+    return t
+
+
+def _seed_affine(sc: _Scorer, pw: np.ndarray, name: str, color,
                  cat: Catalog) -> list[Layer]:
+    """**전 아핀** 모멘트 씨앗 — 2차 모멘트 세 성분을 정확히 맞춘다 (§8).
+
+    현행 씨앗(`_seed_moment`)은 우리 자유도를 `회전 + 축별 스케일`로 보고
+    양쪽의 **주축**만 맞춘다. 전단을 넣으면 상이 2×2 전체라, 모멘트를
+    맞추는 해가 닫힌 식으로 바로 나온다: `M·Cₜ·Mᵀ = Cₓ`의 해가
+    `M = Cₓ^½·Q·Cₜ^-½`이고 `Q`는 직교행렬이다 (`affine.fit_moment`).
+    후보는 현행과 같은 네 자세(90° 배수)라 개수가 안 는다.
+
+    이것이 §8이 말하는 자리다 — 사선 머리칼 덩어리·옷자락·비스듬한 그림자
+    처럼 **평행사변형에 가까운 면**은 회전 + 비등방 스케일 한 장으로는
+    몸통이 안 덮여 잔차 보정이 여러 장 붙는데, 전 아핀 한 장이면 통째로 덮는다.
+
+    좌표는 캔버스 유닛에서 푼다 (레이어가 사는 계) — 이미지 px에서 풀고
+    나중에 뒤집으면 전단의 부호가 프레임마다 갈린다.
+    """
+    if len(pw) <= 8:
+        return []
+    tc, ct = _fill_tmpl_full(cat, name)
+    x0, y0, _, _ = sc.roi
+    upp, w, h = sc.upp, sc.w, sc.h
+    # 이미지 px 점 구름 → 캔버스 유닛 (`geometry._layer`와 같은 환산)
+    ux = (x0 + pw[:, 0] - w / 2.0) * upp
+    uy = (h / 2.0 - (y0 + pw[:, 1])) * upp
+    q = np.stack([ux, uy], axis=1)
+    mu = q.mean(axis=0)
+    cx = np.cov(q.T)
+    if not np.all(np.isfinite(cx)) or not np.all(np.isfinite(ct)):
+        return []
+    out = []
+    for k in range(4):
+        M = A.fit_moment(ct, cx, k)
+        if not np.all(np.isfinite(M)):
+            continue
+        rot, sxv, syv, skv = A.decompose_linear(M)
+        skv = A.q_skew(skv)
+        # 전단이 0으로 접히면 현행 씨앗과 같은 자세다 — 중복은 안 넣는다
+        if skv == 0.0 or not A.representable(skv):
+            continue
+        if abs(sxv) < 0.2 or abs(syv) < 0.2:
+            continue
+        c_ = np.array([[M[0, 0], M[0, 1]], [M[1, 0], M[1, 1]]]) @ tc
+        out.append(Layer(shape=name,
+                         x=float(mu[0] - c_[0]), y=float(mu[1] - c_[1]),
+                         sx=float(sxv), sy=float(syv),
+                         rot=float(rot % 360.0), skew=skv,
+                         color=tuple(int(v) for v in color), alpha=100.0,
+                         label="cel"))
+    return out
+
+
+def _seed_moment(sc: _Scorer, pw: np.ndarray, name: str, color,
+                 cat: Catalog, skew: bool = False) -> list[Layer]:
     """2차 모멘트 정합 씨앗 — 잔여 덩어리와 도형 마스크의 모멘트를 맞춘다.
 
     획이 쓰는 닫힌 해(`_affine_fit`)는 "열린 중심선" 전용이라 면에는 못 쓴다.
@@ -186,6 +274,11 @@ def _seed_moment(sc: _Scorer, pw: np.ndarray, name: str, color,
         cy = mu[1] - (a * tu * s + b * tv * c)
         out.append(_layer(name, x0 + cx, y0 + cy, a, b, th, 0.0, color,
                           sc.upp, sc.w, sc.h))
+    # **전 아핀 씨앗을 옆에 세운다** (§8) — 기존 넷은 하나도 안 지운다.
+    # 어느 쪽이 설지는 같은 목적함수가 정한다 (`_place_fat`·`_place_whole`이
+    # 씨앗마다 `score_val`을 물어 최선에서 하강을 시작한다)
+    if skew and A.skew_useful(cat, name):
+        out.extend(_seed_affine(sc, pw, name, color, cat))
     return out
 
 
@@ -223,17 +316,22 @@ def _place_fat(sc: _Scorer, dt: np.ndarray, px: int, py: int, r0: float,
     if vocab is None:
         vocab = _FILL_SHAPES if r0 >= _FILL_MIN_R0 else _FILL_BASE
     scored = []
+    plain: dict[int, Layer] = {}           # 어휘별 **전단 없는** 최선 씨앗
     for i, name in enumerate(vocab):
         cand = Layer(**{**seed.__dict__})
         cand.shape = name
         best_s, best_c = sc.score_val(cand), cand
+        plain[i] = cand
         # 모멘트 정합 씨앗 — 같은 증거(창 점 구름)에서 도형마다 따로 푼 자세.
         # 같은 목적함수로 재어 좋은 쪽에서 하강을 시작한다 (채움 장수
         # 5~32% 감소·커버리지 상승. 확장 어휘가 서는 것도 이 씨앗 덕이다)
-        for alt in _seed_moment(sc, pw, name, color, sc.cat):
+        for alt in _seed_moment(sc, pw, name, color, sc.cat,
+                                skew=_policy.skew_fill_default()):
             s = sc.score_val(alt)
             if s > best_s:
                 best_s, best_c = s, alt
+            if not alt.skew and s > sc.score_val(plain[i]):
+                plain[i] = alt
         scored.append((-best_s, i, best_c))
     scored.sort(key=lambda t: t[:2])          # 동점은 어휘 순서 — 결정적
     # 하강 순서는 다시 **어휘 순서**로 되돌린다 — 하강 뒤 동점이면 앞 어휘가
@@ -242,7 +340,17 @@ def _place_fat(sc: _Scorer, dt: np.ndarray, px: int, py: int, r0: float,
     keep |= {i for i, n in enumerate(vocab) if n in _FILL_BASE}
     best = base = None
     for _, i, cand in sorted((t for t in scored if t[1] in keep), key=lambda t: t[1]):
-        g, q = _descend(sc, cand, color, passes=2)
+        g, q = _descend(sc, cand, color, passes=2, skew=cand.skew != 0.0)
+        # **전단 없는 안을 하강까지 데려간다** (§5). 씨앗 점수만으로 고르면
+        # 전단 씨앗이 한 끗 앞선 자리에서 전단 없는 안이 **하강도 못 해 보고**
+        # 탈락한다 — 그런데 하강은 두 안을 서로 다른 국소 최적으로 데려가므로
+        # 씨앗 순위가 결과 순위가 아니다. 실측(표준 4장, 이 손 없이):
+        # 레이어는 3~23장 줄었는데 보이는 오차가 4장 중 3장에서 나빠졌고
+        # 04는 0.162 → 0.246이었다. 동률이면 전단 없는 쪽이 이긴다
+        if q.skew:
+            g0, q0 = _descend(sc, plain[i], color, passes=2)
+            if g0 >= g:
+                g, q = g0, q0
         if vocab[i] in _FILL_BASE and (base is None or g > base[0]):
             base = (g, q)
         if best is None or g > best[0]:
@@ -250,7 +358,8 @@ def _place_fat(sc: _Scorer, dt: np.ndarray, px: int, py: int, r0: float,
     if base is not None and best[1].shape not in _FILL_BASE \
             and best[0] < _FILL_MARGIN * base[0]:
         best = base
-    return _grow_step(sc, *_descend(sc, best[1], color, passes=3))
+    return _grow_step(sc, *_descend(sc, best[1], color, passes=3,
+                                    skew=best[1].skew != 0.0))
 
 
 def _fit_bars(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, color,
