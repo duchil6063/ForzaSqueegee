@@ -8,15 +8,25 @@
 사선으로 잘린 경계, 한쪽으로 흐른 머리칼은 그 상 밖이라 도형 두 장으로
 쪼개 근사할 수밖에 없었다.
 
-여기 있는 것은 그 한 자유도를 **안전하게** 다시 넣기 위한 네 가지다:
+여기 있는 것은 그 한 자유도를 **안전하게** 다시 넣기 위한 다섯 가지다:
 
 1. `linear`·`decompose_linear` — 같은 행렬이면 **언제나 같은** 네 수 (정본
    분해). 같은 변환의 다른 매개화가 섞이면 결정성이 깨진다.
 2. `q_skew`·`representable` — 게임 격자(0.01 스텝)와 실측 도달 범위.
 3. `fit_full` — 중심선을 **전 아핀**으로 맞추는 닫힌 해. 제한 맞춤
    (`stroke._affine_fit`)보다 잔차가 절대 크지 않다.
-4. `skew_useful` — 이 도형에서 전단이 **표현력을 더하나**. 이름이 아니라
+4. `fit_ribbon`·`ribbon_res_of` — **띠**(중심선 + 폭)를 맞추는 닫힌 해와, 아무
+   자세나 같은 자로 재는 잔차. 전단이 뜻을 가지려면 목적함수가 폭까지 봐야
+   한다 (아래 「띠 맞춤」 문단).
+5. `skew_useful` — 이 도형에서 전단이 **표현력을 더하나**. 이름이 아니라
    기하가 답한다.
+
+**기본은 여전히 꺼짐이다** (`FS_SKEW`). 목적함수·순위·게이트를 다 고친 뒤에도
+표준 3장에서 값을 못 했다 — 도형 수는 그대로(+0.3%)인데 보수 +4.9% · 봉인
++8.2% · 보이는 오차 +10.4%였고 **커버리지가 두 판에서 퇴행**했다. 자세 기하는
+좋아지는데(배부름 −3.5% · 접선 −1.4% · 스필 −17.6%, 전부 3/3) 그 대가로 띠를
+덜 촘촘히 덮어 봉인·보수를 사게 된다. 여기 있는 것은 "켰을 때 안 망가지게"와
+그 기각 근거다.
 
 ## 왜 정본 분해가 필요한가
 
@@ -345,7 +355,12 @@ def report(layers) -> dict:
         a = np.abs(np.array([l.skew for l in sk], np.float64))
         out.update({"skew_abs_med": round(float(np.median(a)), 4),
                     "skew_abs_p90": round(float(np.percentile(a, 90)), 4),
-                    "skew_abs_max": round(float(a.max()), 4)})
+                    "skew_abs_max": round(float(a.max()), 4),
+                    # **흩뿌림의 자** — 두 스텝 이하짜리 전단의 몫. 이것이
+                    # 크면 전단이 값을 하는 것이 아니라 라스터 잡음을 좇고
+                    # 있다는 뜻이다 (`step_matters` 문단의 실측 68.6%)
+                    "tiny_skew_ratio": round(
+                        float((a <= 2.0 * SKEW_STEP + 1e-9).mean()), 4)})
         top: dict[str, int] = {}
         for l in sk:
             top[l.shape] = top.get(l.shape, 0) + 1
@@ -370,3 +385,172 @@ def skew_useful(cat: Catalog, name: str) -> bool:
             got = False
         _USEFUL[key] = got
     return got
+
+
+# ── 띠 맞춤 — 전단이 **뜻을 갖는** 목적함수 ───────────────────────────
+# 앞선 판(`b739ffb`·`2f07f7c`)이 전단을 켜고 진 까닭은 게이트가 아니라
+# **목적함수**였다. `fit_full`이 최소화하는 것은 중심선 잔차뿐인데, 놓인 폭은
+#
+#     w(t) = 2·반폭(t)·|det M| / |M·t̂(t)|
+#
+# 이라 전단이 `det M`을 안 바꾸고 `|M·t̂|`만 키운다 — 즉 **폭을 공짜로 깎아
+# 중심선을 싸게 맞추는 지름길**이 열려 있다. 실측(표준 11장, 획 도형 13,092장)
+# 에서 |k|가 6을 넘는 자리의 놓인 폭 중앙이 0.57px(원화 띠 ~2px)까지 무너졌다.
+# 폭 바닥(`stroke._STROKE_WMIN`)을 세우면 그 거래는 막히지만, 바닥을 어디에
+# 두든 **전단 후보가 하나도 안 남는다** — 중심선만 보는 씨앗이 내놓는 전단은
+# 애초에 폭을 희생한 것뿐이기 때문이다.
+#
+# 그래서 자를 조이는 대신 **맞추는 대상을 바꾼다**: 중심선 한 가닥이 아니라
+# **띠**(중심선 + 폭)를 맞춘다. 도형의 반폭 벡터 `D = 반폭·n̂`와 원화 띠의
+# 반폭 벡터 `Dx`를 대응쌍으로 함께 넣으면, 전단이 폭을 무너뜨리는 순간 그
+# 대가를 **목적함수 안에서** 치른다. 게이트가 사후에 거르던 것을 씨앗이
+# 애초에 안 만든다.
+#
+# 두 가지가 공짜로 딸려 온다:
+#
+# - **랭크가 산다.** 곧은 중심선에서 `Uᵀ U`는 랭크 1이라 `fit_full`이
+#   부정정으로 물러났다 (`_RANK_EPS`). 폭 벡터는 접선에 **수직**이라 그 방향을
+#   채워 준다 — 곧은 획에서도 전단이 데이터로 정해진다.
+# - **반사가 제자리다.** `det M < 0`이면 +90°로 잡은 법선이 반대쪽으로 가므로
+#   부호 두 벌을 다 풀어 잔차가 작은 쪽을 쓴다 (닫힌 해 두 번, 여전히 싸다).
+#
+# 순위는 여전히 **중심선 잔차**로 매긴다 (`fit_full`·`_affine_fit`과 같은 자) —
+# 띠는 자세를 정하고, 그 자세가 기존 후보와 겨루는 저울은 그대로 둔다. 그래야
+# 전단 후보가 "중심선을 더 잘 맞춰서"가 아니라 실제 이득으로만 이긴다.
+
+# 폭 항의 무게. 1.0이면 "중심선 한 점과 폭 한 점이 같은 값"이다.
+RIBBON_W = float(os.environ.get("FS_SKEW_RIBBON", 1.0))
+
+
+def normals(p: np.ndarray) -> np.ndarray:
+    """폴리라인의 **단위 법선** (접선을 +90° 돌린 것). 마지막 축이 (x, y).
+
+    끝점은 이웃 마디의 접선을 그대로 쓴다 (중앙차분의 가장자리 처리) — 새
+    규약이 아니라 `descriptor.placed_widths`가 마디 접선을 쓰는 것과 같은 자다.
+    """
+    p = np.asarray(p, np.float64)
+    t = np.zeros_like(p)
+    t[..., 1:-1, :] = p[..., 2:, :] - p[..., :-2, :]
+    t[..., 0, :] = p[..., 1, :] - p[..., 0, :]
+    t[..., -1, :] = p[..., -1, :] - p[..., -2, :]
+    n = np.hypot(t[..., 0], t[..., 1])
+    t = t / np.maximum(n, 1e-12)[..., None]
+    return np.stack([-t[..., 1], t[..., 0]], axis=-1)
+
+
+def _solve2(G: np.ndarray, B: np.ndarray):
+    """`A = G⁻¹B` — 대칭 2×2 닫힌 식 (LAPACK을 안 부른다, `determinism-traps`).
+
+    반환 `(A, 풀렸나)`. 부정정인 자리의 `A`는 0이라 뒤에서 물러난다.
+    """
+    det = G[:, 0, 0] * G[:, 1, 1] - G[:, 0, 1] * G[:, 1, 0]
+    tr = G[:, 0, 0] + G[:, 1, 1]
+    good = det > _RANK_EPS * tr * tr
+    d = np.where(good, det, 1.0)
+    inv = np.zeros_like(G)
+    inv[:, 0, 0] = G[:, 1, 1] / d
+    inv[:, 1, 1] = G[:, 0, 0] / d
+    inv[:, 0, 1] = -G[:, 0, 1] / d
+    inv[:, 1, 0] = -G[:, 1, 0] / d
+    A = np.einsum("sij,sjk->sik", inv, B)
+    return np.where(good[:, None, None], A, 0.0), good
+
+
+def fit_ribbon(U: np.ndarray, D: np.ndarray,
+               X: np.ndarray, Dx: np.ndarray, lam: float = RIBBON_W):
+    """**띠**(중심선 `U` + 반폭 벡터 `D`)를 목표 띠(`X`, `Dx`)에 전 아핀으로.
+
+    `U(S,N,2)`·`D(S,N,2)`는 도형 로컬 × `UNITS_PER_SCALE`, `X(N,2)`·`Dx(N,2)`는
+    캔버스 유닛이다. 반폭 벡터는 **점이 아니라 차이**라 이동이 저절로 빠진다 —
+    중심만 맞추면 되고 따로 뺄 것이 없다.
+
+    정규방정식은 `fit_full`과 같은 꼴에 항이 하나 더 붙는다:
+
+        G = Ucᵀ Uc + λ · Dᵀ D          B = Ucᵀ Xc + λ · Dᵀ Dx
+
+    반환 `(rot, sx, sy, skew, 중심선 잔차)` — 전부 `(S,)`. 잔차가 띠가 아니라
+    **중심선**인 것이 요점이다 (위 문단).
+    """
+    from .stroke import _affine_fit
+
+    U = np.asarray(U, np.float64)
+    D = np.asarray(D, np.float64)
+    X = np.asarray(X, np.float64)
+    Dx = np.asarray(Dx, np.float64)
+    Uc = U - U.mean(axis=1, keepdims=True)
+    Xc = X - X.mean(axis=0, keepdims=True)
+    Gc = np.einsum("sni,snj->sij", Uc, Uc)
+    Bc = np.einsum("sni,nj->sij", Uc, Xc)
+    Gd = np.einsum("sni,snj->sij", D, D) * lam
+    xx = float((Xc ** 2).sum())
+    # **부호 두 벌** — `det M < 0`이면 법선이 반대쪽으로 간다. 닫힌 해라 둘 다
+    # 풀고 (띠) 잔차가 작은 쪽을 쓴다. 동점은 `+`가 이긴다 (결정적).
+    best = None
+    for sgn in (1.0, -1.0):
+        Bd = np.einsum("sni,nj->sij", D, Dx * sgn) * lam
+        A, good = _solve2(Gc + Gd, Bc + Bd)
+        # 띠 잔차 — 어느 부호를 쓸지 고르는 자 (순위에는 안 쓴다)
+        rb = (xx + lam * float((Dx ** 2).sum())
+              - np.einsum("sij,sij->s", A, Bc + Bd))
+        if best is None:
+            best = (A, good, rb)
+        else:
+            take = rb < best[2] - 1e-12
+            best = (np.where(take[:, None, None], A, best[0]),
+                    good & best[1], np.where(take, rb, best[2]))
+    A, good, _ = best
+    # 순위용 **중심선** 잔차 — 이 자세를 기존 후보와 같은 저울에 세운다
+    res = xx - 2.0 * np.einsum("sij,sij->s", A, Bc) + \
+        np.einsum("sij,sij->s", A, np.einsum("sij,sjk->sik", Gc, A))
+    S = U.shape[0]
+    rot = np.zeros(S)
+    sx = np.zeros(S)
+    sy = np.zeros(S)
+    sk = np.zeros(S)
+    for i in range(S):
+        if not good[i]:
+            continue
+        rot[i], sx[i], sy[i], sk[i] = decompose_linear(A[i].T)
+    if not good.all():
+        th0, sx0, sy0, res0 = _affine_fit(U, X)
+        bad = ~good
+        rot[bad] = np.degrees(th0[bad]) % 360.0
+        sx[bad], sy[bad] = sx0[bad], sy0[bad]
+        sk[bad] = 0.0
+        res[bad] = res0[bad]
+    return rot, sx, sy, sk, np.maximum(res, 0.0)
+
+
+def linear_batch(rot: np.ndarray, sx: np.ndarray, sy: np.ndarray,
+                 skew: np.ndarray) -> np.ndarray:
+    """`linear`의 벡터판 — `(S,)` 넷 → `(S,2,2)`. `rot`은 **라디안**."""
+    c, s = np.cos(rot), np.sin(rot)
+    m = np.empty((len(rot), 2, 2), np.float64)
+    m[:, 0, 0] = c * sx
+    m[:, 0, 1] = c * skew * sy - s * sy
+    m[:, 1, 0] = s * sx
+    m[:, 1, 1] = s * skew * sy + c * sy
+    return m
+
+
+def ribbon_res_of(U: np.ndarray, D: np.ndarray, X: np.ndarray,
+                  Dx: np.ndarray, M: np.ndarray,
+                  lam: float = RIBBON_W) -> np.ndarray:
+    """**주어진 자세**의 띠 잔차 — 후보를 한 저울에 세우는 자.
+
+    `fit_ribbon`이 제 해의 잔차를 내는 것과 달리 이쪽은 **아무 자세나** 잰다.
+    전단 후보와 `skew=0` 후보를 같은 자로 견주는 데 쓴다: 씨앗이 최소화한 것이
+    서로 다르므로(한쪽은 띠, 한쪽은 중심선) 중심선 잔차로 줄을 세우면 띠
+    후보가 제 강점을 못 보여 준 채 상위 `_CURVE_TOP` 밖으로 밀린다.
+
+    `Dx`의 부호는 반사에서 뒤집히므로 두 벌 중 작은 쪽을 쓴다 (`fit_ribbon`과
+    같은 규약).
+    """
+    Uc = U - U.mean(axis=1, keepdims=True)
+    Xc = X - X.mean(axis=0, keepdims=True)
+    pu = np.einsum("sni,sji->snj", Uc, M)
+    rc = ((pu - Xc[None]) ** 2).sum(axis=(1, 2))
+    pd = np.einsum("sni,sji->snj", D, M)
+    rp = ((pd - Dx[None]) ** 2).sum(axis=(1, 2))
+    rm = ((pd + Dx[None]) ** 2).sum(axis=(1, 2))
+    return rc + lam * np.minimum(rp, rm)

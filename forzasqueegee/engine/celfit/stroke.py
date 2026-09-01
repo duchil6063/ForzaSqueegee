@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -102,6 +103,9 @@ _STROKE_SLIM = float(os.environ.get("FS_STROKE_SLIM", 0.065))
 _STROKE_WMAX = float(os.environ.get("FS_STROKE_WMAX", 1.15))
 # 폭의 **바닥** — 기본은 천장의 거울이다 (`1 / _STROKE_WMAX`). 스윕용 스위치.
 _STROKE_WMIN = float(os.environ.get("FS_STROKE_WMIN", 1.0 / _STROKE_WMAX))
+# 전단 씨앗이 **무엇을 맞추나** — `ribbon`(중심선 + 폭) 또는 `center`(중심선만,
+# 옛 경로). A/B용 스위치다 (`affine.fit_ribbon` 문단이 왜 띠인지 적는다).
+_SKEW_FIT = os.environ.get("FS_SKEW_FIT", "ribbon").strip().lower()
 # **폭 프로파일**을 후보 순위에 얼마로 넣나 (`_prof_pen`, 0 = 안 본다).
 # 위 셋은 전부 폭을 **한 수**로 줄여 묻는다 (중앙·테이퍼·폭/길이). 그래서
 # "가운데는 원화 폭인데 끝이 뾰족한" 물방울이 다 통과한다 — 실측(표준 10장)
@@ -491,6 +495,19 @@ def _bulge_ratio(i: int, sx: float, sy: float, skew: float = 0.0) -> float:
     return float(w.max()) / med if med > 1e-9 else 1.0
 
 
+def _width_shape_ok(i: int, lay) -> bool:
+    """이 **놓인 레이어**의 폭 모양이 획의 자를 지키나 (끝 뭉툭함·몸통 배부름).
+
+    후보 게이트가 씨앗에 거는 두 절대 자(`_STROKE_END`·`_STROKE_BULGE`)를
+    같은 닫힌 식으로 다시 묻는다 — 새 문턱이 아니라 **같은 자를 늦게 한 번 더**
+    거는 것이다. 하강이 자세를 민 뒤에도 성립해야 "폭을 맞췄다"가 참이 된다.
+    """
+    if _end_ratio(i, lay.sx, lay.sy, lay.skew) < _STROKE_END:
+        return False
+    return not (_STROKE_BULGE > 0.0
+                and _bulge_ratio(i, lay.sx, lay.sy, lay.skew) > _STROKE_BULGE)
+
+
 def _raster_iso(sh, size: int) -> tuple[np.ndarray, float]:
     """도형을 **등방**으로 라스터한다 — (마스크, 로컬→px 배율).
 
@@ -604,7 +621,9 @@ def _affine_fit(U: np.ndarray, X: np.ndarray):
 # 튜닝 계측용 (동작에는 영향 없음). `skew_*`는 §14의 자다:
 #   skew_cand  전 아핀 후보를 몇 벌 지어 봤나 (실제로 놓인 장수는 `affine.report`)
 _CURVE_STATS = {"paths": 0, "tried": 0, "ok": 0, "short": 0, "flat": 0,
-                "nofit": 0, "lowgain": 0, "notline": 0, "skew_cand": 0}
+                "nofit": 0, "lowgain": 0, "notline": 0, "skew_cand": 0,
+                #   skew_guard  하강 뒤 폭 모양 자에 걸려 전단을 되돌린 횟수
+                "skew_guard": 0}
 
 
 def _use_skew(flag) -> bool:
@@ -627,6 +646,37 @@ def _form_ext_y(i: int) -> float:
 def _affine_full(U: np.ndarray, X: np.ndarray):
     """전 아핀 맞춤 — `affine.fit_full`의 얇은 껍데기 (순환 임포트 회피)."""
     return A.fit_full(U, X)
+
+
+def _form_offsets() -> np.ndarray | None:
+    """어휘의 **반폭 벡터** `(S,N,2)` — 중심선 법선 × 반폭. 프로세스 1회.
+
+    띠 맞춤(`affine.fit_ribbon`)의 원본 쪽 대응점이다. `_FORMS`의 중심선·반폭이
+    이미 같은 단위(로컬 × `UNITS_PER_SCALE`)라 여기서 새로 재는 것이 없다 —
+    법선만 얹는다. 뒤집은 사본도 함께 들어 있으므로(`_stroke_forms`) 법선도
+    같이 뒤집혀, 진행 방향이 맞춰진 채로 짝이 선다.
+    """
+    d = _FORMS.get("d")
+    if d is not None:
+        return d
+    U, W = _FORMS.get("u"), _FORMS.get("w")
+    if U is None or W is None:
+        return None
+    d = A.normals(U) * np.asarray(W, np.float64)[..., None]
+    _FORMS["d"] = d
+    return d
+
+
+def _affine_ribbon(U: np.ndarray, X: np.ndarray, hw: np.ndarray):
+    """**띠** 맞춤 — `affine.fit_ribbon`의 껍데기 (순환 임포트 회피).
+
+    `hw`는 목표 경로 각 점의 반폭(캔버스 유닛)이다. 어휘 쪽 반폭 벡터가 없으면
+    (`_FORMS`가 안 섰으면) 중심선 맞춤으로 물러난다.
+    """
+    D = _form_offsets()
+    if D is None:
+        return A.fit_full(U, X)
+    return A.fit_ribbon(U, D, X, A.normals(X) * np.asarray(hw, np.float64)[:, None])
 
 
 def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
@@ -706,7 +756,18 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     fidx = np.arange(len(names))           # 후보 → 어휘 색인
     skw = np.zeros(len(names), np.float64)
     if _use_skew(skew_ok):
-        rot2, sx2, sy2, sk2, res2 = _affine_full(U, X)
+        # **씨앗은 띠를 맞춘다** — 중심선만 맞추면 전단이 폭을 깎아 중심선을
+        # 싸게 사는 지름길이 열린다 (`affine.fit_ribbon` 문단). 목표 반폭은
+        # 순위 항이 쓰는 그 프로파일(`wt`)이고, 없으면 이 획의 폭 하나다 —
+        # 새 자를 안 세운다.
+        hw = (np.interp(np.linspace(0.0, 1.0, _FORM_N),
+                        np.linspace(0.0, 1.0, len(wt)), wt)
+              if wt is not None and len(wt) >= 2
+              else np.full(_FORM_N, wtgt, np.float64))
+        hw = 0.5 * hw * sc.upp                 # px 폭 → 캔버스 유닛 반폭
+        rot2, sx2, sy2, sk2, res2 = (
+            _affine_full(U, X) if _SKEW_FIT == "center"
+            else _affine_ribbon(U, X, hw))
         keep = []
         for i in range(len(names)):
             k = A.q_skew(sk2[i])
@@ -755,13 +816,22 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     # 놓인 뒤의 폭 프로파일로 거른다 (`_STROKE_TAPER`·`_STROKE_SLIM`). 걸러 낸
     # 만큼 뒤에서 채워야 후보 수가 안 줄어 어휘가 좁아지지 않는다
     if len(fidx) > len(names):
-        # **동점은 `|skew|`가 작은 쪽이 이긴다** (§5) — 잔차가 사실상 같으면
-        # 전단 없는 안을 쓴다. 필요 없는 전단이 도안에 퍼지지 않게 하는 자리다.
-        # (전단 후보가 하나도 안 붙은 판은 아래 `argsort` 그대로 간다 — 정렬
-        #  방식을 바꾸면 잔차가 정확히 같은 짝의 순서가 흔들려, 기울기를 끈
-        #  판이 기존과 바이트가 달라진다. 어휘가 도형마다 뒤집은 사본을 함께
-        #  들고 있어(`_stroke_forms`) 그 동점이 실제로 난다.)
-        rank = np.lexsort((np.abs(skw), np.where(ok, res, np.inf)))
+        # **줄을 띠 잔차로 세운다.** 씨앗이 최소화한 것이 서로 다르므로
+        # (전단 후보는 띠, `skew=0` 후보는 중심선) 중심선 잔차로 세우면 띠
+        # 후보가 제 강점을 못 보여 준 채 상위 `_CURVE_TOP` 밖으로 밀린다 —
+        # 실측(표준 3장): 중심선으로 줄을 세우면 띠 후보를 569·536·898벌
+        # 지어도 상위 `_CURVE_TOP`에 거의 못 든다 — 띠 후보는 정의상 중심선
+        # 최적이 아니라 제 `fit_full` 짝보다 중심선 잔차가 크고, 어휘가
+        # 도형마다 뒤집은 사본까지 들고 있어(`_stroke_forms`) 경쟁자가 76벌이다.
+        #
+        # 띠 잔차는 두 후보를 **같은 자**로 잰다: 중심선 어긋남 + λ×폭 어긋남.
+        # 그래서 전단이 이기려면 "폭까지 맞추면서 중심선도 낫다"를 보여야 한다.
+        # 동점은 여전히 `|skew|`가 작은 쪽이 이긴다 (§5).
+        _D = _form_offsets()
+        rr = (res if _D is None else A.ribbon_res_of(
+            U[fidx], _D[fidx], X, hw[:, None] * A.normals(X),
+            A.linear_batch(th, sx, sy, skw)))
+        rank = np.lexsort((np.abs(skw), np.where(ok, rr, np.inf)))
     else:
         rank = np.argsort(np.where(ok, res, np.inf))
     order, n_shape = [], 0
@@ -875,6 +945,23 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
         # 0 쪽은 언제나 함께 물어본다 (`scoring._descend`의 `skew` 문서)
         gain, q = _descend(sc, lay, color, passes=3, steer=steer,
                            skew=lay.skew != 0.0)
+        # **하강도 전단 축에서 같은 지름길을 탄다** — 씨앗에 건 폭 모양 자를
+        # 하강 뒤에도 건다. 씨앗만 보고 놓아 주면 자가 헐거워진다: 하강은
+        # 픽셀 이득만 보므로 `sx·sy·전단`을 밀어 끝을 얼마든지 뾰족하게 만들 수
+        # 있고, 전단은 놓인 폭의 분모(`|M·t̂|`)를 직접 키우는 축이라 **접선이
+        # 도는 양끝에서 가장 세게 문다**.
+        #
+        # 같은 자를 전역 미세 조정도 건다 (`finetune`) — 실측에서 판에 놓인
+        # 전단이 **전부 그 패스에서 나왔고** 그 무리의 끝비 p10이 절대 자
+        # (0.45) 아래인 0.250까지 내려갔다. 두 자리가 같은 닫힌 식을 쓴다
+        # (`descriptor.width_shape_ok`).
+        #
+        # 어기면 **그 자리에서 전단 축을 끄고 다시 내린다** — 후보를 버리지
+        # 않는다. 버리면 막대 사슬로 떨어져 이 획이 통째로 나빠진다.
+        if q.skew and prof_fit and not _width_shape_ok(i, q):
+            _CURVE_STATS["skew_guard"] += 1
+            gain, q = _descend(sc, replace(lay, skew=0.0), color, passes=3,
+                               steer=steer, skew=False)
         # 하강 뒤에도 같은 저울로 견준다 — 하강은 sx·sy·rot·전단을 미므로
         # 폭도 끝 방향도 바뀐다
         adj = gain

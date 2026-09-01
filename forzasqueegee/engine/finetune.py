@@ -39,6 +39,8 @@ from .celart import CelArt
 from .celfit import _poly_px
 from .celfit.affine import step_visible
 from .celfit.chain import _GAP_TOL, placed_line
+from .celfit.descriptor import width_shape_ok
+from .celfit.stroke import _STROKE_BULGE, _STROKE_END
 from .model import Layer, LayerPlan
 from .stop import stop_here
 
@@ -369,6 +371,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         pass_accepts += 1
                         moved[i] = True
             for combo in (_axes if _skew_i else _AXES):
+                _sk_combo = combo is _SKEW_AXIS
                 for sign in (1.0, -1.0):
                     for _ in range(_MAX_WALK):
                         lay = layers[i]
@@ -385,6 +388,20 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         if dead:
                             break
                         cand = cand.quantized()
+                        # **획 문법은 여기서도 성립해야 한다.** 전단 축은
+                        # 놓인 폭의 분모(`|M·t̂|`)를 직접 키워 접선이 도는
+                        # **양끝에서 가장 세게** 문다 — 배치가 씨앗에 건 자를
+                        # 이 패스가 그대로 넘으면 끝이 뾰족해진다.
+                        #
+                        # 실측(표준 3장, 이 자 없이): 판에 놓인 전단 레이어
+                        # 무리의 끝비 p10이 0.432·0.606·**0.250**으로 절대 자
+                        # (0.45) 아래였다 — 전단 없는 무리는 0.553·0.672·0.553
+                        # 이다. 봉인 도형 +17% · 뾰족한 끝 +18%가 그 대가다.
+                        # (어느 단계가 그 자세를 만들었든 자는 여기서도 서야
+                        #  한다 — 배치가 건 게이트를 이 패스가 그냥 넘던 길이다.)
+                        if _sk_combo and not width_shape_ok(
+                                cat, cand, _STROKE_END, _STROKE_BULGE):
+                            break
                         if _jgate and widens_joint(i, cand):
                             break
                         res = try_move(i, cand)

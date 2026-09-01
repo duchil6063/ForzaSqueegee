@@ -524,6 +524,32 @@ def placed_widths(center: np.ndarray, halfw: np.ndarray,
     return w, mid, length
 
 
+def width_shape_ok(cat: Catalog, lay, end_min: float,
+                   bulge_max: float) -> bool:
+    """이 **놓인 레이어**의 폭 모양이 획의 자를 지키나 (끝 뭉툭함·몸통 배부름).
+
+    배치가 씨앗에 거는 두 절대 자를 **놓인 뒤에도** 물을 수 있게 한 자리로
+    모은 것이다 (`stroke._STROKE_END`·`_STROKE_BULGE`). 자를 두 벌 세우지
+    않으려고 여기 둔다 — 배치(`stroke._width_shape_ok`)와 전역 미세 조정
+    (`finetune`)이 같은 닫힌 식을 쓴다.
+
+    중심선이 없는 도형(면 채움)은 이 문법 밖이라 **참**을 돌려준다.
+    """
+    d = descriptors(cat).get(lay.shape)
+    if d is None or not d.stroke_ok or len(d.center) < 3:
+        return True
+    w, _mid, length = placed_widths(d.center, d.halfw, lay.sx, lay.sy,
+                                    lay.skew)
+    if length <= 1e-9 or len(w) < 5:
+        return True
+    med = float(np.median(w))
+    if med <= 1e-9:
+        return True
+    if float(min(w[0], w[-1])) / med < end_min:
+        return False
+    return not (bulge_max > 0.0 and float(w.max()) / med > bulge_max)
+
+
 def layer_width_px(cat: Catalog, lay, upp: float) -> float:
     """이 레이어가 **실제로 칠하는 폭** px — 없으면 0 (중심선 없는 도형).
 
