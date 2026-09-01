@@ -364,13 +364,27 @@ def _key(cat: Catalog, names: tuple[str, ...]) -> str:
 
 
 def _load_cache(path: Path, names: tuple[str, ...]) -> dict | None:
+    """캐시 파일 → 서술자 (없거나 낡았으면 None).
+
+    **읽을 이름은 파일이 정한다** (`__names__`). 도달 이름 전부를 요구하면
+    안 된다 — 빈 도형은 `_describe`가 None을 돌려주어 애초에 저장되지 않고,
+    그 한 이름 때문에 캐시가 매번 미스가 된다 (실측: 도달 520 중 5종이 빈
+    도형이라 캐시가 **한 번도 안 맞았고** 판마다 서술자 계측 24초를 다시 냈다).
+    카탈로그 동일성은 이미 파일 이름의 키가 보증하므로(`_key`), 여기서 더
+    물을 것은 파일이 온전한가뿐이다. `__names__`가 없는 옛 파일은 낡은
+    것으로 보고 다시 짓는다.
+    """
     if not path.is_file():
         return None
     try:
         z = np.load(path, allow_pickle=False)
+        if "__names__" not in z:
+            return None
+        saved = [str(n) for n in z["__names__"]]
+        known = set(names)
         out = {}
-        for n in names:
-            if f"{n}/sdf" not in z:
+        for n in saved:
+            if n not in known or f"{n}/sdf" not in z:
                 return None
             sc = z[f"{n}/scal"]
             out[n] = ShapeDesc(
@@ -396,15 +410,18 @@ def _load_cache(path: Path, names: tuple[str, ...]) -> dict | None:
 def _save_cache(path: Path, descs: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # **폭을 줄이지 않는다** — float32로 접어 두면 캐시가 맞은 판과 안 맞은
+        # 판이 다른 수를 보고, 그 차이가 배치 결정을 가른다. 캐시는 계측을
+        # 아끼는 자리이지 값을 바꾸는 자리가 아니다
         d = {}
         for n, s in descs.items():
-            d[f"{n}/c"] = s.center.astype(np.float32)
-            d[f"{n}/w"] = s.halfw.astype(np.float32)
-            d[f"{n}/k"] = s.curv.astype(np.float32)
-            d[f"{n}/t0"] = s.tan0.astype(np.float32)
-            d[f"{n}/t1"] = s.tan1.astype(np.float32)
+            d[f"{n}/c"] = s.center
+            d[f"{n}/w"] = s.halfw
+            d[f"{n}/k"] = s.curv
+            d[f"{n}/t0"] = s.tan0
+            d[f"{n}/t1"] = s.tan1
             d[f"{n}/sdf"] = s.sdf
-            d[f"{n}/kb"] = s.curvb.astype(np.float32)
+            d[f"{n}/kb"] = s.curvb
             for i, p in enumerate(s.pyr):
                 d[f"{n}/p{i}"] = p
             d[f"{n}/scal"] = np.array(
@@ -412,6 +429,8 @@ def _save_cache(path: Path, descs: dict) -> None:
                  s.slim, s.ecc, s.sym, s.convex, float(s.closed),
                  s.ext_x, s.ext_y, s.area, s.peri, s.circ, s.concave,
                  float(s.branches), s.mom[0], s.mom[1]], np.float64)
+        # 저장한 이름을 파일 안에 적는다 — 읽을 때 무엇이 온전한지의 근거다
+        d["__names__"] = np.array(list(descs), dtype=np.str_)
         np.savez_compressed(path, **d)
     except Exception:                          # noqa: BLE001 — 캐시 실패는 무해
         pass

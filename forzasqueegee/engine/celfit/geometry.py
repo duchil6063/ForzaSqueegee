@@ -19,20 +19,55 @@ def _min_span(upp: float) -> float:
     return 0.01 * UNITS_PER_SCALE / upp
 
 
+# **자세 기억** — 도형을 캔버스에 세우는 앞 절반(크기·전단·회전)은 `x`·`y`를
+# 안 본다. 좌표하강은 바로 그 축들을 붙들고 x·y만 흔들고(`scoring._descend`의
+# 축 열), 미세 조정도 같은 걸음이라 **같은 자세가 잇달아 다시 온다**.
+#
+# 기억하는 것은 **평행이동 전의 점들**뿐이라 뒤 절반(더하기·나누기·쌓기)은
+# 언제나 그대로 돈다 — 즉 이것은 순수한 메모이제이션이고 값이 바뀔 자리가
+# 없다. 앞 절반을 쪼개 다시 조립하는 것이 아니므로 부동소수 순서도 그대로다.
+# (실측: `_poly_px`가 판당 100만 번 가까이 불리고 그 태반이 채점·미세 조정의
+# x·y 걸음이다.)
+_POSE_CACHE: dict = {}
+_POSE_MAX = 1 << 15
+
+
+def _pose_pts(cat: Catalog, lay: Layer) -> tuple[np.ndarray, ...]:
+    """평행이동 **전**의 점들 — (크기 × 전단 × 회전)까지. 자세마다 한 번만 짓는다.
+
+    키에 카탈로그 **객체**를 넣는다 (id가 아니다) — id는 재활용되므로 다른
+    카탈로그가 같은 자리에 앉으면 남의 도형을 돌려주게 된다. 객체를 잡고
+    있으면 그 일이 원리적으로 안 난다.
+    """
+    key = (cat, lay.shape, lay.sx, lay.sy, lay.rot, lay.skew)
+    got = _POSE_CACHE.get(key)
+    if got is None:
+        sh = cat[lay.shape]
+        rot = np.radians(lay.rot)
+        c, s = np.cos(rot), np.sin(rot)
+        mrot = np.array([[c, s], [-s, c]], np.float32)
+        scale = np.array([lay.sx, lay.sy], np.float32)
+        out = []
+        for loop in sh.loops:
+            pts = loop * scale * UNITS_PER_SCALE
+            if lay.skew:
+                pts = pts + np.stack([pts[:, 1] * lay.skew,
+                                      np.zeros(len(pts), np.float32)], axis=1)
+            out.append(pts @ mrot)
+        got = tuple(out)
+        if len(_POSE_CACHE) >= _POSE_MAX:      # 자세는 판마다 새로 난다
+            _POSE_CACHE.clear()
+        _POSE_CACHE[key] = got
+    return got
+
+
 def _poly_px(cat: Catalog, lay: Layer, upp: float, w: int, h: int,
              ox: int = 0, oy: int = 0) -> list[np.ndarray]:
     """레이어 → 이미지 px 폴리곤 (render._draw_layer와 같은 식, ROI 오프셋)."""
-    sh = cat[lay.shape]
-    rot = np.radians(lay.rot)
-    c, s = np.cos(rot), np.sin(rot)
+    off = np.array([lay.x, lay.y], np.float32)
     polys = []
-    for loop in sh.loops:
-        pts = loop * np.array([lay.sx, lay.sy], np.float32) * UNITS_PER_SCALE
-        if lay.skew:
-            pts = pts + np.stack([pts[:, 1] * lay.skew,
-                                  np.zeros(len(pts), np.float32)], axis=1)
-        pts = pts @ np.array([[c, s], [-s, c]], np.float32)
-        pts += np.array([lay.x, lay.y], np.float32)
+    for pts in _pose_pts(cat, lay):
+        pts = pts + off
         px = pts[:, 0] / upp + w / 2 - ox
         py = h / 2 - pts[:, 1] / upp - oy
         polys.append(np.stack([px, py], axis=1))
