@@ -201,7 +201,7 @@ def _layer_impact(plan: LayerPlan, catalog: Catalog, bg: int,
 
 
 def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
-                protect_labels: tuple[str, ...] = ("ink", "hole"),
+                protect_labels: tuple[str, ...] = ("hole",),
                 bg: int = 255, weight: np.ndarray | None = None,
                 sil: np.ndarray | None = None,
                 rounds: int = 3,
@@ -220,9 +220,24 @@ def prune_price(plan: LayerPlan, catalog: Catalog, min_impact: float,
     수리 문턱 `price.repair_min_gain(λ)`이다 — "지금 이 자리에 이 장을
     **새로 사겠는가**"를 묻는 것과 같은 부등식이다. 못 미치면 되판다.
 
-    `protect_labels`는 손대지 않는다 — 획(`ink`)은 선 노선과 공유하는
-    산출물이고, 구멍 메움(`hole`)은 게이트가 지키는 자리다. 배경이 드러나는
-    장은 영향의 바닥 벌점 때문에 문턱을 한참 넘어 저절로 남는다.
+    `protect_labels`는 **구멍 메움(`hole`)뿐**이다 — 게이트가 지키는 자리라
+    값과 거래하지 않는다. 배경이 드러나는 장은 영향의 바닥 벌점 때문에 문턱을
+    한참 넘어 저절로 남는다.
+
+    **획(`ink`)은 안 지킨다.** 예전에는 지켰다 (§16). 그 근거는 "선은 line
+    노선과 공유하는 산출물"이었는데, 이 함수는 cel 노선에서만 부르므로 line
+    도안은 애초에 안 바뀐다 — 지킬 이유가 라벨이 아니라 값에 있어야 했다.
+    표준 11판 실측(§22): 보호를 빼면 획 6,419개 중 **97개가 통째로** 빠지고
+    총 110장(−0.56%)이 준다. 팔린 획은 소유 px 중앙 0.2~13px · 영향 중앙
+    173~376으로, 남은 획(소유 px 중앙 56~84 · 영향 중앙 2.8만~5.2만)보다 두
+    자릿수 아래다 — **뒤에 그린 면이 덮어 버린 획**이다. 되팔아도 수리·봉인·
+    메움이 한 장도 안 되사고(되메움 0 · 봉인 불변), `ink_near_drawn`은 11판
+    전부 소수점 아래까지 그대로다. 중간 마디만 빠져 선이 점선으로 읽히는 일은
+    없다: 컷의 원자가 획 그룹(`Layer.stroke`)이라 11판에서 가운데 빠짐 0건이고,
+    일부만 빠진 11개는 전부 **끝 쪽**이다.
+
+    "대부분의 선은 라벨 덕에 사는 것이 아니라 값이 있어서 산다" — 그 값을
+    실제로 물어보는 것이 이 단이다.
 
     `sil`(실루엣)을 주면 **실루엣 밖으로 샌 몫은 기여에서 뺀다** (`_layer_impact`
     문서) — 큰 바탕 도형이 실루엣을 넘어가면 그 자리는 인게임에서 차 도색 위에

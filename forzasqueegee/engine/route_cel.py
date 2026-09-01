@@ -419,10 +419,12 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     _hlog(msg("유예 덮개 후"))
     # §16 **사후 가격** — 다 그린 판에서 값을 다시 묻는다 (`prune_price` 문서).
     # 살 때의 값은 그 시점 잔여 기준이라, 뒤에 그린 면이 덮은 자리는 값이
-    # 사라진다. 문턱은 수리와 같은 λ 환산(`repair_min_gain`)이고 획·메움은
-    # 안 건드린다 — 배경이 드러나는 장은 영향의 바닥 벌점이 지킨다
+    # 사라진다. 문턱은 수리와 같은 λ 환산(`repair_min_gain`)이고, 라벨로 지키는
+    # 것은 메움뿐이다 — **획도 같은 저울에 선다** (§22, `prune_price` 문서).
+    # 배경이 드러나는 장은 영향의 바닥 벌점이 지킨다
     from .pruneplan import prune_price
 
+    _snap("s3a_preprice")                  # 되판 장을 귀속할 자리 (계측 전용)
     sold_before = list(plan.layers)
     plan, pp = prune_price(
         plan, cat, repair_min_gain(lam), weight=val,
