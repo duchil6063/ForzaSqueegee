@@ -663,7 +663,7 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                      f"/{d.level:.2f}{'/key' if d.keyline else ''}"
                      + (f"/txt-{d.text.poses[0].role}-{d.text.tier_main}" if d.text else
                         ("/txt-none" if text_on else "")),
-                     round(d.score.total, 3)) for d in cands[:8]]
+                     round(d.score.total, 4)) for d in cands[:8]]
     if text_on:
         if best.text is not None:
             p0 = best.text.poses[0]
