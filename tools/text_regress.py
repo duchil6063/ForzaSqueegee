@@ -38,7 +38,7 @@ from forzasqueegee.engine.catalog import Catalog, default_catalog_path  # noqa: 
 from forzasqueegee.engine import textglyph as tg  # noqa: E402
 from forzasqueegee.engine import textvinyl as tv  # noqa: E402
 from forzasqueegee.engine.compose import textbuild as tbu  # noqa: E402
-from forzasqueegee.engine.compose.textbudget import plan_tiers  # noqa: E402
+from forzasqueegee.engine.compose.textbudget import game_layers, plan_tiers  # noqa: E402
 from forzasqueegee.engine.compose.textlayout import TextPose, lockups  # noqa: E402
 from forzasqueegee.engine.compose.textspec import TextSpec  # noqa: E402
 from forzasqueegee.engine.fls import ids  # noqa: E402
@@ -121,9 +121,12 @@ def game_font_level(cat: Catalog) -> None:
     # 장수 = 글자 수 × 벌 수
     n = len(tbu.font_block("RIN SHIBUYA", "impact", 60.0, cat, fill=(255, 255, 255)))
     check(n == 10, f"본색만: 글자 10자 → {n}장")
+    passes = 1 + tv.OUTLINE_PASSES + 1
     n = len(tbu.font_block("RIN SHIBUYA", "impact", 60.0, cat, fill=(255, 255, 255),
                            outline=(0, 0, 0), shadow=(9, 9, 9)))
-    check(n == 60, f"본색+테두리4+그림자: 10자 → {n}장 (= 10 × 6)")
+    check(n == 10 * passes,
+          f"본색+테두리{tv.OUTLINE_PASSES}+그림자: 10자 → {n}장 (= 10 × {passes})")
+    check(n == game_layers("RIN SHIBUYA", True, True), "예산이 세는 장수 = 실제 장수")
     # 단어 틈이 글자 틈보다 넓다 (impact의 실측 FONT_SPACE는 0이라 그냥 쓰면 붙는다)
     for font in ("impact", "arial", "centurygothic"):
         g = _gaps("RIN SHIBUYA", font, cat, kern=False)
@@ -154,7 +157,60 @@ def game_font_level(cat: Catalog) -> None:
             pw, ph = aspect * h * hratio, h * hratio
             ok = abs((x1 - x0) - pw) < 0.02 * pw and abs((y1 - y0) - ph) < 0.02 * ph
             check(ok, f"{font} {txt!r}: 상자 예측 {pw:.1f}x{ph:.1f} ≈ 잉크 {x1-x0:.1f}x{y1-y0:.1f}")
+    game_outline_level(cat)
     print(f"  ({time.perf_counter() - t0:.1f}s)")
+
+
+def game_outline_level(cat: Catalog) -> None:
+    """게임 글꼴 테두리·그림자가 **같은 글리프의 사본**이고 테가 안 끊기나.
+
+    가는 글꼴(pristina·brushscript)에서 대각 넷은 테가 아니라 **유령 사본 넷**이
+    된다 — 획이 오프셋의 두 배보다 가늘면 사본끼리 안 만난다. 이상 테 덩이 수와
+    실제 테 덩이 수를 견줘 그것을 잡는다 (2026-09-01: 대각 넷일 때 pristina
+    'Evelyne'이 10 → 18).
+    """
+    import cv2
+    import numpy as np
+    from forzasqueegee.engine.model import Layer, LayerPlan
+    from forzasqueegee.engine.render import render_plan
+
+    H = 200.0
+
+    def ras(layers, box, cell=1.0):
+        x0, y0, x1, y1 = box
+        cols, rows = int((x1 - x0) / cell), int((y1 - y0) / cell)
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        pl = LayerPlan(source_image="p", image_size=(cols, rows), units_per_px=cell,
+                       layers=[Layer(shape=l.shape, x=l.x - cx, y=l.y - cy, sx=l.sx,
+                                     sy=l.sy, rot=l.rot, color=(0, 0, 0)) for l in layers])
+        return render_plan(pl, cat, bg=255).mean(2) < 128
+
+    for font, text in (("arial", "OSCAR"), ("impact", "RIN SHIBUYA"),
+                       ("brushscript", "Sorae"), ("pristina", "Evelyne")):
+        body = tbu.font_block(text, font, H, cat, fill=(0, 0, 0))
+        got = tbu.font_block(text, font, H, cat, fill=(0, 0, 0), outline=(0, 0, 0),
+                             shadow=(0, 0, 0))
+        edge = [l for l in got if l.label.endswith("_edge")]
+        shad = [l for l in got if l.label.endswith("_shadow")]
+        base = [l.shape for l in body]
+        check([l.shape for l in edge] == base * tv.OUTLINE_PASSES
+              and [l.shape for l in shad] == base,
+              f"{font} {text!r}: 테두리·그림자가 본색과 **같은 글리프**다")
+        xs = [l.x for l in body]
+        ys = [l.y for l in body]
+        box = (min(xs) - 2 * H, min(ys) - 2 * H, max(xs) + 2 * H, max(ys) + 2 * H)
+        B = ras(body, box)
+        O = ras(edge, box)
+        k = int(round(tv.OUTLINE_SHIFT * H))
+        ideal = cv2.dilate(B.astype(np.uint8),
+                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                                     (2 * k + 1, 2 * k + 1))) > 0
+        ring = ideal & ~B
+        n_i = cv2.connectedComponents(ring.astype(np.uint8), 8)[0] - 1
+        n_g = cv2.connectedComponents(((B | O) & ~B).astype(np.uint8), 8)[0] - 1
+        cov = float((O & ring).sum()) / max(1, int(ring.sum()))
+        check(n_g == n_i and cov >= 0.90,
+              f"{font} {text!r}: 테 덩이 {n_i} → {n_g} · 덮음 {cov:.3f}")
 
 
 def shape_fit_level(cat: Catalog) -> None:
@@ -170,13 +226,61 @@ def shape_fit_level(cat: Catalog) -> None:
           f"사다리 층은 A·B뿐이다 (거친 칸은 상자 덩어리로 읽힌다) — {sorted(tg.TIER_INDEX)}")
     blk = tg.build_text("RIN SHIBUYA", "graffiti", 60.0, cat, tier="A", outline=(0, 0, 0),
                         shadow=(50, 50, 50))
-    check(blk.n_outline < blk.n_fill and blk.n_shadow < blk.n_fill,
+    check(blk.n_outline > 0 and blk.n_shadow > 0,
           f"밑벌 장수: 본색 {blk.n_fill} · 테두리 {blk.n_outline} · 그림자 {blk.n_shadow}")
+    silhouette_level(cat)
     for budget in (80, 400, 900):
         c = tg.plan_for_budget("RIN SHIBUYA", "racing", budget, True, True)
         check(c is None or c.n <= budget,
               f"예산 {budget}: " + (f"칸 {c.ix} 층 {c.tier} {c.n}장" if c else "안 든다"))
     print(f"  ({time.perf_counter() - t0:.1f}s)")
+
+
+def silhouette_level(cat: Catalog) -> None:
+    """**밑벌은 같은 글자의 사본이다** — 테·그림자가 원 몇 개로 끊기지 않나.
+
+    자 둘:
+      테두리  보이는 테(키운 실루엣 − 본색)를 **남김없이** 덮고 그 덩이 수가 그대로다.
+      그림자  그림자 좌표계에서 **안 가려지는 자리**를 남김없이 덮는다.
+
+    옛 판은 밑벌에서 "새로 덮는 픽셀 300개" 미만인 장을 뺐고, 그래서 테가
+    부푼 원 몇 개로 끊기고(script 덩이 3 → 10) **그림자는 한 장도 안 남았다**.
+    """
+    import cv2
+    import numpy as np
+    from forzasqueegee.engine import textfit as tf
+
+    fcat = tg._catalog()
+    for text, style in (("RIN SHIBUYA", "racing"), ("Sorae", "script"),
+                        ("Evelyne", "graffiti"), ("ARIS", "techno")):
+        ix = tg.TIER_INDEX["A"]
+        ras = tg.render_mask(text, style)
+        sh = ras.mask.shape
+        fill = tg.fit_fill(text, style, ix)
+        S = tf.raster(fill.prims, sh, fcat)
+        big = tg._outline_prims(text, style, ix)
+        ring = tf.raster(big, sh, fcat) & ~S
+        O = tf.raster(tg.fit_outline(text, style, ix).prims, sh, fcat)
+        cov = float((O & ring).sum()) / max(1, int(ring.sum()))
+        n_i = cv2.connectedComponents(ring.astype(np.uint8), 8)[0] - 1
+        n_g = cv2.connectedComponents((O & ring).astype(np.uint8), 8)[0] - 1
+        check(cov >= 0.999 and n_g == n_i,
+              f"{style} {text!r} 테두리: 보이는 테 덮음 {cov:.3f} · 덩이 {n_i} → {n_g}")
+        for outline in (True, False):
+            src = big if outline else list(fill.prims)
+            sil = tf.raster(src, sh, fcat)
+            sx, sy = tg._shift_px(style, ras.cap_px, (1.0, -1.0))
+            vis = sil & ~tg._shifted(sil, -sx, -sy)
+            fs = tg.fit_shadow(text, style, ix, outline, (1.0, -1.0))
+            SH = tf.raster(fs.prims, sh, fcat)
+            c2 = float((SH & vis).sum()) / max(1, int(vis.sum()))
+            check(fs.n > 0 and c2 >= 0.999,
+                  f"{style} {text!r} 그림자(테두리 {'켬' if outline else '끔'}): "
+                  f"{fs.n}장 · 보이는 자리 덮음 {c2:.3f}")
+        # 도형은 본색과 **같은 것**이라야 한다 (원으로 흉내 낸 실루엣이 아니다)
+        base = {p.shape for p in fill.prims}
+        check({p.shape for p in tg.fit_outline(text, style, ix).prims} <= base,
+              f"{style} {text!r}: 테두리 도형이 본색 도형과 같은 종류다")
 
 
 def budget_level(cat: Catalog) -> None:

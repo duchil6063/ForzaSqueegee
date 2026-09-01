@@ -18,8 +18,8 @@ FH6에는 글자를 넣는 자기 도구가 있다 (2026-08-17 실측): 도형 �
 
 ## 테두리·그림자는 같은 문구를 여러 벌 겹친 것이다
 
-같은 문구를 조금 크게 뒤에 깔면 테두리가 되고(DC 가이드의 눈동자 기법), 같은
-크기로 비껴 깔면 오프셋 그림자가 된다. 세 벌(그림자 → 테두리 → 본색)이면
+같은 문구를 **원 위 여덟 자리에** 깔면 테두리가 되고(DC 가이드의 눈동자 기법),
+같은 크기로 한 번 비껴 깔면 오프셋 그림자가 된다. 세 벌(그림자 → 테두리 → 본색)이면
 레퍼런스 이타샤의 그래피티/스티커 타이포 처리다 (RIN SHIBUYA·EVELYNE 실측).
 글자 수 × 벌 수 장이 들지만 면 예산에는 티가 안 난다.
 """
@@ -99,7 +99,7 @@ class TextJob:
     def n_layers(self) -> int:
         """게임이 만들 레이어 수 — **공백 아닌 글자 수** × 벌 수."""
         n = sum(1 for c in self.text if not c.isspace())
-        passes = (1 + (4 if self.outline is not None else 0)
+        passes = (1 + (tv.OUTLINE_PASSES if self.outline is not None else 0)
                   + (self.shadow is not None))
         return n * passes
 
@@ -313,10 +313,10 @@ def add_text(d: Driver, t: TextJob, log=print, host=None,
         # 140.8 = 스케일 1.0의 대문자 높이(유닛) — `sans` 'H' 실측 2026-08-17,
         # 게임 텍스트 스케일 1.0 = 비닐 레이어 스케일 1.0 (카탈로그 예측 139.5)
         h = t.height if t.height is not None else t.scale * 140.8
-        s = OUTLINE_SHIFT * h
-        for i, (ox, oy) in enumerate(((s, s), (s, -s), (-s, s), (-s, -s))):
-            log(msg("  글자 '{text}' 테두리 {i}/4 ({font})",
-                    text=t.text, i=i + 1, font=t.font))
+        offs = tv.outline_offsets(OUTLINE_SHIFT * h)
+        for i, (ox, oy) in enumerate(offs):
+            log(msg("  글자 '{text}' 테두리 {i}/{n} ({font})",
+                    text=t.text, i=i + 1, n=len(offs), font=t.font))
             _one_pass(d, t, t.scale, t.outline, host=host, shift=(ox, oy))
     log(msg("  글자 '{text}' 본색 ({font})", text=t.text, font=t.font))
     got = _one_pass(d, t, t.scale, t.hsb, host=host)

@@ -153,9 +153,10 @@ def font_block(text: str, font: str, height: float, cat: Catalog, *,
     """문자열 → 게임 글꼴 글리프 레이어 (원점 = 잉크 상자 가운데, 캔버스 유닛).
 
     줄은 `\\n`으로 갈리고 가운데 정렬로 쌓인다. 벌 순서는 그림자 → 테두리 → 본색
-    (뒤가 위). 테두리는 **같은 글자 4벌을 대각 오프셋**으로 깐다 — 확대 사본
-    1벌은 넓은 글자에서 테가 두꺼워지고 좁은 글자에서 얇아진다
-    (`textvinyl.OUTLINE_SHIFT`, 미리보기·실전 경로와 같은 상수).
+    (뒤가 위). 테두리는 **같은 글자를 원 위 여덟 자리에** 깐다 — 확대 사본 1벌은
+    넓은 글자에서 테가 두꺼워지고 좁은 글자에서 얇아지며, 대각 넷만으로는 가는
+    글꼴에서 테가 유령 사본 넷으로 갈린다
+    (`textvinyl.outline_offsets`, 미리보기·실전 경로와 같은 자).
     """
     lines: list[tuple[list[Layer], float]] = []
     for ln in text.split("\n"):
@@ -185,8 +186,7 @@ def font_block(text: str, font: str, height: float, cat: Catalog, *,
                       sy=l.sy, rot=l.rot, color=shadow, label=label + "_shadow")
                 for l in body]
     if outline is not None:
-        s = tv.OUTLINE_SHIFT * height
-        for ox, oy in ((s, s), (s, -s), (-s, s), (-s, -s)):
+        for ox, oy in tv.outline_offsets(tv.OUTLINE_SHIFT * height):
             out += [Layer(shape=l.shape, x=l.x + ox, y=l.y + oy, sx=l.sx, sy=l.sy,
                           rot=l.rot, color=outline, label=label + "_edge")
                     for l in body]

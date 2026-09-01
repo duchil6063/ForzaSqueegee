@@ -11,11 +11,23 @@ r"""커스텀 텍스트 도안 — 문자열을 **동봉 글꼴로 래스터해 
 
 ## 벌 (본색 · 테두리 · 그림자)
 
-본색은 고운 정책으로 잉크를 그대로 덮는다. 테두리는 **본색과 같은 도형을
-두께만큼 키운 사본**을 뒤에 깐다 — 테가 본색을 그대로 따라가 한 몸으로
-읽힌다. 다만 사본 전부를 깔지 않고, 보이는 테(부풀린 실루엣 − 본색)에 제
-몫이 있는 것만 남긴다 (`textfit.cover`). 그림자는 본색 사본을 밀어 놓고 위
-벌(테두리·본색)에 안 가려지는 자리에 몫이 있는 것만 남긴다.
+본색은 고운 정책으로 잉크를 그대로 덮는다. **테두리와 그림자는 같은 글자의
+사본이다** — 다른 도형으로 실루엣을 흉내 내지 않는다:
+
+- 테두리 = 본색 도형을 두께만큼 키운 사본(`textfit.grown`)의 합집합. 그 합집합은
+  본색 실루엣의 팽창과 같으므로 테가 글자를 그대로 따라간다.
+- 그림자 = **위 벌 전체의 실루엣**(테두리를 켰으면 키운 사본, 껐으면 본색)을
+  통째로 민 사본.
+
+두 벌 다 **안 보이는 장만** 뺀다 (`textfit.cover`): 위 벌에 완전히 가려지는
+도형은 그려 봐야 픽셀이 안 바뀌므로 빼도 그림이 같다. 뺄지 말지의 자는
+"보이는 자리에 새로 덮는 픽셀이 있나"(`PASS_GAIN`)이고, 그래서 남은 것들의
+합집합은 **보이는 자리를 정확히 다 덮는다**.
+
+이 자를 넓게 잡으면(옛 `UNDER_GAIN` = 대문자 높이² × 0.012 ≈ 300px) 그림이
+바뀐다: 테가 이어지지 않고 부푼 원 몇 개로 끊기고(실측 script 'Sorae' —
+테 조각 3덩이가 10덩이로 갈리고 덮음 0.89), 그림자는 **한 장도 안 남는다**
+(2026-09-01 실측: 여섯 벌 전부 0장 — 도형 맞춤 글자에는 그림자가 아예 없었다).
 
 막대·원·삼각형은 좌우 대칭이라 미러 면에서도 같은 도형이 서지만 **글자는
 뒤집히면 안 되므로** 텍스트 그룹은 면마다 따로 짓는다 (`compose.textlayout`).
@@ -46,6 +58,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from ..i18n import msg
@@ -96,8 +109,18 @@ RASTER_CAP = 160
 TIER_INDEX = {"A": 1, "B": 3}
 
 
-# 밑벌 도형이 보이는 자리에서 새로 덮어야 하는 최소 픽셀 (대문자 높이 대비 제곱)
-UNDER_GAIN = 0.012
+# 밑벌 도형을 남길 최소 조건 — **보이는 자리에 새로 덮는 픽셀 하나**.
+#
+# 이것은 장수를 조이는 손잡이가 아니라 "안 보이면 뺀다"의 자다. 1px이면 남은
+# 것들의 합집합이 보이는 자리를 정확히 덮으므로 그림이 안 바뀐다 (실측:
+# 테 덮음 1.000 · 그림자 보이는 자리 덮음 1.000 · 덩이 수 그대로).
+PASS_GAIN = 1.0
+
+
+# 보이는 자리를 재기 전에 한 칸 부풀린다 — 맞춤 래스터는 160px인데 실제로 그리는
+# 크기는 그보다 작을 수도 클 수도 있어, 딱 한 픽셀 폭의 자리는 반올림에서 샌다.
+def _grow1(m: np.ndarray) -> np.ndarray:
+    return cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
 
 
 def tier_of(ix: int) -> str:
@@ -247,35 +270,56 @@ def _shifted(m: np.ndarray, sx: int, sy: int) -> np.ndarray:
     return out
 
 
+def _outline_prims(text: str, style: str, ix: int) -> list[tf.Prim]:
+    """테두리 실루엣을 이루는 도형 — 본색 도형을 두께만큼 키운 **전부**.
+
+    이 합집합이 곧 본색 실루엣의 팽창이다 (도형마다의 팽창을 합친 것이므로).
+    `fit_outline`은 여기서 안 보이는 장만 뺀다.
+    """
+    ras = render_mask(text, style)
+    g = _grow_px(style, ras.cap_px)
+    return [tf.grown(p, g) for p in fit_fill(text, style, ix).prims]
+
+
 def fit_outline(text: str, style: str, ix: int) -> tf.Fit:
-    """테두리 벌 — 본색 도형을 두께만큼 키운 사본 중 **보이는 테에 몫이 있는** 것."""
+    """테두리 벌 — 키운 사본 중 **보이는 테를 덮는 데 쓰이는** 것 전부.
+
+    보이는 테는 (키운 합집합 − 본색)이다. 그 자리를 남김없이 덮으므로 테가
+    글자를 따라 이어진다 — 자를 넓게 잡아 중간 장을 빼면 테가 부푼 원 몇 개로
+    끊긴다.
+    """
     def make():
         ras = render_mask(text, style)
-        g = _grow_px(style, ras.cap_px)
         cat = _catalog()
         fill = fit_fill(text, style, ix)
-        big = [tf.grown(p, g) for p in fill.prims]
+        big = _outline_prims(text, style, ix)
         cov = tf.raster(fill.prims, ras.mask.shape, cat)
         ring = tf.raster(big, ras.mask.shape, cat) & ~cov
-        keep = tf.cover(big, ring, cat, UNDER_GAIN * ras.cap_px ** 2)
+        keep = tf.cover(big, _grow1(ring), cat, PASS_GAIN)
         return tf.Fit(keep, fill.w, policy=fill.policy)
     return _cached((text, style, ix, "outline"), make)
 
 
 def fit_shadow(text: str, style: str, ix: int, outline: bool,
                shadow_dir: tuple[float, float]) -> tf.Fit:
-    """그림자 벌 — 본색 사본을 밀어 놓고, 위 벌(테두리·본색)에 안 가려지는 자리에
-    몫이 있는 것만. 도형은 그림자 좌표계(밀기 전)로 둔다 — 오프셋은 레이어가 진다."""
+    """그림자 벌 — **위 벌 전체의 실루엣을 통째로 민 사본** 중 안 가려지는 것.
+
+    실루엣은 테두리를 켰으면 키운 사본의 합집합, 껐으면 본색이다. 옛 판은
+    테두리를 켠 채로도 **본색 도형만** 갖고 테까지 포함한 그림자 자리를 덮으려
+    해서 (테 자리는 본색 도형이 닿지 않는다) 아무것도 안 남았다.
+
+    도형은 그림자 좌표계(밀기 전)로 둔다 — 오프셋은 레이어가 진다.
+    """
     def make():
         ras = render_mask(text, style)
         sx, sy = _shift_px(style, ras.cap_px, shadow_dir)
         cat = _catalog()
         fill = fit_fill(text, style, ix)
-        above = tf.raster(fill.prims, ras.mask.shape, cat)
-        if outline:
-            above |= tf.raster(fit_outline(text, style, ix).prims, ras.mask.shape, cat)
-        visible = above & ~_shifted(above, -sx, -sy)   # 그림자 좌표계에서 본, 위 벌 밖
-        keep = tf.cover(fill.prims, visible, cat, UNDER_GAIN * ras.cap_px ** 2)
+        src = _outline_prims(text, style, ix) if outline else list(fill.prims)
+        sil = tf.raster(src, ras.mask.shape, cat)
+        # 그림자 좌표계에서 본, 위 벌 밖 — 위 벌은 (−sx, −sy)에 있다
+        visible = sil & ~_shifted(sil, -sx, -sy)
+        keep = tf.cover(src, _grow1(visible) & sil, cat, PASS_GAIN)
         return tf.Fit(keep, fill.w, policy=fill.policy)
     return _cached((text, style, ix, outline, shadow_dir, "shadow"), make)
 

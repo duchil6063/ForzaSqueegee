@@ -68,10 +68,10 @@ def _text_layers(job: dict, cat: Catalog) -> list[Layer]:
 
     이타샤 어휘는 글자를 안 쓰지만 (`engine.compose`) 구성 파일 규약에는 남아
     있으므로 (사람이 손으로 적은 `text`) 미리보기도 그린다. 게임 텍스트 도구의
-    세 벌(그림자→테두리→본색)을 재현한다 — 테두리는 **같은 크기 4벌을 대각
-    오프셋**으로 깔아 실전 경로와 같은 상수를 쓴다 (`OUTLINE_SHIFT` 0.06 ×
-    대문자 높이). 확대 1벌로 흉내 내면 긴 문구에서 글자가 바깥으로 밀려 서로
-    겹쳐 **흰 덩어리**로 뭉친다 (게임에는 없는 꼴이다).
+    세 벌(그림자→테두리→본색)을 재현한다 — 테두리는 **같은 크기를 원 위 여덟
+    자리에** 깔아 실전 경로와 같은 자를 쓴다 (`tv.outline_offsets`, 반지름
+    `OUTLINE_SHIFT` 0.06 × 대문자 높이). 확대 1벌로 흉내 내면 긴 문구에서 글자가
+    바깥으로 밀려 서로 겹쳐 **흰 덩어리**로 뭉친다 (게임에는 없는 꼴이다).
     """
     text = job.get("text") or ""
     if not text:
@@ -85,9 +85,8 @@ def _text_layers(job: dict, cat: Catalog) -> list[Layer]:
         off = 0.08 * h
         passes.append((tuple(job["shadow"]), 1.0, (off, -off)))
     if job.get("outline"):
-        s = tv.OUTLINE_SHIFT * h
         passes += [(tuple(job["outline"]), 1.0, (ox, oy))
-                   for ox, oy in ((s, s), (s, -s), (-s, s), (-s, -s))]
+                   for ox, oy in tv.outline_offsets(tv.OUTLINE_SHIFT * h)]
     passes.append((tuple(job.get("color") or (255, 255, 255)), 1.0, (0.0, 0.0)))
     out: list[Layer] = []
     th = math.radians(rot)

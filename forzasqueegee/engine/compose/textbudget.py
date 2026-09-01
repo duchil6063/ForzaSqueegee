@@ -2,7 +2,7 @@
 
 | 층 | 무엇 |
 |---|---|
-| D | 게임 글꼴 글리프 (`textvinyl`) — 한 글자 한 장 (테두리 4·그림자 1은 벌 수). **기본 엔진** |
+| D | 게임 글꼴 글리프 (`textvinyl`) — 한 글자 한 장 (테두리 8·그림자 1은 벌 수). **기본 엔진** |
 | A·B | 도형 맞춤 커스텀 도안 (`engine == "shapes"`) — 정책 사다리(`textfit.LADDER`) 네 칸을 A(고움)·B로 묶은 이름 |
 | E | 글자 생략 |
 
@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from ...i18n import msg
 from .. import textglyph as tg
+from .. import textvinyl as tv
 from .textspec import TextSpec
 from .textstyle import GAME_FONT
 
@@ -35,10 +36,11 @@ VALUE_FRAC = 0.20
 VALUE_FRAC_HIGH = 0.32
 
 
-# 게임 글꼴 글리프의 장수 — 공백 아닌 글자 수 × 벌 수 (본색 1 · 테두리 4 · 그림자 1)
+# 게임 글꼴 글리프의 장수 — 공백 아닌 글자 수 × 벌 수
+# (본색 1 · 테두리 `tv.OUTLINE_PASSES` · 그림자 1)
 def game_layers(text: str, outline: bool, shadow: bool) -> int:
     n = sum(1 for c in text if not c.isspace())
-    return n * (1 + (4 if outline else 0) + (1 if shadow else 0))
+    return n * (1 + (tv.OUTLINE_PASSES if outline else 0) + (1 if shadow else 0))
 
 
 def resolve_tri(v: str, default: bool) -> bool:
