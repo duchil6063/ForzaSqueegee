@@ -50,6 +50,8 @@
   "gui.editor.recover.opened": "Recovery copy hardened into a project and opened — {name}. Press [Export JSON] to turn it back into a plan.",
   "gui.editor.tip": "Opens the bundled KFPS editor — the current plan opens with the source image as a tracing overlay, and the editor's [Export JSON] converts straight back into a plan this window picks up. Without a plan it opens blank; [Import JSON] inside the editor lists every plan under out/ (cel, line, painter). The layer panel's [Split at Line] cuts the selected layers or group into two groups at one line.",
   "gui.editor.window_title": "KFPS editor — ForzaSqueegee",
+  "gui.eta": " · ~{min}m {sec}s left",
+  "gui.eta.sec": " · ~{sec}s left",
   "gui.export": "Export",
   "gui.export.done": "Wrote {n} format(s) ({names}) → {where}",
   "gui.export.fls": "FLS (.3so project)",

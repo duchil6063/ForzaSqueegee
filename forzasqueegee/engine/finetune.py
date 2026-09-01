@@ -390,7 +390,9 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         pass_accepts = 0
         for si, i in enumerate(todo):
             stop_here()
-            if progress and si % 250 == 0:
+            # 눈금이 성기면 막대가 멈춰 보인다 — 이 단만 판 시간의 12~33%다.
+            # 콜백은 신호 하나라 값싸고, 창이 0.002 미만 변화를 솎아 낸다
+            if progress and si % 64 == 0:
                 progress((p + si / len(todo)) / max_passes,
                          msg("미세 조정 {p}/{total}", p=p + 1, total=max_passes))
             # **0으로 돌아갈 길을 먼저 연다** (§11) — 전단이 값을 잃은 자세로

@@ -289,7 +289,12 @@ def _bundle_cache_path(rgba: np.ndarray, size: int):
     return d / f"{h}-{size}.npz"
 
 
-def _source_bundle(rgba: np.ndarray, size: int, log):
+# 앞단 안에서의 시간 몫 — SR ×1 + 선화 3판 (실측 11번 판: 32.3s · 5.1 · 5.8 ·
+# 3.2). 진행 막대가 고르게 차야 남은 시간이 읽히므로 눈금을 시간으로 준다
+_PREP_MARKS = (0.70, 0.81, 0.93, 1.00)   # SR 끝 · basic · detail · 원화판
+
+
+def _source_bundle(rgba: np.ndarray, size: int, log, progress=None):
     """노선이 받을 중간본 + 그 해상도의 선화 지도를 만든다.
 
     반환 (중간본, basic 지도, detail 지도, **원화 판** 지도). 선화를 **작업
@@ -318,6 +323,10 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
 
     `FS_BUNDLE_CACHE=1`이면 결과를 `work/cache/bundle`에 재사용한다
     (계측 전용 — `_bundle_cache_path` 문서).
+
+    `progress(0~1, 단계 이름)`은 이 단 **안에서의** 몫이다 (`_PREP_MARKS`) —
+    노선이 제 예산으로 감싸 쓴다. 여기가 판 시간의 13~25%인데 오래도록
+    아무것도 안 알렸다: 막대는 0에 붙어 있고 사람은 멈춘 줄 알았다.
     """
     import cv2
 
@@ -331,16 +340,27 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         return (z["big"], z["line"] if "line" in z else None,
                 z["detail"] if "detail" in z else None,
                 z["native"] if "native" in z else None)
+    m_sr, m_basic, m_detail, _ = _PREP_MARKS
+
+    def _at(f: float, what: str) -> None:
+        if progress:
+            progress(f, what)
+
     stop_here()
-    big = upscale.prepare(rgba, size, log=log)
+    big = upscale.prepare(rgba, size, log=log,
+                          progress=(lambda f: _at(f * m_sr, msg("확대(SR)")))
+                          if progress else None)
+    _at(m_sr, msg("선화 추출"))
     stop_here()
     detail = native = None
     sel = big[..., 3] >= 128
     rgb = _fill_bg_nearest(big[..., :3], sel) if not sel.all() else big[..., :3]
     line = lineart.extract(rgb, log=log, cap=True)
+    _at(m_basic, msg("선화 추출"))
     stop_here()
     if line is not None and lineart.available("detail"):
         detail = lineart.extract(rgb, log=log, cap=True, variant="detail")
+        _at(m_detail, msg("선화 추출"))
         stop_here()
         if detail is not None:
             log(msg("  선화 detail 판도 증거로 얹는다"))
@@ -352,6 +372,7 @@ def _source_bundle(rgba: np.ndarray, size: int, log):
         rgb0 = (_fill_bg_nearest(rgba[..., :3], sel0) if not sel0.all()
                 else rgba[..., :3])
         nat = lineart.extract(rgb0, log=log, cap=True)
+        _at(_PREP_MARKS[3], msg("선화 추출"))
         stop_here()
         if nat is not None:
             native = cv2.resize(nat, (big.shape[1], big.shape[0]),

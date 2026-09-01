@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 
 from .celfit.affine import report as skew_report
+from .progress import CEL as _CEL_STAGES
+from .progress import Clock as _Clock
 from .pipeline import _reach_check, _source_bundle, read_rgba, write_png
 from ..i18n import msg
 from ..paths import run_file
@@ -24,6 +26,10 @@ from .route_line import _line_design
 # 작업 해상도 1,200에서 4px 군집은 화면 폭의 0.3%이고 차에 올리면 더 줄어든다
 # (가이드: "어차피 마지막에 차에 붙이면 별로 티도 안 남").
 HOLE_MIN_PX = 4
+
+
+# 진행 막대의 눈금은 **시간**이다 — 단계 수가 아니라 각 단이 실제로 무는
+# 초로 잰다. 기본값·학습·환산은 전부 `engine.progress`에 있다.
 
 
 def _make_cel(image: Path, out: Path, shapes: int, size: int,
@@ -72,8 +78,9 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 중간본(SR 결과 또는 원본) → 작업 해상도. 캔버스 유닛은 해상도 독립이라
     # 인게임 결과는 같고, 셀 분해(평활·팔레트·뼈대)의 정밀도만 올라간다.
     # 선화는 줄이기 전 중간본에서 뽑아 여기서 작업 해상도로 맞춘다
+    clk = _Clock("cel", _CEL_STAGES, progress)
     big, line_gray, detail_gray, native_gray = _source_bundle(
-        read_rgba(image), size, log)
+        read_rgba(image), size, log, progress=clk.sub("prep", msg("앞단")))
     rgba = upscale.fit(big, size)
     h, w = rgba.shape[:2]
     opaque = bool(rgba[..., 3].min() >= 250)
@@ -106,8 +113,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     log(msg("  가격 λ = {lam:.0f} (값 픽셀) — 한 장이 이만큼 못 벌면 안 산다",
             lam=lam))
     log(msg("셀 재해석 중…"))
-    if progress:
-        progress(0.01, msg("셀 재해석"))
+    clk.enter("celart", msg("셀 재해석"))
     # 영역 상한은 예산에 안 묶는다 — 무엇을 그릴지(분해)와 몇 장을
     # 쓸지(가격)는 다른 물음이다. 묶어 두면 예산을 내릴 때 눈·코·입이
     # **분해 단계에서** 병합돼 사라진다 (실측 700장: 영역 120개, 입이 통째로
@@ -124,12 +130,9 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                     value=val, price=lam, debug=bool(os.environ.get("FS_CEL_DEBUG")))
     if not classic:
         log(msg("  선화: 선 픽셀 {n:,}개", n=int(lm0.sum())))
-        if progress:
-            progress(0.04, msg("선 도안"))
         line_plan, line_stats, line_mask, src_line = _line_design(
             rgba, sel, lm0, shapes, cat, str(image), log,
-            progress=(lambda f, t: progress(0.04 + f * 0.34, t))
-            if progress else None,
+            progress=clk.sub("line", msg("선 도안")),
             value=val, price=lam, route="cel",
             basic_gray=line_gray, detail_gray=detail_gray,
             native_gray=native_gray,
@@ -188,8 +191,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         plan, stats = fit_plan(
             cel, cat, budget=shapes, line_budget=shapes,
             source_image=str(image), log=log, value=val, price=lam,
-            progress=(lambda f, t: progress(0.05 + f * 0.85, t))
-            if progress else None)
+            progress=clk.sub("line", msg("도형 배치"), thru="fill"))
     else:
         # ③ 색 채움 — 선 도안은 이미 섰으니 **면만** 채운다. cel의
         # line_mask는 목표(cel.png·미세 조정·수리·메움)용이라 배치에는 떼고
@@ -205,8 +207,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
             source_image=str(image), log=log, value=val, price=lam,
             ink_free=ink,
             sid_start=max((l.stroke for l in line_plan.layers), default=-1) + 1,
-            progress=(lambda f, t: progress(0.4 + f * 0.45, t))
-            if progress else None)
+            progress=clk.sub("fill", msg("도형 배치")))
         plan.layers.extend(line_plan.layers)  # 선 도안은 모든 면 위 (마지막 선따기)
         stats.update({k: v for k, v in line_stats.items() if k not in stats})
         stats["line_layers"] = len(line_plan.layers)
@@ -298,7 +299,8 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     if only:
         log(msg("잔차 초점 조정 중…"))
         st = _refine(plan, cel, cat, log=log, max_passes=2, only=only,
-                     tag=msg("잔차 초점"))
+                     tag=msg("잔차 초점"),
+                     progress=clk.sub("focus", msg("잔차 초점 조정")))
         stats["res_focus_layers"] = len(only)
         stats["res_focus_moves"] = st["accepts"]
     _snap("s2_focus")
@@ -307,10 +309,15 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 3,355장의 컷↔메움 초과가 라운드마다 십수 장씩 잦아들며 단조 수렴하므로
     # 몇 라운드 더가 값싸다
     rounds = 12
+    # 루프 안의 눈금 — 라운드 수는 미리 모른다 (대개 한두 바퀴에 수렴하고
+    # 포화 판만 12까지 간다). 그래서 라운드를 세지 않고 **점점 느려지는**
+    # 눈금을 준다: 몇 바퀴를 돌든 이 단의 몫 안에서 단조로 찬다
+    _rc = (lambda it: 1.0 - 0.75 ** (it + 1))
+    _sub_rc = clk.sub("recut", msg("구멍 메움·수리"))
     for it in range(rounds):
         if len(plan.layers) > shapes:
             if progress:
-                progress(0.86 + it * 0.03, msg("시각 영향 정리"))
+                _sub_rc(_rc(it), msg("시각 영향 정리"))
             before = len(plan.layers)
             keep_layers = list(plan.layers)
             # §18 자격 보호 — 혼자 덮고 있는 장은 값 불문 못 자른다. 라벨
@@ -336,7 +343,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         if it == rounds - 1:
             break
         if progress:
-            progress(0.87 + it * 0.03, msg("구멍 메움"))
+            _sub_rc(_rc(it) + 0.02, msg("구멍 메움"))
         # 성장 먼저 — 경계 부스러기(잔여의 74%)를 기존 레이어 확장으로 공짜
         # 흡수하고, 남은 것(오목 포켓 등)만 메움 타원(레이어 소모)이 맡는다
         grow_covers(plan, cel, cat, log=log)
@@ -460,8 +467,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     log(msg("전역 미세 조정 중…"))
     stats["finetune"] = _refine(
         plan, cel, cat, log=log,
-        progress=(lambda f, t: progress(0.95 + f * 0.04, t))
-        if progress else None)
+        progress=clk.sub("ft", msg("전역 미세 조정")))
     _snap("s4_ft")
     # 그리기 순서 미세 조정 — 옳은 색 조각이 이미 덮고 있는 자리를 이웃 영역
     # 조각이 위에서 가리는 px를 순서만 바꿔 돌려준다 (도형 0장, 커버리지 불변.
@@ -487,8 +493,9 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 남으면 그 자리는 인게임에서 차 도색이 비친다 (`celfit.coverage` 문서).
     # 성장(레이어 0장)으로 먼저 먹고, 남은 것만 최소 도형이 맡는다
     log(msg("커버리지 봉인 중…"))
-    stats.update(coverage.seal_coverage(plan, cel, cat, log=log,
-                                        budget=shapes, weight=imp))
+    stats.update(coverage.seal_coverage(
+        plan, cel, cat, log=log, budget=shapes, weight=imp,
+        progress=clk.sub("seal", msg("커버리지 봉인"))))
     stats.update(coverage.measure(plan, cel, cat))
     stats.update(skew_report(plan.layers))          # §14 기울기 계측
     stats["hole_left"] = count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,
@@ -496,6 +503,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     stats["hole_specks"] = count_hole_clusters(plan, cel, cat)   # 1px+ 참고치
     stats["price"] = round(lam, 1)
     _hlog(msg("미세 조정 후"))
+    clk.enter("write", msg("파일 쓰기"))
     plan.save(run_file(out, "plan.json"))
     # 선 재구성 자취 — line 노선과 **같은 파일 형식**이라 두 노선을 나란히
     # 대 볼 수 있다 (같은 논리 획 그래프인지, 갈렸다면 어느 정책 칸인지)
@@ -614,6 +622,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                       reg_of=reg_of, act_before=act_before, write=write_png)
 
     bad = [c for c in checks if not c["ok"]]
+    clk.close()                            # 끝까지 온 판 — 실측을 눈금에 배운다
     return {"input": {"size": [w, h], "alpha": not opaque},
             "plan": {"layers": len(plan.layers), **stats},
             "metrics": {"rmse_src": round(rmse_src, 1),

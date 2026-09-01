@@ -15,6 +15,8 @@ import numpy as np
 from ..i18n import msg
 from ..paths import run_file
 from .celfit.affine import report as skew_report
+from .progress import LINE as _LINE_STAGES
+from .progress import Clock as _Clock
 from .pipeline import (_one_region, _reach_check, _source_bundle, read_rgba,
                        write_png)
 
@@ -139,8 +141,11 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
 
     from . import lineart, upscale
 
+    # 앞단(SR + 선화 3판)도 진행을 알린다 — cel 노선과 같은 이유로 여기가
+    # 판 시간의 첫 뭉텅이인데 오래도록 막대가 0에 붙어 있었다
+    clk = _Clock("line", _LINE_STAGES, progress)
     big, line_gray, detail_gray, native_gray = _source_bundle(
-        read_rgba(image), size, log)
+        read_rgba(image), size, log, progress=clk.sub("prep", msg("앞단")))
     if line_gray is None:
         raise SystemExit(msg(
             "line 노선은 선화 모델이 필수다 — models/anilines_basic.onnx와 "
@@ -158,11 +163,9 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
                              "(cel 노선을 쓸 것)"))
     log(msg("  선화: 선 픽셀 {n:,}개", n=int(lm0.sum())))
     cat = Catalog(default_catalog_path())
-    if progress:
-        progress(0.02, msg("획 배치"))
     plan, stats, line_mask, src_rgb = _line_design(
         rgba, sel, lm0, shapes, cat, str(image), log,
-        progress=(lambda f, t: progress(0.02 + f * 0.88, t)) if progress else None,
+        progress=clk.sub("draw", msg("획 배치")),
         route="line", basic_gray=line_gray, detail_gray=detail_gray,
         native_gray=native_gray)
     rec = stats.pop("_rec", None)
@@ -192,9 +195,8 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
 
     log(msg("전역 미세 조정 중…"))
     stats["finetune"] = refine_plan(
-        plan, tgt, cat, log=log,
-        progress=(lambda f, t: progress(0.92 + f * 0.07, t))
-        if progress else None)
+        plan, tgt, cat, log=log, progress=clk.sub("ft", msg("전역 미세 조정")))
+    clk.enter("write", msg("파일 쓰기"))
     plan.save(run_file(out, "plan.json"))
 
     # 2× 렌더 후 축소 — cel 노선과 같은 이유 (인게임은 벡터라 경계가 매끈하다)
@@ -244,6 +246,7 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
                               "{src:.0%} 있음) — 옅은 윤곽 획이 덜 섰다",
                               outline=outline, src=src_lim))})
     bad = [c for c in checks if not c["ok"]]
+    clk.close()                            # 끝까지 온 판 — 실측을 눈금에 배운다
     return {"input": {"size": [w, h], "alpha": not opaque},
             "plan": {"layers": len(plan.layers), **stats},
             "structure": struct,

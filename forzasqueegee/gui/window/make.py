@@ -80,6 +80,7 @@ class _MakeOps:
         self.bar.setRange(0, 1000)
         self.bar.setValue(0)
         self._stage_text = ""
+        self._frac = 0.0
         self.verdict.setText("")
         self.checks.setText("")
         self.open.setVisible(False)
@@ -131,12 +132,29 @@ class _MakeOps:
         self._busy(False)
 
     def _tick_clock(self) -> None:
-        """경과 시간. **시계가 도는 동안만** — 끝난 뒤의 완료 문구를 덮으면 안 된다."""
+        """경과 + **남은 시간 어림**. 시계가 도는 동안만 — 끝난 뒤의 완료 문구를
+        덮으면 안 된다.
+
+        어림은 `경과 × (1 − 몫) / 몫` 하나다. 이 식이 서는 것은 막대의 눈금이
+        **단계 수가 아니라 실측 시간 몫**이기 때문이다 (`route_cel._P_*`) —
+        눈금이 단계 수였을 때는 이 수가 거짓말이 되므로 안 띄우는 것이 옳았다.
+
+        초반과 취소 뒤에는 안 띄운다: 몫이 작을 때는 나눗셈이 튀고, 취소
+        뒤에는 남은 시간이라는 물음 자체가 없다. 5초 단위로 굴려 눈이
+        어지럽지 않게 한다 (1초마다 몇 초씩 흔들리면 못 믿을 수로 읽힌다)."""
         if not self.clock.isActive():
             return
         el = time.time() - self.t0
-        self.stage.setText(tr("gui.stage", stage=self._stage_text,
-                              min=int(el // 60), sec=int(el % 60)))
+        txt = tr("gui.stage", stage=self._stage_text,
+                 min=int(el // 60), sec=int(el % 60))
+        if not self._cancelling and self._frac >= 0.03 and el >= 8.0:
+            left = el * (1.0 - self._frac) / self._frac
+            left = 5 * round(left / 5)
+            if left >= 60:
+                txt += tr("gui.eta", min=int(left // 60), sec=int(left % 60))
+            elif left > 0:
+                txt += tr("gui.eta.sec", sec=int(left))
+        self.stage.setText(txt)
 
     def _open_folder(self) -> None:
         if self.out and self.out.exists():

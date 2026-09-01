@@ -50,6 +50,8 @@
   "gui.editor.recover.opened": "복구본을 프로젝트로 굳혀 열었다 — {name}. [Export JSON]을 눌러야 도안으로 돌아온다.",
   "gui.editor.tip": "내장 KFPS 편집기를 연다 — 물고 있는 도안이 원화 오버레이와 함께 열리고, 편집기의 [Export JSON]이 곧장 도안이 되어 이 창이 문다. 도안이 없으면 빈 캔버스로 열리고, 편집기 안 [Import JSON]에 out/의 도안(셀·선화·페인터)이 전부 나온다. 레이어 목록의 [선으로 가르기]는 고른 레이어·그룹을 기준선 하나로 두 묶음으로 가른다.",
   "gui.editor.window_title": "KFPS 편집기 — ForzaSqueegee",
+  "gui.eta": " · 약 {min}분 {sec}초 남음",
+  "gui.eta.sec": " · 약 {sec}초 남음",
   "gui.export": "내보내기",
   "gui.export.done": "{n}개 판을 적었다 ({names}) → {where}",
   "gui.export.fls": "FLS (.3so 프로젝트)",

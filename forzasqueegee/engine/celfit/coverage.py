@@ -420,7 +420,8 @@ def _make_room(plan: LayerPlan, cel: CelArt, cat: Catalog,
 
 def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                   log=print, budget: int | None = None, ss: int = _SS,
-                  rounds: int = 4, weight: np.ndarray | None = None) -> dict:
+                  rounds: int = 4, weight: np.ndarray | None = None,
+                  progress=None) -> dict:
     """**마지막 봉인** — 실루엣 내부의 안 칠한 표본을 0으로 만든다.
 
     파이프라인의 맨 끝(전역 미세 조정 **뒤**)에 선다. 그 앞의 모든 단은 값을
@@ -451,7 +452,10 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         st["seal_after"] = 0
         return st
     quiet = lambda *_a, **_k: None         # noqa: E731 — 라운드 로그는 아래 한 줄로
-    for _ in range(max(1, rounds)):
+    nr = max(1, rounds)
+    for _r in range(nr):
+        if progress:                       # 라운드가 눈금이다 (대개 한두 바퀴)
+            progress(_r / nr)
         # 획도 **긴 축으로만** 키운다 — 두 획이 만나는 모서리의 쐐기가 잔여
         # 미커버의 태반이고(실측 W4-01), 긴 축 성장은 선을 안 굵힌다
         st["seal_grow"] += grow_covers(plan, cel, cat, log=quiet, passes=4,

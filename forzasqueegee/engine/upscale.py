@@ -89,14 +89,23 @@ def release() -> None:
     _SESS = None
 
 
-def _run(rgb: np.ndarray) -> np.ndarray:
-    """RGB uint8 → ×4 RGB uint8 (타일 처리)."""
+def _run(rgb: np.ndarray, progress=None) -> np.ndarray:
+    """RGB uint8 → ×4 RGB uint8 (타일 처리).
+
+    `progress(0~1)`은 **타일 수로 잰다** — SR은 앞단 시간의 태반이고 타일
+    비용이 고르므로, 이만큼 정확한 눈금이 이 단에는 달리 없다.
+    """
     s = _sess()
     h, w = rgb.shape[:2]
     out = np.zeros((h * _SCALE, w * _SCALE, 3), np.uint8)
+    ntile = len(range(0, h, _TILE)) * len(range(0, w, _TILE))
+    done = 0
     for y0 in range(0, h, _TILE):
         for x0 in range(0, w, _TILE):
             stop_here()          # SR이 앞단 시간의 태반이다 — 타일마다 묻는다
+            if progress:
+                progress(done / ntile)
+            done += 1
             y1, x1 = min(y0 + _TILE, h), min(x0 + _TILE, w)
             # 겹침을 물려 자른 뒤 결과에서 겹침만큼 다시 떼어낸다
             py0, px0 = max(0, y0 - _OVER), max(0, x0 - _OVER)
@@ -162,7 +171,7 @@ def _sr_input(rgba: np.ndarray) -> np.ndarray:
     return fit_min(rgba, _SR_IN_MAX)
 
 
-def _sr_rgba(rgba: np.ndarray) -> np.ndarray:
+def _sr_rgba(rgba: np.ndarray, progress=None) -> np.ndarray:
     """RGBA → ×4 RGBA.
 
     RGB만 SR을 태우고 알파는 큐빅 — 알파는 경계 한 겹이라 SR이 줄 게 없고,
@@ -173,13 +182,14 @@ def _sr_rgba(rgba: np.ndarray) -> np.ndarray:
 
     h, w = rgba.shape[:2]
     sel = rgba[..., 3] >= 128
-    sr = _run(_fill_bg_nearest(rgba[..., :3], sel) if not sel.all() else rgba[..., :3])
+    sr = _run(_fill_bg_nearest(rgba[..., :3], sel) if not sel.all()
+              else rgba[..., :3], progress)
     a = cv2.resize(rgba[..., 3], (w * _SCALE, h * _SCALE), interpolation=cv2.INTER_CUBIC)
     return np.dstack([sr, a])
 
 
 def upscale_rgba(rgba: np.ndarray, size: int, log=print,
-                 force: bool = False) -> np.ndarray | None:
+                 force: bool = False, progress=None) -> np.ndarray | None:
     """저해상 RGBA를 **짧은 변** `size`로 키운다. SR을 못 쓰면 None (호출부가 큐빅).
 
     `force=True`면 확대 배수 게이트를 건너뛴다 — `fit` 모드가 쓴다.
@@ -200,7 +210,7 @@ def upscale_rgba(rgba: np.ndarray, size: int, log=print,
     log(msg("  저해상 입력 {w}×{h} — 애니 SR로 확대", w=w, h=h)
         + (msg(" ({w}×{h} 경유)", w=pre.shape[1], h=pre.shape[0])
            if pre.shape != rgba.shape else ""))
-    return fit(_sr_rgba(pre), size)
+    return fit(_sr_rgba(pre, progress), size)
 
 
 def mode() -> str:
@@ -208,7 +218,7 @@ def mode() -> str:
     return m if m in _MODES else "fit"      # 모르는 값이면 기본값으로 (off 아님)
 
 
-def prepare(rgba: np.ndarray, size: int, log=print) -> np.ndarray:
+def prepare(rgba: np.ndarray, size: int, log=print, progress=None) -> np.ndarray:
     """노선이 받을 **중간본**을 만든다 — 호출부가 `fit(…, size)`로 줄여 쓴다.
 
     반환값의 최대변은 작업 해상도 이상이거나(SR 경로) 원본 그대로다(SR을 못
@@ -219,12 +229,12 @@ def prepare(rgba: np.ndarray, size: int, log=print) -> np.ndarray:
     끝나면 세션을 놓는다 — 바로 다음이 선화 추출이라 두 세션이 겹칠 이유가 없다.
     """
     try:
-        return _prepare(rgba, size, log)
+        return _prepare(rgba, size, log, progress)
     finally:
         release()
 
 
-def _prepare(rgba: np.ndarray, size: int, log) -> np.ndarray:
+def _prepare(rgba: np.ndarray, size: int, log, progress=None) -> np.ndarray:
     h, w = rgba.shape[:2]
     m = mode()
     # SR 모델은 저장소에 없다 — 쓸 자리에서 받아 둔다 (18MB). 못 받으면
@@ -236,12 +246,12 @@ def _prepare(rgba: np.ndarray, size: int, log) -> np.ndarray:
             log(msg("  경고: SR 모델이 없다 — 원본 해상도로 진행"))
         if min(h, w) >= size:
             return rgba
-        sr = upscale_rgba(rgba, size, log=log)
+        sr = upscale_rgba(rgba, size, log=log, progress=progress)
         return rgba if sr is None else sr
     if m == "off":
         if min(h, w) >= size:
             return rgba
-        sr = upscale_rgba(rgba, size, log=log)
+        sr = upscale_rgba(rgba, size, log=log, progress=progress)
         return rgba if sr is None else sr
     if m == "fit":
         # 무조건 SR — 게이트는 안 본다. 단 ×4 출력이 메모리를 뚫을 크기면
@@ -256,14 +266,15 @@ def _prepare(rgba: np.ndarray, size: int, log) -> np.ndarray:
             log(msg("  원본 {w}×{h} — ×{scale} SR 출력이 메모리 상한을 넘어 "
                     "원본 해상도로 진행", w=w, h=h, scale=_SCALE))
             return rgba
-        sr = upscale_rgba(rgba, size, log=log, force=True)
+        sr = upscale_rgba(rgba, size, log=log, force=True,
+                          progress=progress)
         return rgba if sr is None else sr
     if m == "cap" and size >= _SR_MIN_GAIN * min(h, w):
         # 저해상 입력 — SR이 확대를 맡는 자리다. 중간본을 더 키우면 SR이 지어낸
         # 것을 선화가 더 뽑는다 (위 docstring). off와 같은 길로 보낸다
-        sr = upscale_rgba(rgba, size, log=log)
+        sr = upscale_rgba(rgba, size, log=log, progress=progress)
         return rgba if sr is None else sr
     pre = _sr_input(rgba)
     log(f"  SR(cap): {w}×{h} → {pre.shape[1]}×{pre.shape[0]} → ×4 "
         f"({pre.shape[1] * _SCALE}×{pre.shape[0] * _SCALE})")
-    return _sr_rgba(pre)
+    return _sr_rgba(pre, progress)
