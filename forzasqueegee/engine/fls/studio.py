@@ -21,9 +21,11 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
    끌면 **그룹 자신의 변환**에 적는다(`editor_state.transformEntryFrames`). 다음
    명령이 그 변환을 배치 수치에 접어 넣으므로, 편집기에서 밀어 놓은 자리가 곧
    조리법의 자리가 된다.
-2. **`FS:` 머리가 없는 것은 도안으로 받는다** (`_adopt`). 도안 그룹을 선으로
-   가르면 조각은 `FS:` 머리를 잃고, 베낀 사본도 그렇고, 사람이 직접 그린 도형도
-   그렇다 — 그것이 **지금 차에 실린 그림**이다. 그래서 면 아래 `FS:` 없는 덩어리는
+2. **조리법이 모르는 덩어리는 도안으로 받는다** (`_adopt`). 도안 그룹을 선으로
+   가르면 조각은 `FS:` 머리를 잃고, 사람이 직접 그린 도형도 그렇다. 베낀 사본은
+   머리를 그대로 두고 이름 뒤에 " (Copy)"가 붙는다(`FS:decal-1 (Copy)`) — 머리가
+   아니라 **이름 문법**(`MADE_CHUNK`)이 구성기 몫을 가른다 — 그것이 **지금 차에
+   실린 그림**이다. 그래서 면 아래 `FS:` 없는 덩어리는
    레이어를 면 유닛 그대로 도안 파일로 떠서 항등 배치로 조리법에 올리고, 꾸밈은
    그 위에 짓는다. 다음 굽기부터는 `FS:decal-<n>` 덩어리라 1번 규칙을 탄다.
    숨긴 그룹·래스터 로고·안내선만 종전처럼 원본 노드째 옮겨 실린다.
@@ -47,6 +49,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -64,6 +67,13 @@ STATE_VERSION = 1
 DECAL = "decal-"
 # 편집기에서 받은 도안이 사는 작업 폴더 안 자리 (`_adopt`).
 ADOPTED_DIR = "adopted"
+
+# 구성기가 짓는 덩어리 이름 (`preview.surface_chunks` · `compose.build`):
+# `decal-1-fit` · `deco-front` · `text-side_left` · `shapes-over`(+`-mirror`).
+# **이 문법에 안 맞는 `FS:` 그룹은 사람 몫이다** — 편집기의 그룹 복사는 이름을
+# 그대로 두고 " (Copy)"를 붙이므로(`FS:decal-1 (Copy)`) 머리만 보면 구성기 몫과
+# 안 갈린다. 그 사본은 조리법이 모르는 그림이라 `_adopt`가 도안으로 받는다.
+MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text)(?:-[A-Za-z0-9_.]+)*$")
 
 
 # ────────────────────────────── 조리법 ──────────────────────────────
@@ -250,12 +260,13 @@ def _absorb(st: Studio) -> None:
 
 
 def _adopt(st: Studio) -> None:
-    """`FS:` 머리가 없는 덩어리 — 가른 조각·사본·손으로 그린 것 — 를 **도안으로 받는다**.
+    """조리법이 모르는 덩어리 — 가른 조각·사본·손으로 그린 것 — 를 **도안으로 받는다**.
 
-    편집기에서 도안 그룹을 [선으로 가르기]로 가르면 조각은 `FS:` 머리를 잃고,
-    베끼면 사본도 그렇다. 그 조각들이 지금 차에 실린 그림인데 조리법은 모르니
-    꾸밈이 "올린 도안이 없다"로 섰다. 그래서 **지금 프로젝트에 있는 것이 도안**이다:
-    면 아래 `FS:` 없는 덩어리마다 레이어를 면 유닛 그대로 도안 파일로 뜨고, 항등
+    편집기에서 도안 그룹을 [선으로 가르기]로 가르면 조각은 `FS:` 머리를 잃는다.
+    베낀 사본은 머리를 그대로 두고 이름 뒤에 " (Copy)"가 붙는다 — 그래서 구성기
+    몫인지는 머리가 아니라 이름 문법(`MADE_CHUNK`)이 가른다. 그 덩어리들이 지금
+    차에 실린 그림인데 조리법은 모르니 꾸밈이 "올린 도안이 없다"로 섰다. 그래서
+    **지금 프로젝트에 있는 것이 도안**이다: 면 아래 조리법 밖 덩어리마다 레이어를 면 유닛 그대로 도안 파일로 뜨고, 항등
     배치(x·y 0 · 캔버스 1유닛 = 면 1유닛 · 회전 0)로 조리법에 올린다. 배치·색을
     다시 계산하는 것은 없다 — 사람이 둔 자리가 그대로 도안의 자리다. 다음
     굽기부터 그 조각은 `FS:decal-<n>` 덩어리라 옮긴 자리도 되돌아온다 (`_absorb`).
@@ -284,7 +295,9 @@ def _adopt(st: Studio) -> None:
             if not isinstance(kid, dict):
                 continue
             name = str(kid.get("name") or "")
-            if kid.get("kind") == "group" and name.startswith(project.CHUNK_PREFIX):
+            if (kid.get("kind") == "group"
+                    and name.startswith(project.CHUNK_PREFIX)
+                    and MADE_CHUNK.match(name[len(project.CHUNK_PREFIX):])):
                 continue                       # 구성기 몫 — 조리법이 이미 안다
             layers, keep = _peel(kid, gm)
             if keep is not None:

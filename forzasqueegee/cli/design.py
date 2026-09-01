@@ -169,6 +169,7 @@ def cmd_flsedit(args) -> int:
 
     lines: list[str] = []
     log = lines.append
+    st = None
     try:
         if args.action == "export-group":
             got, said = studio.export_group(args.project, args.format, args.out)
@@ -244,6 +245,10 @@ def cmd_flsedit(args) -> int:
         stats = studio.rebuild(st, log=log)
     except (ValueError, OSError, FileNotFoundError, RuntimeError) as e:
         print("\n".join(lines))
+        # 오류 앞의 알림도 같이 낸다 — 조리법이 무엇을 뺐는지가 대개 오류의
+        # **까닭**이다 (편집기에서 지운 도안 따위).
+        for n in (st.notes if st is not None else []):
+            print(f"  · {n}")
         print(msg("오류: {e}", e=e))
         return 1
     if lines:
