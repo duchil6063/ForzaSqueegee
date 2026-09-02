@@ -17,6 +17,7 @@ import numpy as np
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE, Layer, LayerPlan
 from . import affine as A
+from . import census as _census
 from . import policy as _policy
 from .geometry import _layer, _min_span
 from .scoring import _Scorer, _descend
@@ -375,27 +376,54 @@ def _fit_bars(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, color,
         return 0
     x0, y0, _, _ = sc.roi
     res_w = 2.0 * float(np.median(dt[sc.residual & (dt > 0)])) if (sc.residual & (dt > 0)).any() else 2.0
-    skel = _thin(sc.residual)
-    skel = _prune_spurs(skel, max(3.0, 1.2 * res_w))
+    skel_raw = _thin(sc.residual)
+    skel = _prune_spurs(skel_raw, max(3.0, 1.2 * res_w))
     n = 0
     rind_w = _RIND_W_MUL * 2.0 * _min_span(sc.upp)   # 껍질 컷 문턱 (게임 격자)
-    paths = [p for p, _, _ in _join_paths(_paths(skel))]
+    # 계측 (`census`) — 깔때기 칸을 열고 접합 판정을 받아 적는다. 끄면 없다
+    cen = _census.bar_open(
+        res_px=int(np.count_nonzero(sc.residual)), res_w=round(res_w, 3),
+        skel_raw_px=int(skel_raw.sum()), skel_px=int(skel.sum()),
+        ink=bool(ink), price=round(float(price), 3), left=int(left),
+        rind_w=round(rind_w, 3), rind_len=_RIND_LEN) if _census.ON else None
+    raw = _paths(skel)
+    joined = _join_paths(raw, rec=_census.join_rec(cen) if cen else None)
+    if cen is not None:
+        cen["raw_paths"] = len(raw)
+        cen["joined_paths"] = len(joined)
+        cen["free_ends"] = sum(1 for _p, hj, tj in joined if hj < 0 and tj < 0)
+        cen["one_junc"] = sum(1 for _p, hj, tj in joined
+                              if (hj < 0) != (tj < 0))
+        cen["two_junc"] = sum(1 for _p, hj, tj in joined if hj >= 0 and tj >= 0)
+        cen["raw_len"] = [int(len(p)) for p, _a, _b in raw]
+    paths = [p for p, _, _ in joined]
     kept = []
     for path in paths:
         wmed = 2.0 * float(np.median(_dt_along(dt, path)))
         if len(path) < max(2.0, wmed):     # 폭보다 짧은 부스러기 — 마무리가 줍는다
+            if cen is not None:
+                cen["drop"]["short"] = cen["drop"].get("short", 0) + 1
             continue
         if not ink and (wmed < rind_w or len(path) < _RIND_LEN):
             # 굵은 영역 경계의 얇은 껍질 — 채움이 경계 밴드까지 닿고 이웃면·획이
             # 덮으므로 막대로 쫓지 않는다 (실측: 여기서 ~1,600장 샜다)
+            if cen is not None:
+                k = "rind_w" if wmed < rind_w else "rind_len"
+                cen["drop"][k] = cen["drop"].get(k, 0) + 1
             continue
         kept.append((path, wmed))
+    if cen is not None:
+        cen["kept_paths"] = len(kept)
     for path, wmed in kept:
         if n >= left:
+            if cen is not None:
+                cen["drop"]["budget"] = cen["drop"].get("budget", 0) + 1
             return n
         # 가격 (영역의 첫 장은 면제 — `fit_plan`의 같은 근거)
         if price and not (free_first and n == 0) \
                 and _path_worth(sc, path, wmed) < price:
+            if cen is not None:
+                cen["drop"]["price"] = cen["drop"].get("price", 0) + 1
             continue
         # 경로 이동평균 — 뼈대의 계단 요철을 펴 긴 획이 서게 한다
         if len(path) >= 7:
@@ -407,6 +435,30 @@ def _fit_bars(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, color,
         # 잔여 경로는 이미 3장 이하라 상한이 안 물린다 (실측 9장: 막대
         # 456→456·826→826처럼 그대로고 한 장은 +69로 되레 나빠졌다).
         # 상한이 실제로 무는 곳은 선화 쪽이다 (`_fit_lines`)
-        n += _fit_path(plan, sc, dt, path, wmed, color, ink, left - n,
-                       forms or ([], None), next(sids) if sids else -1)
+        if cen is None:
+            n += _fit_path(plan, sc, dt, path, wmed, color, ink, left - n,
+                           forms or ([], None), next(sids) if sids else -1)
+            continue
+        # ── 계측 경로 — 단위 하나의 계보를 그대로 남긴다 (판정은 같다)
+        u = _census.bar_unit(
+            cen, samples=int(len(path)),
+            arc=round(float(np.hypot(*np.diff(path, axis=0).T).sum()), 2),
+            wmed=round(wmed, 3), lo=len(plan.layers))
+        band = np.zeros(sc.residual.shape, np.uint8)
+        cv2.polylines(band, [np.stack([path[:, 1], path[:, 0]], axis=1)
+                             .round().astype(np.int32)], False, 1,
+                      max(1, int(round(wmed))))
+        u.update(_census.where(band.astype(bool), cen.get("_dedge"),
+                               cen.get("_ink")))
+        u["worth"] = round(_path_worth(sc, path, wmed), 2)
+        got = _fit_path(plan, sc, dt, path, wmed, color, ink, left - n,
+                        forms or ([], None), next(sids) if sids else -1,
+                        rec=u)
+        u["layers"] = int(got)
+        n += got
+    if cen is not None:
+        cen.pop("_dedge", None)
+        cen.pop("_ink", None)
+        cen["bar_layers"] = int(n)
+        cen["bar_units"] = len(cen["units"])
     return n

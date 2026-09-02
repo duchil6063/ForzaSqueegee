@@ -18,6 +18,7 @@ from ..catalog import Catalog
 from ..celart import CelArt, mark_mask
 from ..model import Layer, LayerPlan
 from ..price import _PRICE_INK
+from . import census as _census
 from .fill import _fit_bars, region_shape
 from .geometry import _ink_cover, _min_span
 from .layered import fill_region, grow_fill, mop_up
@@ -226,16 +227,40 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         lo = len(plan.layers)              # 이 영역이 놓기 시작하는 자리
         cap = min(_MAX_PER_REGION, left, share)
         area = float(reg.area)
+        # 계측 (`census`) — 영역 하나의 계보 칸을 연다. 끄면 아무 일도 안 한다
+        if _census.ON:
+            m8c = mask.astype(np.uint8)
+            peri = int((m8c & ~cv2.erode(m8c, np.ones((3, 3), np.uint8))).sum())
+            cr = _census.begin_region(
+                rid=int(reg.rid), order=int(oi), area=int(reg.area),
+                bbox=[int(v) for v in reg.bbox], roi=[int(v) for v in roi],
+                color=[int(v) for v in reg.color], strokelike=bool(strokelike),
+                wmed=round(float(_wmed), 3), elong=round(float(_elong), 3),
+                peri=peri, mask_px=int(m8c.sum()), cap=int(cap),
+                share=int(share), lo=int(lo))
+            cr["compact"] = round(4.0 * np.pi * int(m8c.sum())
+                                  / max(peri * peri, 1.0), 4)
+            cr["_dedge"] = cv2.distanceTransform(m8c, cv2.DIST_L2, 3)
+            if ink_cov is not None:
+                cr["_ink"] = ink_cov[y0:y1, x0:x1]
+            if value is not None:
+                cr["val_mean"] = round(float(value[y0:y1, x0:x1][mask].mean()), 3)
+            _census.res_mark("start", int(np.count_nonzero(sc.residual)))
         if not strokelike:
             # 면 채움 — 바탕 한 장 먼저, 남은 것은 후보 경쟁 (§7·§8·§11)
             n_reg = fill_region(plan, sc, cat, reg.color, cap, area, price,
                                 _COVER_STOP)
             stats["fill_layers"] += n_reg
+        if _census.ON:
+            _census.res_mark("after_fill", int(np.count_nonzero(sc.residual)))
+            cr["fill_layers"] = int(n_reg)
         # **사기 전에 늘린다** — 경계 부스러기를 이미 놓은 도형의 한 스텝
         # 확장으로 먼저 먹는다 (레이어 0장). 그러고도 남는 것만 막대·마무리가
         # 산다 (`layered.grow_fill` 문서)
         if n_reg:
             stats["grown_fill"] += grow_fill(sc, plan.layers, lo, grown=_grown)
+        if _census.ON:
+            _census.res_mark("after_grow", int(np.count_nonzero(sc.residual)))
         # 가는 잔여 → 획 사슬
         if n_reg < cap and np.count_nonzero(sc.residual) > (1.0 - _COVER_STOP) * area:
             dt = cv2.distanceTransform(sc.residual.astype(np.uint8), cv2.DIST_L2, 3)
@@ -244,9 +269,13 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                               free_first=n_reg == 0)
             stats["bar_layers"] += n_bar
             n_reg += n_bar
+        if _census.ON:
+            _census.res_mark("after_bar", int(np.count_nonzero(sc.residual)))
         # 막대가 놓인 뒤 한 번 더 — 새로 놓인 막대도 늘릴 자리가 생긴다
         if n_reg:
             stats["grown_fill"] += grow_fill(sc, plan.layers, lo, grown=_grown)
+        if _census.ON:
+            _census.res_mark("after_grow2", int(np.count_nonzero(sc.residual)))
         # 마무리 — 남은 큰 덩어리만 줍는다. 작은 조각은 구멍 메움(컷 뒤,
         # 군집당 1장)이 더 싸게 처리하므로 여기서 예산을 쓰지 않는다
         # (실측: min_blob 12일 때 mop 549장 — 채움 예산을 갉아먹었다)
@@ -260,6 +289,11 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                            n_reg == 0)
             stats["mop_layers"] += n_mop
             n_reg += n_mop
+        if _census.ON:
+            _census.res_mark("end", int(np.count_nonzero(sc.residual)))
+            _census.end_region(layers=int(n_reg), hi=len(plan.layers))
+            cr.pop("_dedge", None)
+            cr.pop("_ink", None)
         if n_reg == 0:
             stats["empty_regions"] += 1
             stats["empty_px"] += int(reg.area)

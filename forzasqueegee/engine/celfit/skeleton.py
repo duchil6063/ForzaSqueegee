@@ -233,19 +233,26 @@ def _end_dir(path: np.ndarray, head: bool) -> np.ndarray:
 
 
 def _join_paths(paths: list[tuple[np.ndarray, int, int]],
-                max_angle_deg: float = 35.0
+                max_angle_deg: float = 35.0, rec: list | None = None
                 ) -> list[tuple[np.ndarray, int, int]]:
     """분기점 노드에서 접선이 이어지는 경로 쌍을 하나로 합친다 (수렴까지 반복).
 
     합치지 않으면 획이 분기점마다 끊긴다. 사람은 교차를 무시하고 한 획으로
     긋는다 — 그 문법의 재현이다. 반환은 (경로, 머리 접합점, 꼬리 접합점) —
     접합점 id ≥ 0이면 그 끝이 다른 획과 만나는 교차점이다 (다리 조각 판정용).
+
+    `rec`(계측 전용, `celfit.census`): 접합 노드마다 후보 쌍의 코사인과 판정을
+    append한다. **판정은 안 바꾼다** — 지금 코드가 이미 내린 결정에 이름만
+    붙인다 (`angle` = 각 문턱 미달, `paired` = 이 회차에 이미 합쳐진 짝,
+    `singleton` = 그 노드에 끝이 하나뿐, `ok` = 합쳐진 쌍).
     """
     cos_lim = float(np.cos(np.radians(max_angle_deg)))
     items = [(a, hj, tj) for a, hj, tj in paths if len(a) >= 2]
     changed = True
+    npass = 0
     while changed:
         changed = False
+        npass += 1
         ends: dict[int, list[tuple[int, bool]]] = {}
         for i, (p, hj, tj) in enumerate(items):
             if hj >= 0:
@@ -256,15 +263,29 @@ def _join_paths(paths: list[tuple[np.ndarray, int, int]],
         new_items = []
         for key, lst in ends.items():
             best = None
+            cand_rec: list = []
             for a in range(len(lst)):
                 for b in range(a + 1, len(lst)):
                     (i, hi), (j, hjd) = lst[a], lst[b]
                     if i == j or i in merged or j in merged:
+                        if rec is not None:
+                            cand_rec.append((None, "paired"))
                         continue
                     c = -float(np.dot(_end_dir(items[i][0], hi),
                                       _end_dir(items[j][0], hjd)))
+                    if rec is not None:
+                        cand_rec.append((c, None))
                     if c >= cos_lim and (best is None or c > best[0]):
                         best = (c, i, hi, j, hjd)
+            if rec is not None:
+                rec.append({"pass": npass,
+                            "ends": len(lst), "cos_lim": round(cos_lim, 6),
+                            "cos": [None if c is None else round(c, 4)
+                                    for c, _ in cand_rec],
+                            "paired": sum(1 for _, w in cand_rec
+                                          if w == "paired"),
+                            "ok": best is not None,
+                            "best": None if best is None else round(best[0], 4)})
             if best is None:
                 continue
             _, i, hi, j, hjd = best

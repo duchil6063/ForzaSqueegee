@@ -47,6 +47,7 @@ import numpy as np
 from ..catalog import Catalog
 from ..celart.rag import complexity
 from ..model import Layer, LayerPlan
+from . import census as _census
 from . import policy as _policy
 from .fill import _grow_step, _place_fat, _seed_moment
 from .scoring import _MIN_GAIN, _STROKE_R, _Scorer, _descend
@@ -281,19 +282,35 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
     씨앗을 잡고 채움 어휘를 겨루게 한다.
     """
     n = 0
+    # 계측 (`census`) — 성분마다 **왜 샀나/왜 버렸나**. 끄면 없다
+    cen = _census.mop_open(res_px=int(np.count_nonzero(sc.residual)),
+                           min_blob=int(min_blob), left=int(left),
+                           price=round(float(price), 3)) if _census.ON else None
     while n < left:
         res = sc.residual.astype(np.uint8)
         cnt, cc, cstats, _ = cv2.connectedComponentsWithStats(res, connectivity=8)
+        if cen is not None and "comps_in" not in cen:
+            cen["comps_in"] = int(cnt) - 1
+            cen["comps_in_area"] = sorted(
+                (int(a) for a in cstats[1:, cv2.CC_STAT_AREA]), reverse=True)
         if cnt <= 1:
+            _mop_leftover(cen, cnt, cstats, "empty", n)
             return n
         ci = int(np.argmax(cstats[1:, cv2.CC_STAT_AREA])) + 1
         if cstats[ci, cv2.CC_STAT_AREA] < min_blob:
+            _mop_leftover(cen, cnt, cstats, "min_blob", n)
             return n
         cm = cc == ci
+        c = _census.mop_comp(cen, **_census.shape_stats(cm)) if cen else None
+        if c is not None:
+            c.update(_census.where(cm, cen.get("_dedge"), cen.get("_ink")))
+            c["worth"] = round(sc.worth_of(cm), 2)
         free = free_first and n == 0
         # 가격 — 덩어리가 통째로 λ에 못 미치면 어떤 도형으로도 값을 못 한다.
         # **값은 보이는 잔여로만 센다** — 덧칠 띠는 값이 아니다
         if price and not free and sc.worth_of(cm) < price:
+            if c is not None:
+                c["out"] = "price"
             sc.commit(cm)                  # 포기 — 잔여에서 지워 다음 덩어리로
             continue
         ys, xs = np.nonzero(cm)
@@ -308,6 +325,8 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
                 if not alt.skew and (plain is None or s > plain[0]):
                     plain = (s, alt)
         if best is None:
+            if c is not None:
+                c["out"] = "no_seed"
             sc.commit(cm)
             continue
         gain, q = _descend(sc, best[1], color, passes=3,
@@ -317,15 +336,40 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
             if g0 >= gain:
                 gain, q = g0, q0
         if gain < 3.0:
+            if c is not None:
+                c["out"], c["gain"] = "low_gain", round(float(gain), 2)
             sc.commit(cm)                  # 이 덩어리는 포기 (무한루프 방지)
             continue
         gain, q = _grow_step(sc, gain, q)
         _, mfin, fbox = sc._score_impl(q)
         if mfin is None:
+            if c is not None:
+                c["out"] = "no_raster"
             sc.commit(cm)
             continue
         sc.commit_box(mfin, fbox)
         plan.layers.append(q)
+        if c is not None:
+            c["out"], c["gain"] = "ok", round(float(gain), 2)
+            c["shape"], c["idx"] = q.shape, len(plan.layers) - 1
         _FILL_WIN[q.shape] = _FILL_WIN.get(q.shape, 0) + 1
         n += 1
+    if cen is not None:                    # 예산이 물려 나온 자리
+        res = sc.residual.astype(np.uint8)
+        cnt, _cc, cstats, _ = cv2.connectedComponentsWithStats(res,
+                                                               connectivity=8)
+        _mop_leftover(cen, cnt, cstats, "budget", n)
     return n
+
+
+def _mop_leftover(cen, cnt, cstats, why: str, n: int) -> None:
+    """마무리가 **안 본 채로 남긴** 성분 (계측 전용 — 판정과 무관)."""
+    if cen is None:
+        return
+    cen["stop"] = why
+    cen["mop_layers"] = int(n)
+    rest = [int(a) for a in cstats[1:cnt, cv2.CC_STAT_AREA]] if cnt > 1 else []
+    cen["left_comps"] = len(rest)
+    cen["left_area"] = int(sum(rest))
+    cen.pop("_dedge", None)
+    cen.pop("_ink", None)

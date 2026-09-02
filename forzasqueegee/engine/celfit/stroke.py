@@ -186,7 +186,8 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
               wmed: float, color, ink: bool, left: int, forms: tuple,
               sid: int = -1, depth: int = 0, strict: bool = False,
               wcap: float = 0.0, wprof: np.ndarray | None = None,
-              grammar: bool = False, it=None, skew_ok=None) -> int:
+              grammar: bool = False, it=None, skew_ok=None,
+              rec: dict | None = None) -> int:
     """경로 하나를 획으로 — **곡선이 기본이고 막대는 직선일 때만**.
 
     ① 확실히 직선이면(`_is_straight`) 막대가 맞는 도형이다 ② 아니면 곡선 한
@@ -207,7 +208,10 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
 
     `it`(`intent.StrokeIntent`): 이 획을 **어디서 끊을 것인가**의 의도. 쪼갤
     자리를 이탈 최대점이 아니라 의도된 각에서 고른다 (`intent` 문서). 경로와
-    같은 길이라 쪼갤 때 함께 잘려 내려간다."""
+    같은 길이라 쪼갤 때 함께 잘려 내려간다.
+
+    `rec`(계측 전용, `celfit.census`): 이 경로가 **몇 장으로 갈렸고 왜**인지를
+    세는 칸. 판정은 안 바꾼다 — 이미 내린 결정에 이름만 붙인다."""
     if left <= 0 or len(path) < 2:
         return 0
     if not _is_straight(path, wmed):
@@ -217,6 +221,8 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
             _, mfin = sc.score(arc[1])
             sc.commit(mfin)
             plan.layers.append(arc[1])
+            if rec is not None:
+                rec["curve"] += 1
             return 1
         if depth < _SPLIT_DEPTH and len(path) >= _SPLIT_MIN:
             # 어느 도형도 안 맞는 불규칙 곡선 — 현에서 가장 먼 점이 마디다
@@ -229,19 +235,21 @@ def _fit_path(plan: LayerPlan, sc: _Scorer, dt: np.ndarray, path: np.ndarray,
             # 갈리고 그 자리에 각이 선다 (`intent.split_index`)
             i = I.split_index(dev, it, e, len(path) - 1 - e)
             if e <= i <= len(path) - 1 - e and dev[i] > max(0.5, 0.2 * wmed):
+                if rec is not None:
+                    rec["recurse"] += 1
                 a = _fit_path(plan, sc, dt, path[:i + 1], wmed, color, ink,
                               left, forms, sid, depth + 1, strict, wcap,
                               None if wprof is None else wprof[:i + 1],
                               grammar, it.sub(0, i + 1) if it else None,
-                              skew_ok)
+                              skew_ok, rec)
                 b = _fit_path(plan, sc, dt, path[i:], wmed, color, ink,
                               left - a, forms, sid, depth + 1, strict, wcap,
                               None if wprof is None else wprof[i:], grammar,
-                              it.sub(i) if it else None, skew_ok)
+                              it.sub(i) if it else None, skew_ok, rec)
                 return a + b
     return _fit_segments(plan, sc, dt, path, wmed, color, ink, left, sid,
                          strict=strict, wcap=wcap, forms=forms, wprof=wprof,
-                         grammar=grammar, it=it, skew_ok=skew_ok)
+                         grammar=grammar, it=it, skew_ok=skew_ok, rec=rec)
 
 
 def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
@@ -249,7 +257,8 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
                   left: int, sid: int = -1, strict: bool = False,
                   wcap: float = 0.0, forms: tuple | None = None,
                   wprof: np.ndarray | None = None,
-                  grammar: bool = False, it=None, skew_ok=None) -> int:
+                  grammar: bool = False, it=None, skew_ok=None,
+                  rec: dict | None = None) -> int:
     """마디 사슬 (최후 수단) — 폭 비례 허용오차로 마디를 끊고 **마디마다 도형을
     고른다**: 그 마디의 원래 호가 직선이면 막대(A_22), 굽었으면 곡선이다.
 
@@ -268,12 +277,16 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
     # 마디를 **의도된 각으로 끌어당긴다** — 개수는 그대로라 도형 수가 안
     # 바뀌고, 이음이 각 자리에 서므로 매끈한 굽음 한가운데가 안 꺾인다
     idx = I.snap_nodes(_rdp_idx(path, eps), it, wmed)
+    if rec is not None:
+        rec["seg_nodes"] += len(idx) - 1     # RDP가 낸 마디 수 (예산 조정 전)
     # 마디가 획 예산을 넘으면 **허용오차를 키워** 줄인다 — 중간에서 잘라 점선을
     # 만드는 대신 굵직하게 긋는다. 오차 상한(폭의 8배)은 획이 경로를 아예 못
     # 따라가 `_descend`에서 통째로 기각되는 것을 막는 바닥이다
     while 0 < left < len(idx) - 1 and eps < 8.0 * max(wmed, 1.0):
         eps *= 1.5
         idx = I.snap_nodes(_rdp_idx(path, eps), it, wmed)
+        if rec is not None:
+            rec["eps_grow"] += 1
     # 그래도 넘치면 호길이 등분으로 간다 — 아래 반복문은 예산이 차면 그 자리에서
     # 멈추므로 남은 마디가 통째로 빠져 **획 뒷동강이 점선으로 사라진다**.
     # 등분은 마디가 굵어질 뿐 획 전체를 긋는다 (점선이 굵기보다 눈에 띈다)
@@ -283,6 +296,8 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
             sorted(set(int(np.searchsorted(d, t)) for t in
                        np.linspace(0.0, float(d[-1]), left + 1))
                    | {0, len(path) - 1}), it, wmed)
+        if rec is not None:
+            rec["equal_split"] += 1
     for i in range(len(idx) - 1):
         if n >= left:
             return n
@@ -334,6 +349,8 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
             _, mfin = sc.score(best_c[1])
             sc.commit(mfin)
             plan.layers.append(best_c[1])
+            if rec is not None:
+                rec["seg_curves"] += 1
             n += 1
             continue
         if gain < _MIN_GAIN * 0.5:
@@ -356,6 +373,8 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
         _, mfin = sc.score(q)
         sc.commit(mfin)
         plan.layers.append(q)
+        if rec is not None:
+            rec["seg_bars"] += 1
         n += 1
     return n
 

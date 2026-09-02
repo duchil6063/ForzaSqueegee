@@ -183,6 +183,11 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                    if not isinstance(v, (np.ndarray, set))}
 
     log(msg("도형 배치 중…"))
+    # 단위 인구조사 (`FS_UNIT_CENSUS=1`) — bar/mop **단위**의 계보를 남긴다.
+    # 끄면 아무 일도 안 하고 산출물도 그대로다 (`celfit.census`)
+    from .celfit import census as _census
+    if _census.ON:
+        _census.begin_plate(out.name, cel.size)
     # 여유 배치는 안 한다 — 잘라 맞출 것이 없으므로 상한 그대로다.
     if classic:
         # 폴백 — 선·면을 fit_plan이 함께 배치한다.
@@ -227,6 +232,10 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                 run_file(out, f"struct_{name}.json").write_text(
                     _json.dumps(_sm(plan, line_rec, cat, 900.0 / h)),
                     encoding="utf-8")
+    if _census.ON:
+        import json as _json
+        run_file(out, "unit_census.json").write_text(
+            _json.dumps(_census.plate()), encoding="utf-8")
     _grown_idx = stats.pop("_grown_idx", [])
     if _stg:
         import json as _json
