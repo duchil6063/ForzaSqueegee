@@ -156,7 +156,7 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         stats["_rec"] = line_st.pop("_rec", None)
         stats.update({k: v for k, v in line_st.items() if k not in stats})
         line_layers = lp.layers
-        # 폴백도 같은 손 — 획 색은 발자국 아래 원화 평균 (`recolor_strokes`)
+        # 폴백도 같은 손 — 획 색은 발자국 아래 심 색 (`recolor_strokes`)
         stats["recolored_strokes"] = recolor_strokes(lp, cel, cat, upp, log=log)
         stats["line_layers"] = n_line
         budget = budget - n_line
@@ -385,7 +385,7 @@ def fit_line_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
     n = _fit_lines(plan, cel, cat, upp, budget, forms, log, sids=sids,
                    carve=False, progress=progress, stats=stats,
                    value=value, price=price * _PRICE_INK, maps=maps, pol=pol)
-    # 획 색을 발자국 아래 원화 평균으로 — 강제 굵기의 단색 최적 (`recolor_strokes`)
+    # 획 색을 발자국 아래 원화의 심 색으로 (`recolor_strokes`)
     stats["recolored_strokes"] = recolor_strokes(plan, cel, cat, upp, log=log)
     stats["line_layers"] = n
     stats["strokes"] = len({l.stroke for l in plan.layers if l.stroke >= 0})

@@ -27,6 +27,11 @@ from .geometry import _min_span, _poly_px
 # §26-b 선↔면 보정의 라운드 수와 걸음 (게임 이동 스텝의 배수).
 # 0이면 안 돈다. 두 바퀴면 최대 한 칸 반 — 그 이상은 획이 제 선 지도를 떠난다.
 _ALIGN_ROUNDS = int(os.environ.get("FS_ALIGN_ROUNDS", 2))
+# 획 색을 무엇으로 정하나 (`recolor_strokes`) — `core`(기본): 발자국 중 씨앗
+# 색에 가까운 절반의 평균(심 색) · `mean`: 발자국 아래 원화 평균(최소제곱
+# 최적, 종전 기본) · `seed`: 뼈대 중앙값 그대로(보정 없음). 근거는 함수 문서.
+_INK_COLOR = os.environ.get("FS_INK_COLOR", "core").strip().lower()
+_INK_CORE_Q = float(os.environ.get("FS_INK_CORE_Q", 50.0))
 
 
 def _fit_lines(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
@@ -97,23 +102,28 @@ def _ink_of(cat: Catalog, lay: Layer, upp: float, w: int, h: int):
 
 def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
                     log=print) -> int:
-    """획 그룹 색 = **발자국 아래 원화의 평균색** — 강제 굵기의 단색 최적해.
+    """획 그룹 색 = 발자국 아래 원화 픽셀 중 **심에 가까운 절반의 평균** (`_INK_COLOR`).
 
     획 색은 뼈대 중심선 표본의 중앙값으로 태어난다 (`engine.build_strokes`) —
-    선의 **심** 색이다. 원화 선이 놓인 획보다 가늘면(안티에일리어스 심 1~2px를
-    최소 도형 폭 2~4px로 그린다) 그 단색이 심 색이라, 발자국의 태반을 차지하는
-    옅은 어깨까지 심 색으로 칠해 선이 원화보다 훨씬 무겁게 읽힌다 (실측 X0
-    01·09: 획의 60~65%가 발자국 아래 목표보다 밝기 5+ 어둡고 중앙 −8~−12.
-    09 무릎 윤곽: 놓인 색 (157,130,135) vs 발자국 목표 평균 (227,196,194)).
+    선의 **심** 색이다. 배치가 끝난 뒤 sid 그룹마다 발자국을 다시 떠서 그 아래
+    원화 픽셀로 갈아 끼운다. 한 획 = 단색 규약은 그대로다 — 그룹 하나에 색
+    하나. 실루엣 밖 px는 평균에서 뺀다 (배경은 목표가 아니다).
 
-    주어진 발자국에서 단색 한 장의 최소제곱 최적은 **덮는 px의 목표 평균**이다
-    — 배치가 끝난 뒤 sid 그룹마다 발자국을 다시 떠서 그 평균으로 갈아 끼운다.
-    굵기가 원화와 같은 진한 선은 발자국이 곧 선이라 평균이 심 색 그대로다
-    (안 바뀐다). 한 획 = 단색 규약은 그대로다 — 그룹 하나에 색 하나.
-    실루엣 밖 px는 평균에서 뺀다 (배경은 목표가 아니다).
+    **어느 평균인가.** 발자국 전체의 평균(`mean`)은 단색 한 장의 최소제곱
+    최적이라 픽셀 자(`rmse_src`·`imp_error_seen`)가 가장 좋다. 그런데 원화
+    선은 안티에일리어스 심 1~2px에 옅은 어깨가 붙은 띠이고, 놓인 획은 그 띠
+    폭(중앙 ~2px, `descriptor.placed_widths` 실측)을 **한 색으로** 칠한다 —
+    전체 평균을 쓰면 획이 심보다 밝기 +18~30(중앙, p90 +50~90) 밝아져 같은
+    폭에서 "굵고 옅은 띠"로 읽히고, 셀 재해석(cel.png)의 선보다 옅어 면과의
+    구분이 죽는다 (2026-09-02 사용자 관찰, 표준 9장). 사람 눈은 선을 어두운
+    심으로 읽으므로 발자국 픽셀 중 **씨앗 색(심)에 가까운 절반**의 평균을
+    쓴다(`core`) — 밝기 극단이 아니라 씨앗과의 거리로 고르므로 밝은 선(하이
+    라이트)도 같은 규칙에 든다. 실측(01·03·08·09): 심 대비 밝기 차 중앙
+    +20 → +6, 보이는 오차는 +12% 나빠지고 도형은 +2~5%(수리 `fix`가 는다).
+    `seed`(뼈대 중앙값 그대로)는 그보다 조금 더 어둡고(+4) 수리가 더 는다.
     """
     src = cel.src_rgb
-    if src is None:
+    if src is None or _INK_COLOR == "seed":
         return 0
     w, h = cel.size
     sil = cel.labels >= 0
@@ -123,8 +133,7 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
             groups.setdefault(lay.stroke, []).append(lay)
     n = 0
     for lays in groups.values():
-        acc = np.zeros(3, np.float64)
-        cnt = 0
+        px: list[np.ndarray] = []
         for lay in lays:
             got = _ink_of(cat, lay, upp, w, h)
             if got is None:
@@ -133,12 +142,22 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
             mb = m & sil[y0:y0 + m.shape[0], x0:x0 + m.shape[1]]
             if not mb.any():
                 continue
-            acc += src[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][mb] \
-                .reshape(-1, 3).sum(axis=0)
-            cnt += int(mb.sum())
-        if not cnt:
+            px.append(src[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][mb]
+                      .reshape(-1, 3))
+        if not px:
             continue
-        c = tuple(int(round(v / cnt)) for v in acc)
+        col = np.concatenate(px, axis=0).astype(np.float64)
+        if _INK_COLOR == "core" and len(col) >= 4:
+            # **심 색** — 발자국 픽셀 중 태어난 색(뼈대 중앙값)에 가까운 절반의
+            # 평균. 발자국 평균은 최소제곱 최적이지만 사람 눈은 선의 어두운
+            # 심으로 선을 읽는다 — 평균색 한 장은 같은 폭에서 "굵고 옅은 띠"로
+            # 보인다 (2026-09-02 사용자 관찰). 어두운 선·밝은 선 어느 쪽이든
+            # 성립하도록 밝기 극단이 아니라 씨앗 색과의 거리로 고른다
+            seed = np.asarray(lays[0].color, np.float64)
+            dist = np.linalg.norm(col - seed[None], axis=1)
+            keep = dist <= np.percentile(dist, _INK_CORE_Q)
+            col = col[keep] if keep.any() else col
+        c = tuple(int(round(v)) for v in col.mean(axis=0))
         if max(abs(a - b) for a, b in zip(c, lays[0].color)) <= 2:
             continue                       # 이미 그 색이다 — 손 안 댄다
         for lay in lays:
