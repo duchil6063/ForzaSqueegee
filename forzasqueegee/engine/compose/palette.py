@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import colorsys
+import math
 
-from ..model import rgb_to_hsb
+from ..model import hsb_to_rgb, rgb_to_hsb
 from .boxes import _gap
 from .look import Look
 
@@ -434,3 +435,54 @@ def theme_color(lk: Look) -> tuple[int, int, int] | None:
         if got > area:
             best, area = c, got
     return best if area >= THEME_AREA_MIN else None
+
+
+# ── 재질 도색 역할 (goal §26·§27) ───────────────────────────────────
+#
+# 사람 판 28벌의 `C_livery` 기술자 표를 그대로 읽어 보면 (`work/lab/whole`),
+# **차 색 27칸 위에 사람이 더 칠하는 것은 딱 둘**이다:
+#
+#   body(27칸 한 벌)  28/28   ← `PaintState.set_car_color`가 이미 하는 일
+#   캘리퍼            19/28   그중 11이 차체와 ΔE>25 (대비색)
+#   유리 틴트         14/28
+#   휠(림)             0/28   ← 아무도 안 칠한다
+#   트림 따로          0/28
+#
+# 그래서 여기서 하는 일도 둘뿐이다. 재질 그래프를 통째로 새로 짜지 않는다 —
+# 근거가 있는 자리만 칠한다.
+MATERIAL_CALIPER_DE = 25.0        # 차체와 이만큼 벌어져야 "대비 캘리퍼"다
+# 유리 틴트의 명도 — 위에 올린 그림과 광도차를 두려면 어두워야 한다.
+MATERIAL_TINT_B = 0.14
+
+
+def _lab3(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    r, g, b = (v / 255.0 for v in rgb)
+    def _f(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = _f(r), _f(g), _f(b)
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    def _t(v):
+        return v ** (1 / 3) if v > 216 / 24389 else (24389 / 27 * v + 16) / 116
+    fx, fy, fz = _t(x), _t(y), _t(z)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def material_roles(lk: Look, base_rgb: tuple[int, int, int]
+                   ) -> dict[str, tuple[int, int, int]]:
+    """차 색 위에 더 칠할 **재질 역할** — {역할: RGB}. 근거는 위 표다.
+
+    캘리퍼는 도안의 액센트색이고, 차체와 안 벌어지면 무채 대비색으로 간다
+    (사람 판의 대비 캘리퍼가 하는 일과 같다). 유리 틴트는 액센트의 어두운
+    자매다 — 무채로 두면 그냥 짙은 유리라 구성에 안 낀다.
+    """
+    acc = accent_color(lk, base_rgb)
+    lb = _lab3(base_rgb)
+    la = _lab3(acc)
+    de = math.dist(lb, la)
+    caliper = acc if de >= MATERIAL_CALIPER_DE else contrast_ink(base_rgb)
+    h, s, _b = rgb_to_hsb(*acc)
+    tint = hsb_to_rgb(h, min(1.0, s * 0.8), MATERIAL_TINT_B)
+    return {"caliper": tuple(int(v) for v in caliper),
+            "glass": tuple(int(v) for v in tint)}

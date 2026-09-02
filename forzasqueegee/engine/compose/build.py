@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from .boxes import (
     CANVAS_UNITS, _clamp_box, _face_phase, _gap, _group_unit, _overlap, _rel,
     _union)
 from .look import Look, look, person_ink, rot_ink_box
-from .palette import accent_color, accent_third, accent_tint, base_paint, contrast_ink
+from .palette import (accent_color, accent_third, accent_tint, base_paint,
+                      contrast_ink, material_roles)
 from .vocabulary import MOTIF_FAMILIES, MOTIF_SETS, edge_shapes, motif_shapes
 from .scatter import DECO_FRONT_N, DECO_FRONT_SIZE
 from .bands import ROCKER_BASE_MIN
@@ -30,6 +32,7 @@ from .folds import _all_folds
 from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
 from .intent import read_intent
+from . import whole as wholecar
 from .design import Design, compose_design
 from .families import FAMILIES
 from .textspec import TextSpec
@@ -60,6 +63,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           preset: dict[str, dict[str, float]] | None = None,
           cat: Catalog | None = None,
           manual: list[ManualPlace] | None = None, deco: bool = True,
+          whole: bool | None = None,
           motif: str | None = None, family: str | None = None,
           text: "TextSpec | dict | None" = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
@@ -103,6 +107,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     지붕 블랙아웃·모티프가 전부 빠지고, 그것만 있던 면은 구성에서 사라진다.
     베이스 도색은 별개 레버다 (`paint`): 도안만 올리더라도 차 색은 정해야 한다.
 
+    ## 차 전체 구성 (`whole`)
+
+    끄면 **옛 길**이다 — 옆면·윗면만 도안을 받고 나머지 면은 모티프 몇 장이
+    전부다. 켜면 도안 하나에서 결정적으로 변주(얼굴 크롭·상반신·색 줄인 전신·
+    2색 엠블럼)를 뽑아 남은 면에 역할을 주고 한계효용으로 장수를 나눈다
+    (`compose.whole`). 새 그림을 지어내지 않는다 — 있는 레이어를 다시 자르고
+    색을 줄이는 것뿐이다.
+
     ## 모티프 계열 (`motif`)
 
     안 주면 도안의 테마색이 고른다 (`motif_family`). 주면 그 계열로 못 박는다 —
@@ -126,6 +138,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     (`textbudget`). 옆면 글자는 면마다 제 그룹(`text-<면>.json`)이다 — 꾸밈 그룹은
     좌우를 미러로 나눠 쓰지만 글자는 뒤집히면 안 된다.
     """
+    if whole is None:                             # 스윕용 스위치 (기본 켬)
+        whole = os.environ.get("FS_WHOLE", "1").strip() != "0"
     text_spec = (text if isinstance(text, TextSpec) else TextSpec.from_dict(text)) \
         if text is not None else TextSpec()
     mirror_side = "side_left" if flip else "side_right"
@@ -263,6 +277,50 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                         x=hx, y=hy, scale=hs, rot=hrot))
                 notes.append(msg("후드에 인물을 기울여 앉힌다 ({why})", why=hwhy))
 
+    # ---- 차 전체 구성 — 남은 면에 역할과 예산을 준다 (`compose.whole`) ----
+    # 옛 길에서 여기 오는 면은 옆면 둘(+윗면)뿐이었고 나머지는 모티프 몇 장이
+    # 전부였다. 사람 판 28벌을 같은 자로 재면 그 자리에 리어 335 · 도어 유리
+    # 740 · 뒷유리 589장이 있다 — **맡은 일이 없어서** 비어 있던 것이다.
+    # 여기서 도안 하나에서 변주를 뽑아 역할을 주고, 예산은 한계효용이 나눈다.
+    main_intent = None
+    wcp = None
+    if whole and deco and not manual:
+        main_intent = read_intent(plan, lk, cat)
+        wcp = wholecar.plan_car(
+            plan, lk, main_intent, cat, maps,
+            taken={mp.surface for mp in hand},
+            caps={n: (m.cap or 1000) for n, m in maps.items()})
+        art_paths: dict[tuple[str, int], Path] = {}
+        for name, job in sorted(wcp.jobs.items()):
+            var = wcp.variants[job.kind]
+            key = (job.kind, job.budget)
+            vpath = art_paths.get(key)
+            if vpath is None:
+                vpath = out_dir / f"art-{job.kind}-{job.budget}.json"
+                var.budgeted(job.budget).save(vpath)
+                art_paths[key] = vpath
+            # 배치는 **자른 상자**를 면에 맞춘다 — 상자에 걸친 큰 색면이
+            # 캔버스를 원본만큼 넓히므로 잉크 범위로 맞추면 얼굴이 작아진다.
+            vlk = replace(look(LayerPlan.load(vpath), cat),
+                          box=var.box, hull=None)
+            # 좌우 짝은 옆면과 **같은 쪽**을 뒤집는다 — 그래야 그룹 한 벌로 둘이 선다
+            mir = bool(mirror and name.endswith("_right")
+                       and mirror_side == "side_right")
+            mp = auto_place(name, vpath, vlk, maps, rigs, group_unit=group_unit,
+                            mirror=mir)
+            if mp is None:
+                notes.append(msg("{surface}: {kind} 변주를 못 앉힌다 (면 지도가 없다)",
+                                 surface=name, kind=job.kind))
+                continue
+            hand.append(mp)
+            notes.append(msg("{surface}: {kind} {n:,}장 — {why}",
+                             surface=name, kind=job.kind, n=job.budget,
+                             why=job.why))
+        if wcp.jobs:
+            log(msg("차 전체 구성: {items}",
+                    items=" · ".join(f"{n}={j.kind}({j.budget:,})"
+                                     for n, j in sorted(wcp.jobs.items()))))
+
     # ---- 손 배치 읽기 — 면별 (자동 경로가 만든 것도 여기서부터는 같다) ----
     hand_ix = {id(mp): i for i, mp in enumerate(hand)}
     by_surface: dict[str, list[ManualPlace]] = {}
@@ -346,7 +404,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       key=lambda m: (lambda b: (b[2] - b[0]) * (b[3] - b[1]))(
                           manual_box(hand_look[m.key()][1], m, group_unit)))
         root_plan, root_lk = hand_look[root_mp.key()]
-        intent = read_intent(root_plan, root_lk, cat)
+        intent = (main_intent if (main_intent is not None
+                                  and root_plan is plan)
+                  else read_intent(root_plan, root_lk, cat))
         L, t = place_xf(root_mp, group_unit)
         side_cap = min([m.cap or 3000 for n in ROLE_MAIN
                         if (m := maps.get(n)) is not None] or [3000])
@@ -935,8 +995,19 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 돌릴 때 이름 매칭이 다른 차를 물어 미리보기와 검증이 딴 면 지도로 돈다.
     if media:
         cfg["media"] = media
+    # 차 전체 구성이 무엇을 어디에 맡겼나 — 계측 도구가 읽는 자리다
+    # (`work/lab/whole/ours.py`). 없는 판에는 이 칸이 아예 없다.
+    if wcp is not None and wcp.jobs:
+        cfg["whole"] = {n: {"role": j.kind, "layers": j.budget, "why": j.why}
+                        for n, j in sorted(wcp.jobs.items())}
     if paint:
         cfg["paint"] = {"rgb": list(base_rgb), "hsb": list(base_hsb)}
+        # 차 색 27칸 위에 사람이 더 칠하는 둘 — 캘리퍼·유리 틴트
+        # (`palette.material_roles`의 실측 표). 파일 노선이 이걸 그대로 쓴다.
+        # `FS_MATERIALS=0`이면 안 적는다 (스윕용 — 끄면 옛 구성 파일 그대로다).
+        if os.environ.get("FS_MATERIALS", "1").strip() != "0":
+            cfg["paint"]["materials"] = {k: list(v) for k, v in
+                                         material_roles(lk, base_rgb).items()}
     cfg_path = run_file(out_dir, "itasha.json")
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
     written.append(cfg_path)

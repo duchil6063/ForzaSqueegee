@@ -128,6 +128,23 @@ class PaintState:
             m.primary = PaintColor(True, (b, g, r, 255))
             m.selector = 0xFFFFFFFF
 
+    # 역할 → 재질 해시 무리. 사람 판 28벌에서 차 색 27칸 **위에** 실제로 칠해져
+    # 있는 것이 이 둘뿐이다 (캘리퍼 19/28 · 유리 틴트 14/28 · 휠 0/28).
+    ROLE_GROUPS = {
+        "caliper": (materials.BRAKE_CALIPER,),
+        "glass": (materials.WINDOW_GLASS,),
+        "rim": (materials.RIMS, materials.RIMS2, materials.RIMS3,
+                materials.RIMS_INNER, materials.RIMS_LIP),
+    }
+
+    def set_material(self, role: str, rgb: tuple[int, int, int]) -> None:
+        """역할 하나를 칠한다 — 모르는 역할이면 아무 일도 안 한다."""
+        r, g, b = (int(v) & 255 for v in rgb)
+        for h in self.ROLE_GROUPS.get(role, ()):
+            m = self.materials.setdefault(h, PaintMaterial())
+            m.primary = PaintColor(True, (b, g, r, 255))
+            m.selector = 0xFFFFFFFF
+
     def car_color(self) -> tuple[int, int, int] | None:
         for h in (materials.BODY_PAINT, *materials.DEFAULT_CAR_PAINT_GROUPS):
             m = self.materials.get(h)

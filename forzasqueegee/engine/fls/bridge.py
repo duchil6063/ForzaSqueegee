@@ -253,6 +253,7 @@ def itasha_chunks(cfg_path: str | Path,
     meta = {"car": raw.get("car"), "media": raw.get("media"),
             "paint_rgb": (tuple(int(v) for v in raw["paint"]["rgb"])
                           if (raw.get("paint") or {}).get("rgb") else None),
+            "paint_materials": (raw.get("paint") or {}).get("materials") or {},
             "car_id": int(raw.get("fls_car_id") or 0) or _car_id(raw)}
     return out, meta
 
@@ -295,6 +296,8 @@ def _livery_paint(meta: dict) -> livery.PaintState | None:
         return None
     st = livery.PaintState()
     st.set_car_color(tuple(rgb))
+    for role, col in (meta.get("paint_materials") or {}).items():
+        st.set_material(role, tuple(int(v) for v in col))
     return st
 
 

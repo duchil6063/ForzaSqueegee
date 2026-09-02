@@ -395,7 +395,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    mirror: bool = True, paint: bool = True,
                    base_rgb: "tuple[int, int, int] | None" = None,
                    flip: bool = False, manual: "list | None" = None,
-                   deco: bool = True,
+                   deco: bool = True, whole: bool | None = None,
                    motif: str | None = None, family: str | None = None,
                    text: "dict | None" = None,
                    preview: bool = True, log=print) -> Config:
@@ -432,7 +432,8 @@ def compose_config(main_plan: Path, out: Path, *,
                         extra_plans=list(extra_plans or []),
                         mirror=mirror, paint=paint, base_rgb=base_rgb,
                         flip=flip, manual=manual,
-                        deco=deco, motif=motif, family=family, text=text,
+                        deco=deco, whole=whole, motif=motif,
+                        family=family, text=text,
                         log=log)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
