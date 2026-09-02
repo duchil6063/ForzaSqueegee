@@ -103,6 +103,11 @@ _STROKE_SLIM = float(os.environ.get("FS_STROKE_SLIM", 0.065))
 _STROKE_WMAX = float(os.environ.get("FS_STROKE_WMAX", 1.15))
 # 폭의 **바닥** — 기본은 천장의 거울이다 (`1 / _STROKE_WMAX`). 스윕용 스위치.
 _STROKE_WMIN = float(os.environ.get("FS_STROKE_WMIN", 1.0 / _STROKE_WMAX))
+# 폭 바닥을 **전단 없는 후보에도** 거나 (goal §20의 스윕 스위치, 기본 꺼짐).
+# 켜면 원화 띠보다 이만큼 넘게 가는 도형은 후보에서 빠진다 — 실오라기
+# 어휘(`U_45` 최소 폭 0.17px)가 띠 굵기를 대신 쓰는 자리를 막는 실험이다.
+# 끄면 종전 그대로다 (바이트 동일).
+_STROKE_WMIN_ALL = os.environ.get("FS_STROKE_WMIN_ALL", "").strip() not in ("", "0")
 # 전단 씨앗이 **무엇을 맞추나** — `ribbon`(중심선 + 폭) 또는 `center`(중심선만,
 # 옛 경로). A/B용 스위치다 (`affine.fit_ribbon` 문단이 왜 띠인지 적는다).
 _SKEW_FIT = os.environ.get("FS_SKEW_FIT", "ribbon").strip().lower()
@@ -900,7 +905,8 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
             # "원화 띠 폭을 게임 격자가 반올림하는 만큼"이 양쪽으로 같은 여유다.
             # 전단 후보에만 건다: 전단 없는 자리는 어휘가 이미 바닥이라 이 자를
             # 걸면 기존 판정이 바뀐다 (끈 판이 기존과 바이트가 같아야 한다).
-            if width_fit and kk and wu / sc.upp < _STROKE_WMIN * wtgt:
+            if (width_fit and (kk or _STROKE_WMIN_ALL)
+                    and wu / sc.upp < _STROKE_WMIN * wtgt):
                 n_shape += 1
                 continue
             # **끝 뭉툭함** — 뾰족한 끝은 획이 아니라 잎사귀다 (`_STROKE_END`)

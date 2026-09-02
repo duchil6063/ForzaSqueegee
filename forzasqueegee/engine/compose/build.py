@@ -65,7 +65,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           manual: list[ManualPlace] | None = None, deco: bool = True,
           whole: bool | None = None,
           motif: str | None = None, family: str | None = None,
-          text: "TextSpec | dict | None" = None, log=print) -> Recipe:
+          text: "TextSpec | dict | None" = None,
+          mass_hint: dict | None = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
     나오는 것은 `auto.itasha`가 그대로 먹는 구성이다. 자동이든 손 배치든 **같은
@@ -286,16 +287,50 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     wcp = None
     if whole and deco and not manual:
         main_intent = read_intent(plan, lk, cat)
+        _tm_key = str(Path(main_plan).resolve())
+        _tm_ink: dict[str, float] = {}
+
+        def _taken_mass(mp: ManualPlace) -> float:
+            """이미 앉은 배치 하나의 예상 시각 무게 (`whole.ink_weight`)."""
+            k = mp.key()
+            w = _tm_ink.get(k)
+            if w is None:
+                hp = plan if k == _tm_key else LayerPlan.load(mp.plan)
+                w = float(wholecar.ink_weight(hp.layers, cat).sum())
+                _tm_ink[k] = w
+            g = float(mp.scale) * group_unit
+            return g * g * w
+
         wcp = wholecar.plan_car(
             plan, lk, main_intent, cat, maps,
             taken={mp.surface for mp in hand},
             caps={n: (m.cap or 1000) for n, m in maps.items()},
-            # 주역이 이미 앉은 면 — 도안을 통째로 받으므로 품질이 1이고
-            # 예상 무게가 곧 그 면의 넓이다 (`whole.assign_tiers`)
-            taken_mass={mp.surface: wholecar.surface_area(maps[mp.surface])
+            # 주역이 이미 앉은 면의 **예상 시각 무게** — 배치가 이미 정해져
+            # 있으므로 어림이 아니라 실제 배율로 잰다: (배율×그룹유닛)² ×
+            # Σ(칠한 넓이 × 대비). 평가기의 `ruler.visual_weight`와 같은 식이다
+            # (`whole.ink_weight`). 옛 길은 여기 **면 넓이**를 넣었는데, 넓지만
+            # 그림이 다 안 채우는 윗면이 옆면과 같은 주역으로 읽혔다 (실측
+            # 예상 0.368 ↔ 실측 0.231).
+            taken_mass={mp.surface: _taken_mass(mp)
                         for mp in hand
                         if maps.get(mp.surface) is not None
-                        and not maps[mp.surface].uncertain})
+                        and not maps[mp.surface].uncertain},
+            # **위계를 아는 배분** (§4) — 앞 판에서 잰 "이 배분이 안 건드리는
+            # 것"의 무게에 주역 도안을 더한 것. 없으면 옛 배분 그대로다
+            # (바이트 동일).
+            base_mass=(None if mass_hint is None else
+                       {n: float(v) for n, v in mass_hint.items()
+                        if maps.get(n) is not None
+                        and not maps[n].uncertain}
+                       | {mp.surface: float(mass_hint.get(mp.surface, 0.0))
+                          + _taken_mass(mp)
+                          for mp in hand
+                          if maps.get(mp.surface) is not None
+                          and not maps[mp.surface].uncertain}),
+            base_counts=(None if mass_hint is None else
+                         {mp.surface: len((plan if mp.key() == _tm_key
+                                           else LayerPlan.load(mp.plan)).layers)
+                          for mp in hand}))
         art_paths: dict[tuple[str, int], Path] = {}
         for name, job in sorted(wcp.jobs.items()):
             var = wcp.variants[job.kind]
@@ -313,7 +348,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             mir = bool(mirror and name.endswith("_right")
                        and mirror_side == "side_right")
             mp = auto_place(name, vpath, vlk, maps, rigs, group_unit=group_unit,
-                            mirror=mir)
+                            mirror=mir, fill=job.fill)
             if mp is None:
                 notes.append(msg("{surface}: {kind} 변주를 못 앉힌다 (면 지도가 없다)",
                                  surface=name, kind=job.kind))
@@ -1011,6 +1046,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # (`work/lab/whole/ours.py`). 없는 판에는 이 칸이 아예 없다.
     if wcp is not None and wcp.jobs:
         cfg["whole"] = {n: {"role": j.kind, "layers": j.budget, "why": j.why}
+                        | ({} if j.fill >= 1.0 else {"fill": rnd(j.fill, 3)})
                         for n, j in sorted(wcp.jobs.items())}
     if paint:
         cfg["paint"] = {"rgb": list(base_rgb), "hsb": list(base_hsb)}

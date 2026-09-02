@@ -78,6 +78,11 @@ _TOPO_W = float(os.environ.get("FS_RAG_TOPO", 2.0))
 # §19 **비탈 할인** — 그라디언트를 자른 경계의 색 재현 손해를 이만큼 깎는다.
 # 0이면 안 깎는다. 근거는 `_ramp` 문서.
 _RAMP = float(os.environ.get("FS_RAG_RAMP", 0.75))
+# **복잡도 값 배수** (goal §15의 λ_regions) — 병합에서만 λ에 곱한다. 배치·가격이
+# 쓰는 λ는 안 건드린다: 이 손잡이가 묻는 것은 "도형 한 장을 아끼려고 색 오차를
+# 얼마나 살 것인가"이고, 그 답이 곧 분해 단계의 복잡도-충실도 파레토다.
+# 1.0이면 종전 그대로다 (바이트 동일).
+_LAM_MUL = float(os.environ.get("FS_RAG_LAM_MUL", 1.0))
 
 
 def _de_seen(de: float | np.ndarray):
@@ -411,6 +416,7 @@ class RegionGraph:
         비용이 낮은 것부터 산다 (무늬 보호 조각은 뒤로).
         """
         live = int(self.alive.sum())
+        lam = float(lam) * _LAM_MUL
         live, gained = self._run(lam, live, 1, protect=False, sign_only=True)
         forced = 0
         if live > max_regions:

@@ -31,6 +31,7 @@ def _side_place(rig: "SideRig", lk: Look, group_unit: float, mirror: bool,
 def auto_place(name: str, plan_path: Path, lk: Look,
                maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"], *,
                group_unit: float = DEFAULT_GROUP_UNIT, mirror: bool = False,
+               fill: float = 1.0,
                notes: list[str] | None = None) -> ManualPlace | None:
     """이 면에 이 도안을 **자동 경로가 앉힐 자리** — 편집기의 첫 자리다.
 
@@ -42,6 +43,11 @@ def auto_place(name: str, plan_path: Path, lk: Look,
     인물은 **벨트라인을 안 넘는다** (`person_budget`) — 넘긴 몫은 그 자리에서
     잘린다. 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 가르고 위쪽 반을
     유리 면에 따로 올린다.
+
+    `fill`은 **투영 몫**이다 (1.0 = 종전) — 그림을 면의 그만큼 크기로 줄여
+    앉힌다. 장수를 안 깎고 시각 무게만 낮추는 자리라 조연·받침 면이 쓴다
+    (`whole.SurfaceJob.fill`). 옆면 뼈대 길에는 안 먹인다 — 그 자리의 배율은
+    로커·벨트라인이 정하는 것이라 임의로 줄이면 발이 뜬다.
     """
     rig = rigs.get(name)
     if rig is not None:
@@ -54,13 +60,13 @@ def auto_place(name: str, plan_path: Path, lk: Look,
         if smap is None:
             return None
         pl = fit_on(smap, lk, anchor="bottom" if lk.kind == "tall" else "center",
-                    fill=BODY_FILL, bias_x=0.5, group_unit=group_unit,
+                    fill=BODY_FILL * fill, bias_x=0.5, group_unit=group_unit,
                     mirror=mirror)
         if pl is None:                            # 마스크에 이 비율이 안 들어간다
             p0, q0, p1, q1 = smap.paint
             ib = rot_ink_box(lk, 0.0, mirror)
             s = min((p1 - p0) / max(1e-6, ib[2] - ib[0]),
-                    (q1 - q0) / max(1e-6, ib[3] - ib[1])) * 0.8 / max(1e-6, group_unit)
+                    (q1 - q0) / max(1e-6, ib[3] - ib[1])) * 0.8 * fill / max(1e-6, group_unit)
             g = s * group_unit
             pl = Place(surface=name, plan=Path(), scale=round(s, 3), rot=0.0,
                        x=round((p0 + p1) / 2 - g * (ib[0] + ib[2]) / 2, 1),

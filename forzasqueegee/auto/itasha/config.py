@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -423,19 +424,46 @@ def compose_config(main_plan: Path, out: Path, *,
     from ...game import body as gbody
 
     car = car or gbody.tab_table().get("car")
+    # **위계를 아는 배분** (goal §4) — 두 판으로 돈다: 첫 판을 지어 면마다
+    # "도안 말고 있는 것"의 시각 무게를 재고 (`compose.whole.measure_mass`),
+    # 그 실측을 넣어 다시 짓는다. 한 판으로는 못 하는 까닭은 실측이다 —
+    # 배분 시점에는 꾸밈 그룹이 아직 없는데 옆면 무게의 63~84%가 그것이라,
+    # 넓이·잉크 어느 대리값으로도 몫이 안 맞았다 (L1 0.26~0.58).
+    # `FS_WC_HIER=0`이면 한 판으로 물러난다 (바이트 동일).
+    two_pass = (os.environ.get("FS_WC_HIER", "1").strip() != "0"
+                and deco and whole is not False and not manual)
     # `out`이 폴더인지 파일인지는 **있는 그대로** 본다 — 확장자로 짐작하면
     # 스튜디오 작업 폴더(`<이름>.fsitasha/`)가 파일로 오인돼 구성이 부모
     # 폴더로 새고, 폴더 위에 파일을 쓰려다 'Permission denied'로 죽는다.
     as_dir = out.is_dir() or not out.suffix
-    rec = compose.build(main_plan, out if as_dir else out.parent,
-                        car=car, media=media,
-                        extra_plans=list(extra_plans or []),
-                        mirror=mirror, paint=paint, base_rgb=base_rgb,
-                        flip=flip, manual=manual,
-                        deco=deco, whole=whole, motif=motif,
-                        family=family, text=text,
-                        log=log)
+
+    def _build(hint):
+        return compose.build(main_plan, out if as_dir else out.parent,
+                             car=car, media=media,
+                             extra_plans=list(extra_plans or []),
+                             mirror=mirror, paint=paint, base_rgb=base_rgb,
+                             flip=flip, manual=manual,
+                             deco=deco, whole=whole, motif=motif,
+                             family=family, text=text, mass_hint=hint,
+                             log=(lambda *_a, **_k: None) if hint is None
+                             and two_pass else log)
+
+    rec = _build(None)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
+    if two_pass and rec.config.get("whole"):
+        from ...engine.catalog import Catalog, default_catalog_path
+        from ...engine.compose import whole as _whole
+
+        try:
+            hint, _counts = _whole.measure_mass(
+                cfg_path, Catalog(default_catalog_path()))
+        except Exception as e:                    # noqa: BLE001 — 어림은 보조다
+            log(msg("위계 재기 실패 — 한 판으로 간다: {kind}: {err}",
+                    kind=type(e).__name__, err=e))
+        else:
+            rec = _build(hint)
+            cfg_path = next(p for p in rec.written
+                            if p.name.endswith("itasha.json"))
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).
     if as_dir:

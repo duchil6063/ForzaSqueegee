@@ -16,6 +16,30 @@
    보고 한계효용 순으로 준다. 사람 평균을 목표로 삼지 않는다: 자산의 **품질
    곡선이 포화**하면 남은 장수가 저절로 다른 면으로 간다.
 
+## 차 한 대를 보는 배분 (`allocate_hier`)
+
+3의 한계효용에는 **차 한 대가 없다.** 면마다 제 곡선이 포화할 때까지 받으므로,
+빈 면을 다 채우고 나면 이번엔 무게가 고르게 퍼진다 — 사람 리버리에 있는
+주역·조연·받침의 위계가 사라진다 (실측 33판: 나머지 무게 0.145 · 사람 p95
+0.092 · 위계 점수 0.198 ↔ 사람 0.607).
+
+고친 자리는 둘이다.
+
+**① 무게 자를 평가기와 맞춘다.** 옛 예상 무게는 `면 넓이 × 품질`이었는데
+품질이 포화하는 자라 사실상 **면 넓이 그 자체**였다. 실측으로 대 보니 몫이
+어긋났다 (예상 ↔ 실측: 옆면 0.323↔0.416 · 윗면 0.368↔0.231). 지금은
+평가기와 같은 식(`ink_weight` = 칠한 넓이 × 대비)을 배치 배율로 어림한다
+(`expected_mass`) — 도안만 올라간 면에서 실측/예상이 1.00~1.19다.
+
+**② 면 위의 나머지는 앞 판에서 잰다** (`measure_mass`). 옆면 무게의 63~84%는
+꾸밈 그룹·면 도형이고 그것은 배분 시점에 아직 없다 — 넓이로도 잉크로도 몫이
+안 맞았다 (접은 단위 몫 L1 0.26~0.58). 그래서 `auto.itasha.compose_config`가
+**두 판**으로 돈다: 첫 판을 지어 재고, 그 실측을 넣어 다시 짓는다.
+
+배수는 **범위**다 (`wholeeval.HUMAN_PRIOR`). 사람 p10~p90 안이면 벌점이 0이라
+배수가 정확히 1 — 옛 배분과 같은 답이 나온다. 사람 p50으로 끌어당기는
+controller가 아니다.
+
 결정성: 난수 없음. 정렬은 전부 안정 정렬이고 동점은 이름으로 가른다.
 """
 
@@ -76,6 +100,11 @@ class Variant:
     # 면이 자른다 — 사람 판의 유리 인물도 가장자리에서 그렇게 잘려 있다.
     box: tuple[float, float, float, float] = (-1.0, -1.0, 1.0, 1.0)
     value: np.ndarray = field(repr=False, default_factory=lambda: np.zeros(0))
+    # **시각 무게** 레이어별 — 평가기의 `ruler.visual_weight`와 같은 정의다
+    # (칠한 넓이 × 대비). `value`(무엇을 먼저 버리나)와 다른 물음이다.
+    weight: np.ndarray = field(repr=False, default_factory=lambda: np.zeros(0))
+    # 잉크 상자 (배율 1의 캔버스 유닛) — 배치가 면에 맞출 크기다
+    ink: tuple[float, float, float, float] = (-1.0, -1.0, 1.0, 1.0)
 
     def budgeted(self, n: int) -> LayerPlan:
         """장수 `n`으로 줄인 사본 — **값이 큰 것부터** 남기고 순서는 지킨다."""
@@ -100,6 +129,38 @@ class Variant:
         tot = float(s.sum())
         return float(s[:n].sum() / tot) if tot > 1e-12 else 0.0
 
+    def _keep(self, n: int) -> np.ndarray:
+        """예산 `n`이 남기는 레이어 색인 — `budgeted`와 **같은 규칙**이다."""
+        if n >= len(self.value):
+            return np.arange(len(self.value))
+        return np.argsort(-self.value, kind="stable")[:max(0, int(n))]
+
+    def _cum(self) -> np.ndarray:
+        """예산 순서(값 큰 것부터)로 쌓은 무게 누계 — `mass`가 매번 정렬하지
+        않게 한 번만 짓는다 (배분이 이 자를 수천 번 묻는다)."""
+        c = self.__dict__.get("_cumw")
+        if c is None or len(c) != len(self.weight) + 1:
+            if not len(self.weight):
+                c = np.zeros(1)
+            else:
+                order = np.argsort(-self.value, kind="stable")
+                c = np.concatenate(([0.0], np.cumsum(self.weight[order])))
+            self.__dict__["_cumw"] = c
+        return c
+
+    def mass(self, n: int) -> float:
+        """예산 `n`이 남긴 레이어의 **시각 무게 합** (배율 1의 캔버스 유닛²).
+
+        `quality`와 갈라 두는 까닭은 실측이다: 품질은 예산이 조금만 붙어도
+        1에 붙어 버려 (리어 poster 416장에서 0.70, 유리 portrait 696장에서
+        0.97) 무게 대리로 쓰면 **면 넓이 그 자체**가 된다. 무게는 안 그렇다 —
+        얇은 획 700장과 넓은 색면 400장의 무게는 두 배 넘게 갈린다.
+        """
+        if not len(self.weight):
+            return 0.0
+        c = self._cum()
+        return float(c[max(0, min(int(n), len(c) - 1))])
+
 
 @dataclass
 class SurfaceJob:
@@ -115,6 +176,10 @@ class SurfaceJob:
     # 면 이름이 아니라 **예상 무게**가 정한다 (`assign_tiers`).
     tier: str = "MICRO"
     mass: float = 0.0                             # 예상 무게 몫 (거울 짝 접은 값)
+    # **투영 몫** — 이 변주를 면의 몇 할 크기로 앉히나 (`place.BODY_FILL` 기준).
+    # 장수를 깎지 않고 시각 무게만 낮추는 손잡이다 (§7): 무게는 이 값의
+    # 제곱에 붙는다 (넓이 자라서). 1.0이면 종전과 같다.
+    fill: float = 1.0
 
 
 # **이음새를 건너 이어진다** (§17) — 두 면의 그림이 한 그림이라는 관계.
@@ -354,6 +419,86 @@ def _value(plan: LayerPlan, cat: Catalog, boxes: np.ndarray,
     return v
 
 
+# ── 시각 무게 (예상) ────────────────────────────────────────────────
+#
+# 평가기가 판을 다 세운 뒤 재는 자는 `ruler.visual_weight` = Σ(칠한 넓이 × 대비)
+# 다. 발전기가 배분할 때 쓰던 자는 `면 넓이 × 품질`이었는데, 실측으로 그 둘이
+# 갈렸다 (33판 중앙값 · `work/lab/whole/predaudit.py`):
+#
+#   단위       예상 몫   실측 몫   비
+#   side        0.323    0.416   1.29
+#   top         0.368    0.231   0.63
+#   front       0.014    0.031   2.20
+#
+# 까닭은 `quality`가 포화하는 자다 (예산이 붙으면 1에 붙는다). 그래서 예상
+# 무게가 **면 넓이 그 자체**로 무너지고, 윗면처럼 넓지만 그림이 다 안 채우는
+# 면이 옆면과 같은 주역으로 읽혔다 (§6의 top1/top2 문제).
+#
+# 여기서는 **평가기와 같은 정의**를 예상 쪽에도 놓는다: 배치 배율을 먼저
+# 어림하고(`fit_scale`) 그 배율에서 칠해질 넓이 × 대비를 더한다.
+
+
+def ink_weight(layers, cat: Catalog) -> np.ndarray:
+    """레이어마다 **칠한 넓이 × 대비** (배율 1의 캔버스 유닛²).
+
+    `work/lab/whole/ruler.visual_weight`와 **같은 식**이다 — 자를 두 벌 두면
+    발전기와 평가기가 서로 다른 그림을 본다. 대비는 넓이가중 평균색과의 Lab
+    거리이고, 바닥 0.05는 단색 면이 무게 0이 되는 것을 막는다.
+    """
+    n = len(layers)
+    if not n:
+        return np.zeros(0)
+    ar = np.empty(n, np.float64)
+    for i, l in enumerate(layers):
+        a = 4.0
+        try:
+            a = float(cat[l.shape].area)
+        except KeyError:
+            pass
+        ar[i] = a * abs(float(l.sx) * float(l.sy)) * 64.0 * 64.0
+    lab = _lab([l.color for l in layers])
+    wmean = np.average(lab, axis=0, weights=np.maximum(ar, 1e-9))
+    contrast = np.linalg.norm(lab - wmean, axis=1) / 100.0 + 0.05
+    return ar * contrast
+
+
+# 배치가 쓰는 채움 몫·마스크 덮힘 — `place.BODY_FILL` · `place.fit_on`의 기본값과
+# 같아야 어림이 맞는다. 여기서 다시 적는 까닭은 순환 수입을 피하려는 것뿐이다.
+_FIT_FILL = 0.94
+_FIT_COVER = 0.88
+
+
+def fit_scale(smap, ink: tuple, *, group_unit: float = 1.0) -> float:
+    """이 면에 이 잉크 상자를 앉힐 때의 **배율 × 그룹유닛** (면유닛/캔버스유닛).
+
+    `place.fit_on` → `place_in_rect`의 수와 같다: 마스크 안에 같은 비율의
+    가장 큰 상자를 넣고 `fill`을 곱한다. 마스크가 그 비율을 못 받으면
+    `autoplace`의 폴백(도색 상자 × 0.8)으로 물러난다 — 그쪽도 같은 자다.
+    """
+    w = max(1e-6, float(ink[2] - ink[0]))
+    h = max(1e-6, float(ink[3] - ink[1]))
+    rect = smap.fit(w / h, coverage=_FIT_COVER, anchor="center", bias_x=0.5)
+    if rect is None:
+        p0, q0, p1, q1 = smap.paint
+        return min((p1 - p0) / w, (q1 - q0) / h) * 0.8
+    return min((rect[2] - rect[0]) / w, (rect[3] - rect[1]) / h) * _FIT_FILL
+
+
+def expected_mass(smap, var: "Variant", n: int, *, fill: float = 1.0) -> float:
+    """면 `smap`에 변주 `var`를 `n`장 · 투영 몫 `fill`로 앉혔을 때의 예상 무게.
+
+    배율의 제곱이 곱해진다 — 넓이 자이기 때문이다. 그래서 `fill`을 절반으로
+    줄이면 무게가 1/4이 된다: **장수를 안 깎고 무게만 낮추는 손잡이**다 (§7).
+
+    실측으로 이 어림은 도안만 올라간 면에서 거의 정확하다 (33판 중앙값
+    실측/예상 = 유리 1.02 · 뒷유리 1.02 · 리어 1.07 · 프론트 1.19). 옆면·윗면은
+    그 위에 꾸밈 그룹·면 도형이 더 올라가므로 4.2배·2.8배로 갈린다 — 그 몫은
+    예상할 수 없어서 `base_mass`(앞 판의 실측)로 받는다.
+    """
+    g = fit_scale(smap, var.ink) * max(0.0, float(fill))
+    return float(g * g * var.mass(n))
+
+
 # 얼굴 자리를 찾는 자 — 디테일 밀도의 **무게중심**이다.
 # `intent.head`(머리 상자)는 이 자리에서 못 믿는다: 표준 5장에 대 보니 얼굴을
 # 맞힌 것이 1.5뿐이고(누운 그림에서 엉덩이·손을 짚었다), 디테일 무게중심은
@@ -421,9 +566,13 @@ def variants(plan: LayerPlan, lk: Look, it, cat: Catalog,
         b = _layer_boxes(p, cat)
         q = _quantize(p, cat, VARIANT_COLORS.get(kind, 0), b)
         hw, hh = (box[2] - box[0]) / 2.0, (box[3] - box[1]) / 2.0
+        ib = (float(b[:, 0].min()), float(b[:, 1].min()),
+              float(b[:, 2].max()), float(b[:, 3].max())) if len(b) else (
+                  -hw, -hh, hw, hh)
         out[kind] = Variant(kind=kind, plan=q, why=why,
-                            box=(-hw, -hh, hw, hh),
-                            value=_value(q, cat, b, _shift(focus, box)))
+                            box=(-hw, -hh, hw, hh), ink=ib,
+                            value=_value(q, cat, b, _shift(focus, box)),
+                            weight=ink_weight(q.layers, cat))
 
     def _around(scale: float) -> tuple:
         """주목 자리를 중심으로 반지름의 `scale`배 상자 (잉크 상자에 물린다)."""
@@ -467,6 +616,47 @@ def _shift(focus, box):
     return focus[0] - cx, focus[1] - cy, focus[2]
 
 
+# ── 실측 무게 (판이 다 선 뒤) ───────────────────────────────────────
+
+
+def measure_mass(cfg_path, cat: Catalog) -> tuple[dict, dict]:
+    """다 선 구성 파일 → (면별 **도안 말고** 있는 것의 무게, 면별 장수).
+
+    `whole.allocate_hier`의 `base_mass`가 먹는 꼴이다. 도안 그룹(`decal-*`)의
+    무게만 빼는 까닭은 그것이 배분이 실제로 움직일 수 있는 유일한 몫이라서다 —
+    꾸밈 그룹·면 도형·글자는 다른 손이 짓는다.
+
+    자는 평가기와 같다 (`ink_weight` = `ruler.visual_weight`). 대비는 면 전체의
+    평균색을 기준으로 재므로 덩어리별 무게가 완전히 더해지지는 않는다 (실측
+    0.51~1.00) — 그래서 **전체에서 도안 몫을 뺀다**. 도안 몫만은 예상과 실측이
+    같다는 것을 실측으로 확인했다 (33판 8면 전부 비 1.000).
+    """
+    import json
+    from pathlib import Path
+
+    from .. import preview as _preview
+
+    cfg_path = Path(cfg_path)
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    mass: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for item in raw.get("placements", []):
+        name = item.get("surface")
+        if not name:
+            continue
+        try:
+            chunks = _preview.surface_chunks(item, cfg_path.parent, cat)
+        except Exception:                          # noqa: BLE001 — 어림은 보조다
+            continue
+        allx = [l for _n, c in chunks for l in c]
+        tot = float(ink_weight(allx, cat).sum())
+        art = sum(float(ink_weight(c, cat).sum())
+                  for n, c in chunks if n.startswith("decal"))
+        mass[name] = max(0.0, tot - art)
+        counts[name] = len(allx)
+    return mass, counts
+
+
 # ── 예산 ────────────────────────────────────────────────────────────
 
 
@@ -479,22 +669,74 @@ STEP = 8                                          # 한 번에 주는 장수
 MARGIN_MIN = 0.001
 
 
+# ── 위계를 아는 배분 (§5) ────────────────────────────────────────────
+#
+# 옛 배분은 `면 넓이 몫 × Δ품질`만 봤다. 그 자에는 **차 한 대**가 없다 — 면
+# 하나하나가 제 곡선이 포화할 때까지 받으므로, 면을 다 채우고 나면 무게가
+# 고르게 퍼진다 (W1/W2 실측: 나머지 무게 0.145 · 사람 p95 0.092).
+#
+# 여기서 더하는 것은 **범위**다. 사람 백분위 표(`wholeeval.HUMAN_PRIOR`)를
+# 목표로 삼지 않는다 (§31 금지): p10~p90 안이면 벌점이 0이라 배수가 정확히
+# 1이고 (= 종전과 같은 배분), 밖으로 나가야 비로소 배수가 는다. 사람 p50으로
+# 끌어당기는 controller가 아니다.
+
+# 벌점 1점이 이득을 깎는 세기. 지수라 배수가 절대 음수가 안 되고, 벌점이
+# 0인 자리에서 기울기가 이어진다.
+HIER_K = 6.0
+
+# 투영 몫 눈금 (§7) — 장수를 안 깎고 무게만 낮추는 손잡이. 사람 판의 리어·
+# 유리 그림이 면을 꽉 채우지 않는 것과 같은 자리다. 아래로만 간다.
+FILL_STEPS = (1.0, 0.85, 0.72, 0.6, 0.5, 0.42)
+
+
+def _feat_penalty(mass: dict, counts: dict, prior: dict | None = None) -> float:
+    """무게·장수 한 벌의 **사람 범위 벗어남** (0 = 전부 범위 안).
+
+    평가기와 같은 특징·같은 무게를 쓴다 (`wholeeval`) — 자를 두 벌 두면
+    발전기가 고른 것과 평가기가 재는 것이 갈린다.
+    """
+    from . import wholeeval as WE
+
+    ft = WE.features(mass, counts)
+    if ft is None:
+        return 0.0
+    pen = WE.penalties(ft, prior)
+    if not pen:
+        return 0.0
+    wsum = sum(WE.FEATURE_W.get(k, 0.5) for k in pen)
+    return float(sum(WE.FEATURE_W.get(k, 0.5) * v for k, v in pen.items())
+                 / max(wsum, 1e-9))
+
+
+def _cap_of(name: str, kind: str, vs: dict, caps: dict | None) -> int:
+    return min(int((caps or {}).get(name, 1000)),
+               VARIANT_CAP.get(kind, 1000),
+               len(vs[kind].plan.layers) if kind in vs else 0)
+
+
 def allocate(roles: dict, vs: dict, *, caps: dict | None = None,
-             margin: float = MARGIN_MIN) -> dict[str, int]:
+             margin: float = MARGIN_MIN, maps: dict | None = None,
+             base_mass: dict | None = None, prior: dict | None = None
+             ) -> dict[str, int]:
     """한계효용 순 배분 (§11) — 면마다 한 장 더 줬을 때의 이득이 큰 쪽부터.
 
     이득 = `면 넓이 몫 × Δ품질`. 넓이는 그 면이 차에서 얼마나 보이나의
     대리값이고, Δ품질은 그 변주의 곡선이 준다 — 곡선이 포화하면 그 면은
     저절로 더 안 받는다. 사람 평균을 목표로 쓰지 않는다 (§34.6).
+
+    `maps`와 `base_mass`를 함께 주면 **차 한 대의 위계**가 이득에 곱해진다
+    (`allocate_hier`) — 지금 판의 무게 몫이 사람 범위 밖으로 나가는 쪽이면
+    이득이 깎인다. 둘 중 하나라도 없으면 옛 자 그대로다.
     """
     if not roles:
         return {}
+    if maps is not None and base_mass is not None:
+        return {n: j[0] for n, j in
+                allocate_hier(roles, vs, caps=caps, margin=margin, maps=maps,
+                              base_mass=base_mass, prior=prior).items()}
     big = max(a for _, a in roles.values()) or 1.0
     got = {n: 0 for n in roles}
-    cap = {n: min(int((caps or {}).get(n, 1000)),
-                  VARIANT_CAP.get(roles[n][0], 1000),
-                  len(vs[roles[n][0]].plan.layers) if roles[n][0] in vs else 0)
-           for n in roles}
+    cap = {n: _cap_of(n, roles[n][0], vs, caps) for n in roles}
     while True:
         best, gain = None, margin
         for name in sorted(roles):
@@ -513,7 +755,151 @@ def allocate(roles: dict, vs: dict, *, caps: dict | None = None,
             if v >= VARIANT_MIN.get(roles[n][0], 1)}
 
 
-def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None) -> None:
+def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
+                  margin: float = MARGIN_MIN, maps: dict,
+                  base_mass: dict, base_counts: dict | None = None,
+                  prior: dict | None = None) -> dict[str, tuple[int, float]]:
+    """면 → (장수, 투영 몫). 위계를 아는 배분 (§4·§5·§7).
+
+    `base_mass`는 **이 배분이 안 건드리는 것**의 시각 무게다 (주역 도안 · 꾸밈
+    그룹 · 면 도형). 앞 판의 실측에서 온다 — 배분 시점에는 꾸밈이 아직 없어서
+    예상할 수 없고, 실측으로 대 보니 옆면 무게의 63~84%가 꾸밈이었다.
+    `base_counts`는 그 면들이 이미 쥔 장수다 (`decorated` 특징을 세는 데만
+    쓴다) — 없으면 "이미 꾸민 면"으로 친다.
+
+    세 판으로 돈다.
+
+    1. **장수** — 옛 한계효용에 위계 배수를 곱해 탐욕적으로 준다.
+    2. **투영 몫** — 장수를 고정한 채 무게가 넘치는 면을 한 눈금씩 줄인다.
+       레이어는 그대로 두고 시각 무게만 낮추는 자리다 (§7). 벌점이 더 안
+       줄면 멈춘다.
+    3. **장수 되돌리기** — 줄어든 크기에서 값을 못 하는 장을 **위에서부터**
+       덜어낸다. 이득이 `면 넓이 몫 × Δ품질`인데 그 넓이가 이제 `fill²`만큼
+       작아졌으므로, 안 보일 장은 문턱(`margin`)에 걸린다. 이 판이 없으면
+       작게 앉힌 면에 큰 면의 장수가 그대로 남는다 — 실측으로 W3H의 받침 면
+       레이어 중 **15~27%가 1유닛² 미만**으로 투영됐다 (W2는 2~8%).
+
+       0에서 다시 쌓지 **않는** 까닭도 실측이다: 그렇게 하면 판에 따라 면이
+       통째로 빠져 꾸민 면이 6 → 3으로 줄었다 (요청 §8의 실패 조건). 어느
+       면을 세울지는 ①이 제 크기에서 정한 것이고, 이 판은 **장수만** 깎는다 —
+       변주 하한(`VARIANT_MIN`) 아래로는 안 내려간다.
+
+    결정성: 동점은 이름으로 가른다. 난수 없음. 판 수가 고정이라 수렴을
+    기다리지 않는다.
+    """
+    big = max(a for _, a in roles.values()) or 1.0
+    got = {n: 0 for n in roles}
+    fill = {n: 1.0 for n in roles}
+    cap = {n: _cap_of(n, roles[n][0], vs, caps) for n in roles}
+
+    # 배치 배율은 예산·투영 몫과 무관하다 (잉크 상자와 면만 본다) — 마스크
+    # 내접 탐색이라 비싸므로 면마다 **한 번만** 잰다. 이걸 매 시도마다 다시
+    # 부르면 배분이 판당 9초씩 더 걸린다 (실측).
+    gs: dict[str, float] = {}
+    for nm in roles:
+        v, sm = vs.get(roles[nm][0]), maps.get(nm)
+        gs[nm] = fit_scale(sm, v.ink) if (v is not None and sm is not None) else 0.0
+
+    def _mass(cur: dict, cf: dict) -> dict:
+        m = dict(base_mass)
+        for nm, b in cur.items():
+            v = vs.get(roles[nm][0])
+            if v is None or not gs.get(nm) or b <= 0:
+                continue
+            g = gs[nm] * cf[nm]
+            m[nm] = m.get(nm, 0.0) + g * g * v.mass(b)
+        return m
+
+    from . import wholeeval as WE
+
+    bc = dict(base_counts) if base_counts is not None else {
+        n: WE.DECORATED_MIN for n in base_mass}
+
+    def _counts(cur: dict) -> dict:
+        c = dict(bc)
+        for nm, b in cur.items():
+            c[nm] = c.get(nm, 0) + int(b)
+        return c
+
+    def _budget(cur: dict) -> dict:
+        """① 장수 — 위계 배수를 곱한 한계효용 순 (제자리 아님, 새 사전)."""
+        cur = dict(cur)
+        while True:
+            pen0 = _feat_penalty(_mass(cur, fill), _counts(cur), prior)
+            best, gain = None, margin
+            for name in sorted(roles):
+                kind, area = roles[name]
+                v = vs.get(kind)
+                if v is None or cur[name] + STEP > cap[name]:
+                    continue
+                # 넓이는 **투영된** 넓이다 — 작게 앉힌 면의 한 장은 그만큼
+                # 덜 보이므로 덜 번다 (판 ③).
+                g = (area * fill[name] * fill[name] / big) * (
+                    v.quality(cur[name] + STEP) - v.quality(cur[name]))
+                if g <= 0.0:
+                    continue
+                trial = dict(cur)
+                trial[name] += STEP
+                dp = _feat_penalty(_mass(trial, fill), _counts(trial),
+                                   prior) - pen0
+                g *= math.exp(-HIER_K * dp)
+                if g > gain + 1e-12:
+                    best, gain = name, g
+            if best is None:
+                return cur
+            cur[best] += STEP
+
+    got = _budget(got)
+    live = {n: b for n, b in got.items()
+            if b >= VARIANT_MIN.get(roles[n][0], 1)}
+    if not live:
+        return {}
+
+    # ② 투영 몫 — 무게만 깎는다
+    while True:
+        pen0 = _feat_penalty(_mass(live, fill), _counts(live), prior)
+        if pen0 <= 1e-9:
+            break
+        best, drop = None, 1e-9
+        for name in sorted(live):
+            i = FILL_STEPS.index(fill[name]) if fill[name] in FILL_STEPS else 0
+            if i + 1 >= len(FILL_STEPS):
+                continue
+            trial = dict(fill)
+            trial[name] = FILL_STEPS[i + 1]
+            d = pen0 - _feat_penalty(_mass(live, trial), _counts(live), prior)
+            if d > drop + 1e-12:
+                best, drop = name, d
+        if best is None:
+            break
+        fill[best] = FILL_STEPS[FILL_STEPS.index(fill[best]) + 1]
+
+    # ③ 장수 되돌리기 — 값을 못 하게 된 장을 위에서부터 덜어낸다
+    while any(fill[n] < 1.0 for n in live):
+        pen0 = _feat_penalty(_mass(live, fill), _counts(live), prior)
+        best, loss = None, margin
+        for name in sorted(live):
+            kind, area = roles[name]
+            v = vs.get(kind)
+            floor = VARIANT_MIN.get(kind, 1)
+            if v is None or live[name] - STEP < floor:
+                continue
+            g = (area * fill[name] * fill[name] / big) * (
+                v.quality(live[name]) - v.quality(live[name] - STEP))
+            trial = dict(live)
+            trial[name] -= STEP
+            dp = _feat_penalty(_mass(trial, fill), _counts(trial), prior) - pen0
+            g *= math.exp(HIER_K * dp)        # 덜어내서 나빠지면 손해가 커진다
+            if g < loss - 1e-12:
+                best, loss = name, g
+        if best is None:
+            break
+        live[best] -= STEP
+    return {n: (b, fill[n]) for n, b in live.items()}
+
+
+def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None,
+                 maps: dict | None = None) -> None:
     """면마다 **시각 위계**를 매긴다 (§3) — 제자리 수정, 레이어는 안 건드린다.
 
     등급을 면 이름으로 고정하지 않는다: 윗면이 주역인 판도 옆면이 주역인 판도
@@ -534,6 +920,12 @@ def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None) -> None:
     mass = dict(taken_mass or {})
     for name, job in wc.jobs.items():
         v = wc.variants.get(job.kind)
+        sm = (maps or {}).get(name)
+        if maps is not None and v is not None and sm is not None:
+            # 위계를 아는 길 — 배분이 쓴 것과 **같은** 무게 자다
+            mass[name] = mass.get(name, 0.0) + expected_mass(
+                sm, v, job.budget, fill=job.fill)
+            continue
         q = v.quality(job.budget) if v is not None else 0.0
         mass[name] = mass.get(name, 0.0) + job.area * q
     sh = WE.shares(mass)
@@ -608,10 +1000,17 @@ def _unit(name: str) -> str:
 def plan_car(plan: LayerPlan, lk: Look, it, cat: Catalog, maps: dict, *,
              taken: set, caps: dict | None = None,
              margin: float = MARGIN_MIN,
-             taken_mass: dict | None = None) -> WholeCarPlan:
+             taken_mass: dict | None = None,
+             base_mass: dict | None = None,
+             base_counts: dict | None = None) -> WholeCarPlan:
     """차 한 대의 구성 — 역할 → 변주 → 예산 → 위계 (§3).
 
     `taken_mass`는 이미 주역이 앉은 면의 예상 무게다 (`assign_tiers`).
+
+    `base_mass`를 주면 **위계를 아는 배분**으로 간다 (`allocate_hier`) — 이
+    배분이 안 건드리는 것(주역 도안 · 꾸밈 · 면 도형)의 실측 무게이고 앞 판에서
+    잰다. `taken_mass`는 그 안에 이미 들어 있어야 한다. 없으면 옛 자 그대로다
+    (바이트 동일).
     """
     wc = WholeCarPlan()
     roles = assign_roles(maps, taken)
@@ -629,10 +1028,22 @@ def plan_car(plan: LayerPlan, lk: Look, it, cat: Catalog, maps: dict, *,
                 picked[name] = (k, area)
                 break
     roles = picked
-    budget = allocate(roles, wc.variants, caps=caps, margin=margin)
-    for name, n in sorted(budget.items()):
+    if base_mass is not None:
+        got = allocate_hier(roles, wc.variants, caps=caps, margin=margin,
+                            maps=maps, base_mass=base_mass,
+                            base_counts=base_counts)
+    else:
+        got = {n: (b, 1.0) for n, b in
+               allocate(roles, wc.variants, caps=caps, margin=margin).items()}
+    for name, (n, fl) in sorted(got.items()):
         kind, area = roles[name]
+        why = wc.variants[kind].why
+        if fl < 1.0:
+            why += msg(" · 면의 {k:.0%} 크기로 (위계)", k=fl)
         wc.jobs[name] = SurfaceJob(name=name, role=kind, kind=kind, budget=n,
-                                   area=area, why=wc.variants[kind].why)
-    assign_tiers(wc, taken_mass)
+                                   area=area, why=why, fill=fl)
+    if base_mass is not None:
+        assign_tiers(wc, base_mass, maps)
+    else:
+        assign_tiers(wc, taken_mass)
     return wc
