@@ -42,6 +42,11 @@ import numpy as np
 from ...i18n import msg
 from .marks import _MARK_DE, _MARK_RATIO
 
+# 계보 감사 — `celfit.census`와 **같은 스위치**를 쓴다 (한 번 구우면 분해
+# 계보와 배치 계보가 같은 판에서 나온다). 끄면 이 파일의 어느 손도 안 불리고
+# 산출물은 바이트 동일이다.
+_AUDIT = os.environ.get("FS_UNIT_CENSUS", "").strip() not in ("", "0", "false")
+
 # ── 비용의 저울 (전 이미지 공통 — 타깃별 손튜닝 금지) ────────────────────
 # 색 재현 손해의 기준 색차 — Ward 항 `A1A2/(A1+A2)·(ΔE/DE_REF)²`을 λ와 견줄
 # 크기로 맞추는 자다. 6.0은 **면적이 문턱을 대신 풀도록** 고른 값이다: 이 항만
@@ -210,6 +215,9 @@ class RegionGraph:
         self.version = np.zeros(max(n, 1), np.int64)
         self.merges = 0
         self.stats: dict = {}
+        # 감사 전용 — 상한 강제 단에서 **비용이 양수인데도 산** 간선 (§27).
+        # 켜지 않으면 늘 비어 있다
+        self.forced_log: list = []
 
     # ── union-find
     def find(self, a: int) -> int:
@@ -229,8 +237,12 @@ class RegionGraph:
         de = float(np.linalg.norm(self.col[a] - self.col[other]))
         return bool(de >= _MARK_DE and self.area[other] >= _MARK_RATIO * self.area[a])
 
-    def cost(self, a: int, b: int, lam: float) -> float:
-        """이 간선을 합치는 총비용 (음수면 합치는 쪽이 싸다)."""
+    def cost(self, a: int, b: int, lam: float, parts: dict | None = None) -> float:
+        """이 간선을 합치는 총비용 (음수면 합치는 쪽이 싸다).
+
+        `parts`를 주면 갈래를 그 dict에 적는다 (감사 전용 — `lineage`). 판정에는
+        안 쓰이고 안 주면 아무 일도 안 한다.
+        """
         e = self.adj[a].get(b)
         if e is None:
             return float("inf")
@@ -263,10 +275,13 @@ class RegionGraph:
         # 값을 색차로 재어 건다 (§3의 line-supported boundary removal cost가
         # 뜻하는 바 그대로다).
         vis = min(1.0, de / _DE_REF)
-        keep = bnd * (_BND_G * gnorm + _BND_LINE * (lsum / max(bnd, 1.0))) * vis
+        k_bnd = bnd * (_BND_G * gnorm + _BND_LINE * (lsum / max(bnd, 1.0))) * vis
+        keep = k_bnd
+        k_feat = 0.0
         if self.feat is not None:
             fd = 1.0 - float(np.dot(self.feat[a], self.feat[b]))
-            keep += _FEAT_W * bnd * max(0.0, fd)
+            k_feat = _FEAT_W * bnd * max(0.0, fd)
+            keep += k_feat
         # §27 **위상 손해 — 둘러싸인 면을 삼키면 구멍 하나가 사라진다.**
         # 지금까지 병합이 지키는 것은 색(재현 손해)과 경계의 또렷함뿐이라,
         # 한 면이 다른 면에 **완전히 둘러싸여 있다**는 사실은 값이 없었다.
@@ -282,11 +297,22 @@ class RegionGraph:
         # 색차로 가리는 것(`vis`)은 그대로다: 두 면의 색이 같으면 삼켜도
         # 화면이 안 바뀌므로 지킬 위상이 없다.
         encl = max(bnd / max(self.peri[a], 1.0), bnd / max(self.peri[b], 1.0))
+        k_topo = 0.0
         if encl > _TOPO_MIN:
-            keep += (_TOPO_W * bnd * vis
-                     * (encl - _TOPO_MIN) / (1.0 - _TOPO_MIN))
+            k_topo = (_TOPO_W * bnd * vis
+                      * (encl - _TOPO_MIN) / (1.0 - _TOPO_MIN))
+            keep += k_topo
         saved = (complexity(aa, self.peri[a]) + complexity(ab, self.peri[b])
                  - complexity(aa + ab, self.peri[a] + self.peri[b] - 2.0 * bnd))
+        if parts is not None:
+            parts.update(recon=float(recon), keep_bnd=float(k_bnd),
+                         keep_feat=float(k_feat), keep_topo=float(k_topo),
+                         saved=float(saved * lam), de=de_raw, de_seen=float(de),
+                         step=float(step), bnd=float(bnd),
+                         line_frac=float(lsum / max(bnd, 1.0)),
+                         encl=float(encl), mark=bool(mark), vis=float(vis),
+                         ramp=_ramp(step, de_raw), area_a=float(aa),
+                         area_b=float(ab))
         return float(recon + keep - saved * lam)
 
     # ── 병합
@@ -367,6 +393,9 @@ class RegionGraph:
                 continue
             if sign_only and c >= 0.0:
                 break
+            if _AUDIT and c >= 0.0:
+                self.forced_log.append((int(a), int(b), float(c),
+                                        float(self.area[a]), float(self.area[b])))
             r = self._union(a, b)
             live -= 1
             done += 1
@@ -398,6 +427,57 @@ class RegionGraph:
                 atoms=self.n0, live=live, gained=gained, forced=forced))
         self.stats = {"atoms": self.n0, "region_merges": self.merges,
                       "merge_gain": gained, "merge_forced": forced}
+        return out
+
+    def lineage(self, lam: float, ws_atoms: int = -1) -> dict:
+        """감사 전용 — 살아남은 영역마다 **원자·기하·못 산 최선 이웃**.
+
+        `merge` 뒤에 부른다. 여기서 재는 것은 전부 그래프가 이미 들고 있는
+        값이고(새 분류기도 새 문턱도 없다), 최선 이웃 비용은 **지금 이 상태의
+        `cost`가 내는 그 값 그대로**다 — "이 영역이 왜 이웃과 안 합쳐졌나"를
+        production 식으로 답한다.
+
+        `ws_atoms`를 주면 원자 출신을 가른다 (그 수 미만 = watershed,
+        이상 = 그리드 재분할 — `atoms.oversegment`가 뒤에 번호를 잇는다).
+        """
+        kids: dict[int, list] = {}
+        for a in range(self.n0):
+            if self.area[a] <= 0:
+                continue
+            kids.setdefault(self.find(a), []).append(a)
+        # 강제 병합에 낀 뿌리 (양수 비용을 산 자리)
+        forced_at: dict[int, list] = {}
+        for a, b, c, _aa, _ab in self.forced_log:
+            forced_at.setdefault(self.find(a), []).append(round(c, 2))
+        out: dict = {}
+        for r, ks in kids.items():
+            best = None
+            for b in self.adj[r]:
+                pp: dict = {}
+                c = self.cost(r, b, lam, parts=pp)
+                if best is None or c < best[0]:
+                    best = (c, b, pp)
+            rec = {
+                "atoms": len(ks),
+                "atom_area": sorted((int(self.area[k]) for k in ks
+                                     if k != r or len(ks) == 1), reverse=True)[:8],
+                "grid_atoms": (sum(1 for k in ks if k >= ws_atoms)
+                               if ws_atoms >= 0 else -1),
+                "area": float(self.area[r]), "peri": float(self.peri[r]),
+                "sil": float(self.sil[r]), "imp": round(float(self.imp[r]), 4),
+                "var": round(float(self.var[r]), 2),
+                "nbr": len(self.adj[r]), "mark": bool(self._mark(r)),
+                "forced": forced_at.get(r, []),
+            }
+            if best is not None:
+                c, b, pp = best
+                rec["best_cost"] = round(float(c), 3)
+                rec["best_lam"] = round(float(c) / max(lam, 1e-9), 4)
+                rec["best_nbr"] = int(b)
+                rec["best_nbr_area"] = float(self.area[b])
+                rec["best"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                               for k, v in pp.items()}
+            out[str(r)] = rec
         return out
 
     def mark_ids(self) -> set:

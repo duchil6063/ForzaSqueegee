@@ -43,6 +43,7 @@ from ..stop import stop_here
 from . import atoms, dense, inkfill, palette, prep
 from .model import _ALPHA_OPAQUE, CelArt
 from .prep import _fill_bg_nearest
+from .rag import _AUDIT as _RAG_AUDIT
 from .rag import RegionGraph
 from .snap import region_table
 
@@ -113,6 +114,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     else:
         labels = atoms.cc_atoms(lbl, K, sel)
     stop_here()
+    n_ws = int(labels.max()) + 1 if _RAG_AUDIT else -1   # 감사 — 원자 출신 경계
     labels = atoms.oversegment(labels, lab, sel, guide, log)
     if debug:
         trace["atom_labels"] = labels.copy()
@@ -128,6 +130,29 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
         trace["marks_before"] = g.mark_ids()
     stop_here()
     labels = g.merge(lam, max_regions, log)
+    if _RAG_AUDIT:                        # 계보 감사 (`rag.lineage`) — 판정 무관
+        lin = g.lineage(lam, ws_atoms=n_ws)
+        am = g.labels
+        ok = sel & (am >= 0)
+        na = max(int(am.max()) + 1, 1)
+        cnt = np.bincount(am[ok].astype(np.int64) * K + lbl[ok].astype(np.int64),
+                          minlength=na * K).reshape(na, K)
+        apal = cnt.argmax(1)
+        for a in range(na):
+            r = str(g.find(a))
+            if r in lin and cnt[a].sum():
+                d = lin[r].setdefault("pal", {})
+                d[int(apal[a])] = d.get(int(apal[a]), 0) + int(cnt[a].sum())
+        for rec in lin.values():
+            d = rec.get("pal") or {}
+            rec["pal_n"] = len(d)
+            rec["pal"] = int(max(d.items(), key=lambda kv: kv[1])[0]) if d else -1
+        for rec in lin.values():          # 이웃과 팔레트가 갈리나 (§29)
+            nb = lin.get(str(rec.get("best_nbr")))
+            rec["nbr_pal"] = nb["pal"] if nb else -1
+        trace["lineage"] = lin
+        trace["lam"] = float(lam)
+        trace["atoms_ws"] = int(n_ws)
     trace.update(g.stats)
     trace["dense"] = feat is not None
 

@@ -199,8 +199,8 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
         # **획 색이어야** 획이다. 가늘기만 보면 눈 흰자·하이라이트 같은 가는
         # **면**이 획 쪽으로 넘어가, 경로 길이 문턱에 걸려 통째로 안 그려진다
         dt0 = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
-        strokelike, _wmed, _elong = region_shape(
-            mask, dt0, _inklike(mask, reg.color, cel.src_rgb, ink_cov, roi))
+        _ilk = _inklike(mask, reg.color, cel.src_rgb, ink_cov, roi)
+        strokelike, _wmed, _elong = region_shape(mask, dt0, _ilk)
         if strokelike:
             stats["stroke_regions"] += 1
             stats["stroke_px"] += int(reg.area)
@@ -240,6 +240,15 @@ def fit_plan(cel: CelArt, cat: Catalog, *, budget: int = 3000,
                 share=int(share), lo=int(lo))
             cr["compact"] = round(4.0 * np.pi * int(m8c.sum())
                                   / max(peri * peri, 1.0), 4)
+            # 위상·오목함·최대 내접 반경 — "작아서 못 그리나, 모양 때문인가"를
+            # 가르는 자 (§14·§15). 게임 최소 도형 반폭도 같이 실어 둔다
+            cr.update(_census.region_geom(mask, dt0))
+            cr["min_span"] = round(float(_min_span(upp)), 3)
+            cr["inklike"] = bool(_ilk)
+            if ink_cov is not None:
+                near = cv2.dilate(ink_cov[y0:y1, x0:x1].astype(np.uint8),
+                                  np.ones((3, 3), np.uint8)).astype(bool)
+                cr["ink_near"] = round(float(near[mask].mean()), 4)
             cr["_dedge"] = cv2.distanceTransform(m8c, cv2.DIST_L2, 3)
             if ink_cov is not None:
                 cr["_ink"] = ink_cov[y0:y1, x0:x1]

@@ -151,14 +151,27 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
     n = 0
     blocked = np.zeros_like(sc.residual)   # 포기한 봉우리 (잔여는 남긴다)
     setcover = price > 0.0
+    # 계측 (`census`) — 봉우리마다 **왜 한 장도 못 샀나**. 끄면 없다
+    cen = _census.fill_open(
+        res_px=int(np.count_nonzero(sc.residual)), area=int(area),
+        cap=int(cap), price=round(float(price), 3),
+        stop_px=round(float((1.0 - cover_stop) * area), 1)) if _census.ON else None
+    if cen is not None and not (n < cap and np.count_nonzero(sc.residual)
+                                > (1.0 - cover_stop) * area):
+        _census.fill_peak(cen, "entry")
     while (n < cap
            and np.count_nonzero(sc.residual) > (1.0 - cover_stop) * area):
         open_res = sc.residual & ~blocked
         if not open_res.any():
+            if cen is not None:
+                _census.fill_peak(cen, "all_blocked")
             break
         dt = cv2.distanceTransform(open_res.astype(np.uint8), cv2.DIST_L2, 3)
         r0 = float(dt.max())
         if r0 <= _STROKE_R:
+            if cen is not None:
+                _census.fill_peak(cen, "r0_small", r0=round(r0, 3),
+                                  res=int(np.count_nonzero(open_res)))
             break
         py, px = np.unravel_index(int(dt.argmax()), dt.shape)
         cands: list[tuple[float, Layer]] = []
@@ -173,6 +186,8 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
             if whole is not None:
                 cands.append(whole)
         if not cands:
+            if cen is not None:
+                _census.fill_peak(cen, "no_cand", r0=round(r0, 3))
             break
         free = n == 0
         if setcover and len(cands) > 1 and n < _SC_STEPS:
@@ -187,19 +202,44 @@ def fill_region(plan: LayerPlan, sc: _Scorer, cat: Catalog, color,
             _, mfin, fbox = sc._score_impl(q)
             worth = sc.worth(mfin, fbox)
         if gain < _MIN_GAIN or mfin is None:
+            if cen is not None:
+                _census.fill_peak(cen, "no_raster" if mfin is None else "min_gain",
+                                  r0=round(r0, 3), gain=round(float(gain), 2),
+                                  shape=q.shape, lay=dict(q.__dict__),
+                                  **_fill_acc(sc, mfin, fbox))
             cv2.circle(blocked.view(np.uint8), (px, py),
                        max(2, int(r0 / 2)), 1, -1)
             continue
         # 가격 — 이 한 장이 새로 맞히는 값이 λ에 못 미치면 안 산다 (첫 장 면제)
         if price and not free and worth < price:
+            if cen is not None:
+                _census.fill_peak(cen, "price", r0=round(r0, 3),
+                                  worth=round(float(worth), 2),
+                                  gain=round(float(gain), 2), shape=q.shape)
             cv2.circle(blocked.view(np.uint8), (px, py),
                        max(2, int(r0 / 2)), 1, -1)
             continue
+        if cen is not None:
+            _census.fill_peak(cen, "ok", r0=round(r0, 3), shape=q.shape,
+                              gain=round(float(gain), 2),
+                              worth=round(float(worth), 2))
         sc.commit_box(mfin, fbox)
         plan.layers.append(q)
         _FILL_WIN[q.shape] = _FILL_WIN.get(q.shape, 0) + 1
         n += 1
+    if cen is not None:
+        cen["cap_hit"] = bool(n >= cap)
+        cen["fill_layers"] = int(n)
     return n
+
+
+def _fill_acc(sc: _Scorer, m, box) -> dict:
+    """탈락한 후보가 **무엇을 물었나** (계측 전용) — 침범·낭비의 갈래."""
+    if m is None:
+        return {}
+    a = sc.account(m, box)
+    return {"acc": {k: round(float(v), 2) for k, v in a.items()
+                    if isinstance(v, (int, float))}}
 
 
 def grow_fill(sc: _Scorer, layers: list, lo: int, passes: int = 8,

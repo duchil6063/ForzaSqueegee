@@ -42,6 +42,12 @@ def plate() -> dict | None:
     return _PLATE
 
 
+def plate_meta(**kv) -> None:
+    """판 하나에 딸린 **분해 쪽 계보**를 싣는다 (`celart.rag.lineage` 등)."""
+    if _PLATE is not None:
+        _PLATE.update(kv)
+
+
 def begin_region(**kv) -> dict:
     """영역 하나의 기록을 연다 — 반환값이 그 영역의 dict다."""
     global _REG
@@ -91,6 +97,32 @@ def shape_stats(m: np.ndarray) -> dict:
             "wmed": round(wmed, 3),
             "bbox": [int(xs.min()), int(ys.min()),
                      int(xs.max()) + 1, int(ys.max()) + 1]}
+
+
+def region_geom(m: np.ndarray, dt: np.ndarray) -> dict:
+    """영역 하나의 **위상·오목함** 자 — 구멍 수·오일러 수·볼록도·내접 반경.
+
+    전부 기존 openCV 원시 연산이다 (새 의미 검출기를 만들지 않는다). 고리·
+    초승달을 이름으로 부르지 않고 이 숫자들로만 본다.
+    """
+    u = m.astype(np.uint8)
+    area = int(u.sum())
+    if not area:
+        return {"holes": 0, "euler": 0, "solidity": 0.0, "dtmax": 0.0,
+                "bboxfill": 0.0}
+    pad = np.pad(u, 1)
+    n_bg, _ = cv2.connectedComponents((1 - pad).astype(np.uint8), connectivity=4)
+    n_fg, _ = cv2.connectedComponents(pad, connectivity=8)
+    holes = max(0, n_bg - 2)               # 배경 성분 하나를 뺀 나머지가 구멍
+    cn, _ = cv2.findContours(u, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = float(sum(cv2.contourArea(cv2.convexHull(c)) for c in cn))
+    ys, xs = np.nonzero(u)
+    bb = float((xs.max() - xs.min() + 1) * (ys.max() - ys.min() + 1))
+    return {"holes": int(holes), "euler": int((n_fg - 1) - holes),
+            "comps": int(n_fg - 1),
+            "solidity": round(area / max(hull, 1.0), 4),
+            "dtmax": round(float(dt.max()), 3),
+            "bboxfill": round(area / max(bb, 1.0), 4)}
 
 
 def where(sel: np.ndarray, dedge: np.ndarray | None,
@@ -152,3 +184,19 @@ def mop_comp(mop: dict, **kv) -> dict:
     c = dict(kv)
     mop["comps"].append(c)
     return c
+
+
+# ── 바탕 채움 깔때기 (§10·§11) ───────────────────────────────────────
+def fill_open(**kv) -> dict:
+    """`fill_region` 진입 — 봉우리마다 **왜 못 샀나**를 받아 적는 칸."""
+    rec = {"peaks": [], "why": {}, **kv}
+    if _REG is not None:
+        _REG["fill"] = rec
+    return rec
+
+
+def fill_peak(rec: dict, why: str, **kv) -> None:
+    """봉우리 하나의 판정 — `why`는 지금 코드가 이미 내린 그 판정의 이름이다."""
+    rec["why"][why] = rec["why"].get(why, 0) + 1
+    if len(rec["peaks"]) < 12:             # 앞 몇 개만 (판 하나가 안 부풀게)
+        rec["peaks"].append({"why": why, **kv})

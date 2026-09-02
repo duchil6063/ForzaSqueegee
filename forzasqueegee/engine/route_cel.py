@@ -128,6 +128,10 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 보정하는 두 방향이 된다: 면 지도가 선을 고르고, 선이 면 경계를 앉힌다.
     cel = decompose(rgba, max_regions=_MAX_REGIONS, line_mask=lm0, log=log,
                     value=val, price=lam, debug=bool(os.environ.get("FS_CEL_DEBUG")))
+    # 감사 — 스냅 **전**의 영역 넓이 (스냅이 무엇을 줄이고 지웠나, §33).
+    # 계보 스위치가 꺼져 있으면 빈 dict다
+    _pre_snap_area = ({str(r.rid): int(r.area) for r in cel.regions}
+                      if (cel.trace or {}).get("lineage") else {})
     if not classic:
         log(msg("  선화: 선 픽셀 {n:,}개", n=int(lm0.sum())))
         line_plan, line_stats, line_mask, src_line = _line_design(
@@ -188,6 +192,19 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     from .celfit import census as _census
     if _census.ON:
         _census.begin_plate(out.name, cel.size)
+        # 분해 쪽 계보를 같은 판에 싣는다 (`celart.rag.lineage`) — 여기서만
+        # 최종 영역 id로 "원자 → 병합 → 못 산 최선 이웃"이 이어진다.
+        # 스냅은 라벨 id를 안 바꾸므로(`snap.rebuild_regions`) 같은 키다
+        _census.plate_meta(
+            lineage=(cel.trace or {}).pop("lineage", None),
+            lam=(cel.trace or {}).get("lam"),
+            atoms_ws=(cel.trace or {}).get("atoms_ws"),
+            snap_area={str(r.rid): int(r.area) for r in cel.regions},
+            pre_snap_area=_pre_snap_area)
+        # 영역 마스크의 정본 — 겹판이 이 지도로 영역 하나를 되짚는다
+        # (0 = 배경, rid+1). 계보 스위치를 끄면 안 나온다
+        write_png(run_file(out, "cel_labels.png"),
+                  (cel.labels.astype(np.int32) + 1).astype(np.uint16))
     # 여유 배치는 안 한다 — 잘라 맞출 것이 없으므로 상한 그대로다.
     if classic:
         # 폴백 — 선·면을 fit_plan이 함께 배치한다.
