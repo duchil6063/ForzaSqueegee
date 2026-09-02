@@ -393,6 +393,7 @@
  "이름 없는 그룹": "unnamed group",
  "낱 도형": "loose shapes",
  "{surface}: 편집기에서 지운 도안을 조리법에서 뺐다 — {name}": "{surface}: a design deleted in the editor was dropped from the recipe — {name}",
+ "{surface}: 편집기에서 손댄 도안을 지금 있는 그대로 받는다 — {name} ({was:,}장 → {now:,}장)": "{surface}: a design edited in the editor is taken as it is now — {name} ({was:,} → {now:,} layers)",
  "{surface}에 올린 도안이 없다 — 리버리 전체로 돈다": "no plan on {surface} — running over the whole livery",
  "{what}: 어느 도안에 걸지 못 정했다 — 레이어 나무에서 그 도안 그룹(FS:decal-…)을 고르거나, 도안이 있는 면을 열고 누르세요": "{what}: could not decide which plan to target — select that plan's group (FS:decal-…) in the layer tree, or open a surface that has a plan and press again",
  "{where}: plan이 없다 (copy_from·text·shapes·groups도 없다)": "{where}: plan is missing (no copy_from, text, shapes, or groups either)",

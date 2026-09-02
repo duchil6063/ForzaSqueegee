@@ -299,23 +299,66 @@ def surface_exposure(name: str, smap: gsurf.SurfaceMap,
     return h.head_on(name, smap) if h is not None else None
 
 
-def layers_on(plan: LayerPlan, cat: Catalog, L: np.ndarray, t: np.ndarray,
-              box: tuple[float, float, float, float]) -> list[int]:
-    """면 유닛 상자에 **닿는** 레이어 색인 — 그 면에서 그려지는 것들이다.
+# 면 밖 판정의 **여유** — 도색 마스크를 면 긴 변의 이 몫만큼 부풀린 뒤 잰다.
+# 마스크는 실측이라 가장자리가 한두 유닛 어긋날 수 있고, 걸친 레이어를 버리면
+# 이음새에 빈 띠가 생긴다 — 그래서 조금 넉넉히 두고 그 밖만 뺀다.
+OFF_CAR_MARGIN = 0.02
 
-    판정은 레이어 잉크 상자와 면 상자의 겹침이다. "점 하나가 안에 드나"로 재면
-    상자를 가로지르는 큰 도형(베드·띠)을 놓친다 — 껍질 점이 전부 밖에 있다.
-    걸친 레이어는 남긴다: 면이 알아서 자르므로 남기면 이음새가 이어지고 버리면
-    빈 띠가 생긴다.
+
+def layers_on(plan: LayerPlan, cat: Catalog, L: np.ndarray, t: np.ndarray,
+              box: tuple[float, float, float, float], *,
+              mask: np.ndarray | None = None,
+              margin: float = OFF_CAR_MARGIN) -> list[int]:
+    """면에 **닿는** 레이어 색인 — 그 면에서 그려지는 것들이다.
+
+    `mask`(면 도색 마스크, `box` 상자 위의 격자)를 주면 판정은 **차 위에 있나**다:
+    레이어 껍질의 볼록 껍데기를 격자에 찍어 `margin`만큼 부풀린 마스크와 겹치는지
+    본다. 상자 안이지만 차 밖인 자리(휠아치·그린하우스·실루엣 밖)의 레이어는
+    게임이 안 그리면서 면 상한만 잡아먹으므로 여기서 빠진다. 볼록 껍데기라 상자를
+    가로지르는 큰 도형(베드·띠)도 놓치지 않는다 — "점 하나가 안에 드나"로 재면
+    껍질 점이 전부 밖인 그것을 놓친다.
+
+    `mask`가 없으면 레이어 잉크 상자와 면 상자의 겹침이다. 어느 쪽이든 걸친
+    레이어는 남긴다: 면이 알아서 자르므로 남기면 이음새가 이어지고 버리면 빈
+    띠가 생긴다.
     """
     keep: list[int] = []
+    grid = None
+    if mask is not None and mask.size > 1:
+        import cv2
+
+        mh, mw = mask.shape
+        r = int(round(max(0.0, margin) * max(mw, mh)))
+        grid = mask.astype(np.uint8)
+        if r > 0:
+            grid = cv2.dilate(grid, np.ones((2 * r + 1, 2 * r + 1), np.uint8))
+        kx = (mw - 1) / max(1e-6, box[2] - box[0])
+        ky = (mh - 1) / max(1e-6, box[3] - box[1])
     for i, l in enumerate(plan.layers):
         pts = layer_points(l, cat)
         if len(pts) == 0:
             continue
         q = pts @ L.T + t
-        if (float(q[:, 0].max()) >= box[0] and float(q[:, 0].min()) <= box[2]
+        if not (float(q[:, 0].max()) >= box[0] and float(q[:, 0].min()) <= box[2]
                 and float(q[:, 1].max()) >= box[1] and float(q[:, 1].min()) <= box[3]):
+            continue
+        if grid is None:
+            keep.append(i)
+            continue
+        px = np.stack([(q[:, 0] - box[0]) * kx, (box[3] - q[:, 1]) * ky], 1)
+        hull = cv2.convexHull(px.astype(np.float32)).reshape(-1, 2)
+        x0, y0 = np.floor(hull.min(0)).astype(int)
+        x1, y1 = np.ceil(hull.max(0)).astype(int)
+        x0, y0 = max(int(x0), 0), max(int(y0), 0)
+        x1, y1 = min(int(x1), mw - 1), min(int(y1), mh - 1)
+        if x1 < x0 or y1 < y0:
+            continue
+        win = grid[y0:y1 + 1, x0:x1 + 1]
+        if not win.any():
+            continue
+        stamp = np.zeros(win.shape, np.uint8)
+        cv2.fillConvexPoly(stamp, np.round(hull - [x0, y0]).astype(np.int32), 1)
+        if (stamp & win).any():
             keep.append(i)
     return keep
 

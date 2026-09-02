@@ -29,6 +29,10 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
    레이어를 면 유닛 그대로 도안 파일로 떠서 항등 배치로 조리법에 올리고, 꾸밈은
    그 위에 짓는다. 다음 굽기부터는 `FS:decal-<n>` 덩어리라 1번 규칙을 탄다.
    숨긴 그룹·래스터 로고·안내선만 종전처럼 원본 노드째 옮겨 실린다.
+   **구성기 덩어리 안을 손댄 것도 같다** — `FS:decal-<n>` 그룹 안에서 레이어를
+   지우거나 더하면 장수가 구울 때 적어 둔 값(`state.baked`)과 달라지고, 그 덩어리는
+   조리법이 다시 못 짓는 그림이 되어 지금 있는 그대로 도안으로 받는다. 안 그러면
+   다음 굽기가 도안 파일에서 지운 레이어를 도로 올린다.
 
 ## 시키지 않은 것은 안 한다
 
@@ -158,8 +162,8 @@ def open_project(project_path: str | Path, *,
             pass                    # 깨진 조리법은 빈 것으로 시작한다
     st = Studio(path=p, doc=doc, state=state, notes=[])
     _learn_car(st, geometry)
-    _absorb(st)
-    _adopt(st)
+    live, force = _absorb(st)
+    _adopt(st, live, force)
     return st
 
 
@@ -235,30 +239,60 @@ def decal_numbers(designs: list) -> list[int]:
     return out
 
 
-def _absorb(st: Studio) -> None:
+def _absorb(st: Studio) -> tuple[set[int], set[tuple[str, str]]]:
     """편집기에서 **그룹째 옮긴 몫**을 배치 수치로 접어 넣는다.
 
     구성기가 구운 그룹은 변환이 항등으로 서므로, 항등이 아닌 것은 전부 사람이
     민 것이다. 그 변환을 배치 위에 곱하고 다시 분해하면 같은 자리를 배치
-    수치로 표현한 것이 나온다 — 그 다음 굽기부터는 조리법이 그 자리를 안다."""
+    수치로 표현한 것이 나온다 — 그 다음 굽기부터는 조리법이 그 자리를 안다.
+
+    **덩어리 안을 손댄 것**은 그 반대로 간다: `FS:decal-<n>` 그룹의 장수가 구울 때
+    적어 둔 값(`state.baked`)과 다르면 — 레이어를 지웠거나 더했다 — 그 면의 그
+    도안을 조리법에서 빼고 덩어리를 `_adopt`에 넘긴다(둘째 반환값). 조리법이 도안
+    파일에서 다시 지으면 지운 레이어가 도로 올라오기 때문이다.
+
+    첫째 반환값은 **아직 조리법이 짓는 덩어리 번호**다 — 문서의 `decal-<n>`은 구울
+    때의 번호라, 여기서 뺀 도안 때문에 번호를 다시 매기면 남은 도안의 덩어리가
+    남의 번호로 읽혀 두 겹으로 실린다."""
     chunks = project.section_chunks(st.doc)
+    counts = _chunk_counts(st.doc)
+    baked = st.state.get("baked") or {}
     st.state["foreign"] = {
         name: entry["foreign"] for name, entry in chunks.items()
         if entry["foreign"]}
     kept: list = []
+    live: set[int] = set()
+    force: set[tuple[str, str]] = set()
     for d, n in zip(st.designs, decal_numbers(st.designs)):
         entry = chunks.get(d.get("surface") or "")
         if entry is None:
             kept.append(d)
+            live.add(n)
             continue
         # 편집기에서 그 그룹을 **지웠으면** 조리법에서도 뺀다 — 안 그러면 다음
         # 굽기에 도로 올라온다 (`FS:decal-<n>` · `-fit`·`-top` 따위 전부).
-        if not any(k == f"{DECAL}{n}" or k.startswith(f"{DECAL}{n}-")
-                   for k in entry["chunks"]):
+        mine = [k for k in entry["chunks"]
+                if k == f"{DECAL}{n}" or k.startswith(f"{DECAL}{n}-")]
+        if not mine:
             st.notes.append(msg("{surface}: 편집기에서 지운 도안을 조리법에서 뺐다 — {name}",
                                 surface=d["surface"], name=Path(d["plan"]).name))
             continue
+        # 그룹 안에서 지웠거나 더했으면 — 지금 있는 그대로가 도안이다
+        was = (baked.get(d["surface"]) or {})
+        edited = [k for k in mine
+                  if k in was and counts.get(d["surface"], {}).get(k) != was[k]]
+        if edited:
+            for k in edited:
+                force.add((d["surface"], project.CHUNK_PREFIX + k))
+            now = sum(counts.get(d["surface"], {}).get(k, 0) for k in edited)
+            st.notes.append(msg(
+                "{surface}: 편집기에서 손댄 도안을 지금 있는 그대로 받는다 — "
+                "{name} ({was:,}장 → {now:,}장)",
+                surface=d["surface"], name=Path(d["plan"]).name,
+                was=sum(was[k] for k in edited), now=now))
+            continue
         kept.append(d)
+        live.add(n)
         xf = None
         for key in (f"{DECAL}{n}-fit", f"{DECAL}{n}"):
             if key in entry["chunks"]:
@@ -278,9 +312,45 @@ def _absorb(st: Studio) -> None:
                             surface=d["surface"]))
     if len(kept) != len(st.designs):
         st.state["designs"] = kept
+    return live, force
 
 
-def _adopt(st: Studio) -> None:
+def _chunk_counts(doc: dict) -> dict[str, dict[str, int]]:
+    """면마다 `FS:` 덩어리의 **도형 장수** — 구울 때 적어 두고(`state.baked`) 다음에
+    열 때 대조하면 그룹 안에서 지우거나 더한 것이 보인다. 숨김은 안 본다 (화면
+    상태이지 내용이 아니다)."""
+    def _n(node: dict) -> int:
+        n = 0
+        for kid in node.get("children") or []:
+            if not isinstance(kid, dict):
+                continue
+            if kid.get("kind") == "group":
+                n += _n(kid)
+            elif kid.get("kind") == "shape":
+                n += 1
+        return n
+
+    out: dict[str, dict[str, int]] = {}
+    for node in (doc.get("root") or {}).get("children") or []:
+        if not isinstance(node, dict) or not node.get("is_livery_section"):
+            continue
+        slot = int(node.get("livery_section_slot", -1))
+        if not 0 <= slot < len(SLOTS):
+            continue
+        got: dict[str, int] = {}
+        for kid in node.get("children") or []:
+            if not isinstance(kid, dict) or kid.get("kind") != "group":
+                continue
+            name = str(kid.get("name") or "")
+            if name.startswith(project.CHUNK_PREFIX):
+                got[name[len(project.CHUNK_PREFIX):]] = _n(kid)
+        if got:
+            out[SLOTS[slot][0]] = got
+    return out
+
+
+def _adopt(st: Studio, live: set[int] | None = None,
+           force: set[tuple[str, str]] | None = None) -> None:
     """조리법이 모르는 덩어리 — 가른 조각·사본·손으로 그린 것 — 를 **도안으로 받는다**.
 
     편집기에서 도안 그룹을 [선으로 가르기]로 가르면 조각은 `FS:` 머리를 잃는다.
@@ -298,9 +368,16 @@ def _adopt(st: Studio) -> None:
     밖 낱 도형은 면마다 한 도안으로 묶는다. 안 받는 것은 셋이다: 숨긴 그룹(화면
     상태이지 내용이 아니다), 래스터 로고(카탈로그 밖 그림), 안내선. 그것들은
     종전처럼 원본 노드째 남아 다시 구울 때 그대로 실린다 (`_restore_foreign`).
+
+    `live`는 조리법이 아직 짓는 덩어리 번호(`_absorb`가 문서의 번호로 센 것),
+    `force`는 이름이 구성기 문법이어도 **받아야 하는** (면, 그룹 이름) — 안에서
+    손댄 덩어리다. 그것은 원래 도안(`origin`)을 기억해 좌우 대칭이 반대편의 옛
+    사본을 갈아 끼울 수 있게 한다.
     """
     gu = _group_unit_of(st)
-    live = set(decal_numbers(st.designs))
+    if live is None:
+        live = set(decal_numbers(st.designs))
+    force = force or set()
     deco_on = bool(st.state.get("deco"))
     leftover: dict[str, list] = {}
     added = 0
@@ -320,7 +397,8 @@ def _adopt(st: Studio) -> None:
             if not isinstance(kid, dict):
                 continue
             name = str(kid.get("name") or "")
-            if (kid.get("kind") == "group"
+            forced = (surface, name) in force
+            if (kid.get("kind") == "group" and not forced
                     and name.startswith(project.CHUNK_PREFIX)
                     and _claimed(name[len(project.CHUNK_PREFIX):],
                                  live, deco_on)):
@@ -331,7 +409,8 @@ def _adopt(st: Studio) -> None:
             if not layers:
                 continue
             if kid.get("kind") == "group":
-                _adopt_one(st, surface, name or msg("이름 없는 그룹"), layers, gu)
+                _adopt_one(st, surface, name or msg("이름 없는 그룹"), layers, gu,
+                           origin=_origin_of(st, name) if forced else None)
                 added += 1
             else:
                 loose += layers
@@ -387,8 +466,19 @@ def _peel(node: dict, gm) -> tuple[list[Layer], dict | None]:
     return [lay], None
 
 
+def _origin_of(st: Studio, chunk: str) -> str | None:
+    """손댄 덩어리 `FS:decal-<n>…`가 **어느 도안에서 왔나** — 구울 때 적어 둔 표
+    (`state.baked_plans`: 번호 → 도안 파일)로 되짚는다."""
+    m = DECAL_CHUNK.match(chunk[len(project.CHUNK_PREFIX):]
+                          if chunk.startswith(project.CHUNK_PREFIX) else chunk)
+    if not m:
+        return None
+    plans = st.state.get("baked_plans") or {}
+    return plans.get(m.group(1))
+
+
 def _adopt_one(st: Studio, surface: str, name: str, layers: list[Layer],
-               group_unit: float) -> None:
+               group_unit: float, *, origin: str | None = None) -> None:
     """레이어 묶음 하나를 도안 파일로 떠서 항등 배치로 조리법에 올린다.
 
     파일 이름은 **내용 서명**이다 — 같은 덩어리를 다시 열어도 같은 파일이라
@@ -403,10 +493,12 @@ def _adopt_one(st: Studio, surface: str, name: str, layers: list[Layer],
     if not p.is_file():
         p.parent.mkdir(parents=True, exist_ok=True)
         plan.save(p)
-    st.designs.append({
-        "plan": str(p), "surface": surface, "x": 0.0, "y": 0.0,
-        "scale": round(1.0 / max(1e-9, group_unit), 6), "rot": 0.0,
-        "mirror": False, "adopted": name})
+    d = {"plan": str(p), "surface": surface, "x": 0.0, "y": 0.0,
+         "scale": round(1.0 / max(1e-9, group_unit), 6), "rot": 0.0,
+         "mirror": False, "adopted": name}
+    if origin:
+        d["origin"] = origin
+    st.designs.append(d)
     st.notes.append(msg("{surface}: 편집기의 '{name}' {n:,}장을 도안으로 받았다",
                         surface=surface, name=name, n=len(layers)))
 
@@ -482,6 +574,11 @@ def rebuild(st: Studio, *, log=None) -> dict:
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)
     st.doc = doc
+    # 구운 덩어리의 장수와 번호 → 도안 — 다음에 열 때 그룹 안에서 손댄 것을
+    # 알아보는 자다 (`_absorb`).
+    st.state["baked"] = _chunk_counts(doc)
+    st.state["baked_plans"] = {
+        str(n): d["plan"] for d, n in zip(st.designs, decal_numbers(st.designs))}
     save_state(st)
     return stats
 
@@ -838,6 +935,13 @@ def _mirror_sources(st: Studio, surface: str | None, groups: list | None) -> lis
     return cands
 
 
+def _same_design(a: dict, b: dict) -> bool:
+    """같은 도안인가 — 편집기에서 손대 받은 것은 **원래 도안**(`origin`)으로 센다.
+    왼쪽에서 레이어를 지우고 좌우 대칭하면 오른쪽의 옛 사본이 갈려야 한다."""
+    return (str(a.get("origin") or a["plan"]) == str(b.get("origin") or b["plan"])
+            or str(a["plan"]) == str(b["plan"]))
+
+
 def act_mirror(st: Studio, surface: str | None,
                groups: list | None = None) -> str:
     """좌우 대칭 — 옆면·도어 유리의 도안을 반대편에 거울로 세운다 (`_mirror_sources`).
@@ -858,10 +962,13 @@ def act_mirror(st: Studio, surface: str | None,
         mp = compose.mirror_place(_manual(d), sm, dm, dst)
         st.state["designs"] = [o for o in st.designs
                                if not (o["surface"] == dst
-                                       and o["plan"] == d["plan"])]
-        st.designs.append({"plan": d["plan"], "surface": dst, "x": mp.x,
-                           "y": mp.y, "scale": mp.scale, "rot": mp.rot,
-                           "mirror": mp.mirror})
+                                       and _same_design(o, d))]
+        new = {"plan": d["plan"], "surface": dst, "x": mp.x,
+               "y": mp.y, "scale": mp.scale, "rot": mp.rot,
+               "mirror": mp.mirror}
+        if d.get("origin"):
+            new["origin"] = d["origin"]
+        st.designs.append(new)
         done.append(f"{d['surface']} → {dst}")
     if not done:
         raise ValueError(msg("대칭할 면을 못 찾았다"))

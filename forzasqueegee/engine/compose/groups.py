@@ -36,8 +36,11 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
 
     둘을 한자리에서 한다:
 
-    1. **어느 배치에서도 안 그려질 레이어를 뺀다** — 게임은 면 도색 상자 밖을 안
-       그리므로 그 레이어들은 면 상한만 잡아먹는다. 자르는 단위는 배치가 아니라
+    1. **어느 배치에서도 안 그려질 레이어를 뺀다** — 게임은 차 밖(도색 마스크
+       밖)을 안 그리므로 그 레이어들은 면 상한만 잡아먹는다. 자는 면이 실제로
+       그리는 마스크에 조금의 여유를 둔 것이다 (`layers_on` — 상자 안이라도
+       휠아치·실루엣 밖이면 빠진다; 마스크를 못 믿는 면은 상자로 잰다).
+       자르는 단위는 배치가 아니라
        **도안**이다 (모든 배치의 합집합): 한 그룹을 좌우·후드가 나눠 쓰므로
        배치마다 따로 자르면 큰 그룹이 배치 수만큼 늘어 준비 시간(장당 0.44초)이
        그만큼 는다. 합집합이어도 자리마다 제 면 마스크가 알아서 자르므로 그림은
@@ -76,7 +79,8 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
             got.update(range(len(hp.layers)))
             continue
         L, t = place_xf(mp, group_unit)
-        keep = layers_on(hp, cat, L, t, dm.paint)
+        keep = layers_on(hp, cat, L, t, dm.paint,
+                         mask=None if dm.uncertain else dm.mask)
         if not keep:
             notes.append(msg("{surface}: 도안이 통째로 면 밖이다 — 자리를 다시 볼 것",
                              surface=mp.surface))
