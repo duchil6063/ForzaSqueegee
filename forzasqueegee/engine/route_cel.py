@@ -71,7 +71,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
                          grow_covers, price_of, repair_min_gain,
                          repair_mismatch, silhouette_cover)
     from .model import UNITS_PER_SCALE
-    from .render import render_plan
+    from .render import render_plan, render_plan_rgba
 
     from . import lineart, upscale
 
@@ -181,7 +181,7 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
         log(msg("  선 도안에 스냅: 획 {ink:,}px · 영역 {n}개 (반경 {r}px)",
                 ink=int(ink.sum()), n=len(cel.regions), r=r))
     write_png(run_file(out, "cel.png"),
-              cv2.cvtColor(cel.flat_render(), cv2.COLOR_RGB2BGR))
+              cv2.cvtColor(cel.flat_render_rgba(), cv2.COLOR_RGBA2BGRA))
 
     stats_trace = {k: v for k, v in (cel.trace or {}).items()
                    if not isinstance(v, (np.ndarray, set))}
@@ -576,10 +576,13 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
 
     # 2× 렌더 후 축소 — 인게임은 벡터라 경계가 매끈하다. 하드 래스터 프리뷰는
     # 실물보다 거칠어 보이고 RMSE도 억울하게 나온다
-    render = cv2.resize(render_plan(plan, cat, scale=2), (w, h),
-                        interpolation=cv2.INTER_AREA)
+    render2 = render_plan(plan, cat, scale=2)
+    render = cv2.resize(render2, (w, h), interpolation=cv2.INTER_AREA)
+    # 파일은 투명 배경 — 자가 점검(RMSE)은 아래 흰 바탕 `render`로 잰다
     write_png(run_file(out, "preview.png"),
-              cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
+              cv2.cvtColor(render_plan_rgba(plan, cat, scale=2, out_size=(w, h),
+                                            white=render2),
+                           cv2.COLOR_RGBA2BGRA))
 
     sel = rgba[..., 3] >= 128
     tgt = np.where(sel[..., None], rgba[..., :3], 255).astype(np.float32)

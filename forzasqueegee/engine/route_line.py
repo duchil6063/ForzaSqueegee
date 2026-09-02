@@ -137,7 +137,7 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     """
     from .catalog import Catalog, default_catalog_path
     from .celart import CelArt, _ALPHA_OPAQUE
-    from .render import render_plan
+    from .render import render_plan, render_plan_rgba
 
     from . import lineart, upscale
 
@@ -179,7 +179,7 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
                                      np.median(src_rgb[line_mask], axis=0)),
                  line_mask=line_mask, src_rgb=src_rgb)
     write_png(run_file(out, "line.png"),
-              cv2.cvtColor(tgt.flat_render(), cv2.COLOR_RGB2BGR))
+              cv2.cvtColor(tgt.flat_render_rgba(), cv2.COLOR_RGBA2BGRA))
     # 선 재구성 자취 — 회귀 계측·육안 대조가 같은 근거를 본다
     from .celfit import policy as _P
     from .celfit import stroke_metrics
@@ -200,10 +200,12 @@ def _make_line(image: Path, out: Path, shapes: int, size: int,
     plan.save(run_file(out, "plan.json"))
 
     # 2× 렌더 후 축소 — cel 노선과 같은 이유 (인게임은 벡터라 경계가 매끈하다)
-    render = cv2.resize(render_plan(plan, cat, scale=2), (w, h),
-                        interpolation=cv2.INTER_AREA)
+    render2 = render_plan(plan, cat, scale=2)
+    render = cv2.resize(render2, (w, h), interpolation=cv2.INTER_AREA)
     write_png(run_file(out, "preview.png"),
-              cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
+              cv2.cvtColor(render_plan_rgba(plan, cat, scale=2, out_size=(w, h),
+                                            white=render2),
+                           cv2.COLOR_RGBA2BGRA))
     flat = tgt.flat_render().astype(np.float32)
     rmse_line = float(np.sqrt(((render.astype(np.float32) - flat) ** 2).mean()))
 

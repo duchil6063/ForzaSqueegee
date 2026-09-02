@@ -454,11 +454,11 @@ def resolve_plan(path: str | Path, out_root: str | Path) -> tuple[Path, dict | N
 # ------------------------------------------------------------------ 자가 점검
 
 def write_preview(plan: LayerPlan, catalog: Catalog, path: str | Path) -> None:
-    """플랜 완성 예상도 PNG (흰 배경 — 다른 노선의 preview.png와 같은 렌더)."""
-    from .render import render_plan
+    """플랜 완성 예상도 PNG (투명 배경 — 다른 노선의 preview.png와 같은 렌더)."""
+    from .render import render_plan_rgba
 
-    rgb = render_plan(plan, catalog)
-    cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))[1].tofile(str(path))
+    rgba = render_plan_rgba(plan, catalog)
+    cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))[1].tofile(str(path))
 
 
 def roundtrip_diff(plan: LayerPlan, data: dict, catalog: Catalog) -> dict:

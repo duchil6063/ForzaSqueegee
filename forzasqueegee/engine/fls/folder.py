@@ -50,20 +50,24 @@ def export_folder(base: str | Path, name: str, livery_kind: bool) -> Path:
     return cand
 
 
-def _write_thumb(path: Path, rgb, size: tuple[int, int] | None = None) -> bool:
-    """미리보기 webp. `size`를 주면 그 상자 안에 맞춰 어두운 판 위에 얹는다
-    (게임 그리드 칸이 정해진 크기다). Pillow가 없으면 조용히 건너뛴다."""
-    if rgb is None:
+def _write_thumb(path: Path, rgba, size: tuple[int, int] | None = None) -> bool:
+    """미리보기 webp (RGBA면 투명 배경 그대로). `size`를 주면 그 상자 안에
+    맞춰 어두운 판 위에 얹는다 (게임 그리드 칸이 정해진 크기다). Pillow가
+    없으면 조용히 건너뛴다."""
+    if rgba is None:
         return False
     try:
         from PIL import Image
 
-        im = Image.fromarray(rgb).convert("RGB")
+        im = Image.fromarray(rgba)
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA")
         if size is not None:
             im.thumbnail(size, Image.LANCZOS)
             plate = Image.new("RGB", size, (24, 26, 30))
             plate.paste(im, ((size[0] - im.width) // 2,
-                             (size[1] - im.height) // 2))
+                             (size[1] - im.height) // 2),
+                        mask=im if im.mode == "RGBA" else None)
             im = plate
         im.save(str(path), "WEBP", quality=88)
         return True

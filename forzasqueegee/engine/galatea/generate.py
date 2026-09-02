@@ -518,11 +518,10 @@ def generate(image: str | Path, out_dir: str | Path, *,
     plan.save(run_file(out, "plan.json"))
     from ..catalog import Catalog, default_catalog_path
     from ..kfpsjson import export_typecode
-    from ..render import render_plan
+    from ..render import render_plan_rgba
     cat = Catalog(default_catalog_path())
-    render = cv2.resize(render_plan(plan, cat, scale=2), (full_w, full_h),
-                        interpolation=cv2.INTER_AREA)
-    ok, buf = cv2.imencode(".png", cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
+    render = render_plan_rgba(plan, cat, scale=2, out_size=(full_w, full_h))
+    ok, buf = cv2.imencode(".png", cv2.cvtColor(render, cv2.COLOR_RGBA2BGRA))
     if ok:
         run_file(out, "preview.png").write_bytes(buf.tobytes())
     kfps_data, kfps_stats = export_typecode(plan, cat)

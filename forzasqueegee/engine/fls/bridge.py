@@ -99,20 +99,17 @@ def plan_folder(plan_path: str | Path, out_root: str | Path, *,
 
 
 def _plan_thumb(plan: LayerPlan, size: int = 256):
-    """도안 렌더 축소본 (RGB) — 컨테이너 미리보기 그림. 실패하면 None."""
+    """도안 렌더 축소본 (RGBA, 투명 배경) — 컨테이너 미리보기 그림. 실패하면 None."""
     try:
-        import cv2
-
         from ..catalog import Catalog, default_catalog_path
-        from ..render import render_plan
+        from ..render import render_plan_rgba
 
-        rgb = render_plan(plan, Catalog(default_catalog_path()))
-        h, w = rgb.shape[:2]
+        w, h = plan.image_size
         k = size / max(h, w, 1)
-        if k < 1.0:
-            rgb = cv2.resize(rgb, (max(1, round(w * k)), max(1, round(h * k))),
-                             interpolation=cv2.INTER_AREA)
-        return rgb
+        out_size = ((max(1, round(w * k)), max(1, round(h * k)))
+                    if k < 1.0 else None)
+        return render_plan_rgba(plan, Catalog(default_catalog_path()),
+                                out_size=out_size)
     except Exception:                       # noqa: BLE001 — 그림칸일 뿐이다
         return None
 

@@ -50,3 +50,12 @@ class CelArt:
         if self.line_mask is not None and self.src_rgb is not None:
             out[self.line_mask] = self.src_rgb[self.line_mask]
         return out
+
+    def flat_render_rgba(self) -> np.ndarray:
+        """`flat_render` + 알파 — 영역이나 선이 있는 픽셀만 불투명 (RGBA).
+        배경은 흰색 그대로라 알파를 버리고 읽어도 같은 그림이다."""
+        opaque = self.labels >= 0
+        if self.line_mask is not None and self.src_rgb is not None:
+            opaque = opaque | self.line_mask
+        return np.dstack([self.flat_render(),
+                          np.where(opaque, 255, 0).astype(np.uint8)])

@@ -21,6 +21,8 @@ def render_plan(plan: LayerPlan, catalog: Catalog, scale: int = 1, pad: int = 0,
                 bg: int = 255) -> np.ndarray:
     """계획을 원본 이미지 크기(×scale)로 렌더 (RGB, 기본 흰 배경).
 
+    투명 배경 그림이 필요하면 `render_plan_rgba`.
+
     pad: 이미지 rect 사방에 추가할 px — 경계 밖 돌출·마스크 밴드 검증용.
     bg: 배경 회색값. **뺄셈 마스크가 드러내는 색도 이 값이다** (마스크의 정의가
         "먼저 그려진 것을 잘라 배경을 노출"이라 배경을 바꾸면 같이 바뀐다).
@@ -29,6 +31,38 @@ def render_plan(plan: LayerPlan, catalog: Catalog, scale: int = 1, pad: int = 0,
     out = np.full(((h + 2 * pad) * scale, (w + 2 * pad) * scale, 3), bg, np.uint8)
     for layer in plan.layers:
         _draw_layer(out, layer, plan, catalog, scale, pad, bg)
+    return out
+
+
+def render_plan_rgba(plan: LayerPlan, catalog: Catalog, scale: int = 1,
+                     pad: int = 0, out_size: tuple[int, int] | None = None,
+                     white: np.ndarray | None = None) -> np.ndarray:
+    """투명 배경 렌더 (RGBA, uint8) — 파일로 남기는 미리보기·썸네일용.
+
+    검(0)·흰(255) 두 바탕 렌더의 차가 알파다. 렌더가 배경 위 소스오버라
+    반투명·그라데이션·안티에일리어싱 가장자리까지 정확하고, 뺄셈 마스크가
+    잘라낸 자리는 배경을 칠하므로 저절로 투명이 된다.
+
+    - 색은 미리곱을 푼 값. 알파 0인 픽셀은 **흰색**이라, 알파를 버리고 읽는
+      쪽(`cv2.imread` 기본·실루엣을 비백색으로 어림하는 계측)은 흰 바탕
+      렌더와 같은 그림을 본다.
+    - out_size: (w, h) — 주면 미리곱 상태에서 축소한다 (풀고 축소하면
+      가장자리가 배경색으로 물든다). 2× 렌더 후 축소가 여기로 온다.
+    - white: 같은 scale·pad로 이미 렌더한 흰 바탕 판 — 두 번 그리지 않는다.
+    """
+    black = render_plan(plan, catalog, scale, pad, bg=0).astype(np.float32)
+    if white is None:
+        white = render_plan(plan, catalog, scale, pad, bg=255)
+    alpha = np.clip(1.0 - np.abs(white.astype(np.float32) - black).mean(axis=2)
+                    / 255.0, 0.0, 1.0).astype(np.float32)
+    if out_size is not None and tuple(out_size) != alpha.shape[::-1]:
+        black = cv2.resize(black, tuple(out_size), interpolation=cv2.INTER_AREA)
+        alpha = cv2.resize(alpha, tuple(out_size), interpolation=cv2.INTER_AREA)
+    a = alpha[..., None]
+    rgb = np.where(a > 1e-3, black / np.maximum(a, 1e-3), 255.0)
+    out = np.empty((*alpha.shape, 4), np.uint8)
+    out[..., :3] = np.clip(np.round(rgb), 0, 255)
+    out[..., 3] = np.clip(np.round(alpha * 255.0), 0, 255)
     return out
 
 

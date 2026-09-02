@@ -30,9 +30,9 @@ GUI는 이 함수를 부르는 창일 뿐이다 — 로직을 창에 두지 않�
     <이름>.kfps.json     KFPS 편집기·임포터 타입코드 JSON
     <이름>.3so           FLS 편집기가 여는 프로젝트
     LayerGroup_<이름>/   게임이 읽는 비닐 그룹 컨테이너 (C_group + header)
-    <이름>.preview.png   플랜을 렌더한 그림
-    <이름>.cel.png       (cel) 배치 목표 — 획 라스터에 스냅한 셀 재해석 + 선 도안
-    <이름>.line.png      (line) 선화 목표 — 흰 바탕 + 원화 색 선
+    <이름>.preview.png   플랜을 렌더한 그림 (투명 배경)
+    <이름>.cel.png       (cel) 배치 목표 — 획 라스터에 스냅한 셀 재해석 + 선 도안 (투명 배경)
+    <이름>.line.png      (line) 선화 목표 — 원화 색 선 (투명 배경)
     <이름>.cutout.png    (전처리 발동 시) 배경 제거·크롭 결과 — 노선이 받은 입력
     <이름>.report.json   자가 점검 — `verdict`에 한 줄 판정
 """
