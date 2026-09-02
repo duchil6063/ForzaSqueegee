@@ -194,6 +194,9 @@ from .rhythm import Beat, RhythmCurve, beats, curve_for
 from .macro import (
     KINDS as MACRO_KINDS, MACRO_AREA_MAX, MacroSpec, macro_layers,
     plan as macro_plan)
+from .stack import (
+    LABEL as STACK_LABEL, PIECES as STACK_PIECES, StackPiece, build as stack_build,
+    plan as stack_plan)
 from .score import ScoreCard, composite, raster_layers, score_design
 from .design import DECO_FRAME_FILL, Design, compose_design
 from .textspec import PLACEMENTS as TEXT_PLACEMENTS, STYLES as TEXT_STYLES, TextSpec

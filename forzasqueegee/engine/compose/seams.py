@@ -53,6 +53,7 @@ ROLE_POLICY: dict[str, str] = {
     # 이어 간다 — 차를 한 바퀴 도는 큰 흐름
     "itasha_bed": CONTINUE,
     "itasha_stripe": CONTINUE,
+    "itasha_stack": CONTINUE,
     "macro": CONTINUE,
     "rocker": CONTINUE,
     "stripe": CONTINUE,

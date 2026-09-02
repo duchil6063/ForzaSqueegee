@@ -41,6 +41,10 @@ class Family:
     # 계열이 **덧붙이는** 관계 문법 (`graph`) — 공통 문법 위에 더한다.
     # (관계, 노드 a, 노드 b, 가중치). 없는 노드를 가리키면 안 센다.
     grammar: tuple[tuple[str, str, str, float], ...] = ()
+    # **색면 스택** — 블록 위에 얹는 조각 (`stack.PIECES`: belt · arch · pin ·
+    # edge · gap). 후보 축이 아니라 계열의 문법이다 — 사람 판의 스택은
+    # 레이싱·그래픽·스플래시라는 계열이 정하지 도안마다 고르는 것이 아니다.
+    stack: tuple[str, ...] = ()
 
     def rels(self) -> tuple[tuple[str, str, str, float], ...]:
         """이 계열이 지키려는 관계 전부 — 공통 문법 + 제 몫."""
@@ -63,6 +67,9 @@ FAMILIES: dict[str, Family] = {
                           empty_target=0.75, clutter=(0.10, 0.28), echo=True,
                           flows=("auto", "rear", "front"), other_density=0.8,
                           macro=(("split", "ribbon"), ("split", "none"), ("ribbon", "blade")),
+                          # 벨트 블랙아웃 + 아치 날 + 찢긴 가장자리 + 홈 — 사람
+                          # 그래픽 판의 바닥 (structure2 실측: 띠 13장·6색)
+                          stack=("belt", "arch", "edge", "gap"),
                           # 무리는 판 **가장자리**에 선다 — 판 위에 얹으면 판이
                           # 얼룩이 되고 무리도 안 읽힌다
                           grammar=(("avoids", "motif", "macro0", 0.8),)),
@@ -72,6 +79,8 @@ FAMILIES: dict[str, Family] = {
                             empty_target=0.65, clutter=(0.12, 0.32), echo=True,
                             flows=("auto", "rear"), other_density=1.0,
                             macro=(("blade", "chevron"), ("split", "stack"), ("blade", "none")),
+                            # 아치에서 솟는 날 + 사선을 따르는 핀 + 스월 가장자리
+                            stack=("arch", "pin", "edge"),
                             # 사선 둘이 서로를 **가로질러야** 흐름이 난다
                             grammar=(("counter_to", "macro1", "macro0", 1.0),)),
     # 모터스포츠 — 로커·스트라이프 등 직선 요소, 베드는 낮은 슬래브, 모티프는 적게
@@ -80,6 +89,8 @@ FAMILIES: dict[str, Family] = {
                          empty_target=0.80, clutter=(0.08, 0.24), echo=True,
                          flows=("rear", "front"), other_density=0.6, text_budget=0.8,
                          macro=(("stack", "corner"), ("stack", "none"), ("ribbon", "stack")),
+                         # 벨트 띠 + 핀스트라이프 + 띠 속의 홈 (레이싱 그래픽)
+                         stack=("belt", "pin", "gap"),
                          # 로커가 띠를 이어 받는다 (레이싱 그래픽의 직선 계열)
                          grammar=(("continues", "rocker", "macro0", 0.6),)),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
@@ -88,6 +99,8 @@ FAMILIES: dict[str, Family] = {
                      empty_target=0.5, clutter=(0.18, 0.45), echo=True,
                      flows=("auto",), other_density=1.25, torn=True,
                      macro=(("burst", "ribbon"), ("sweep", "blade"), ("burst", "none")),
+                     # 아치 날 + 튄 물감 가장자리 (찢김·스플래시는 무늬 도형이 낸다)
+                     stack=("arch", "edge"),
                      # 전경 조각이 인물을 스치고 지난다 (장면 안의 인물)
                      grammar=(("overlaps", "front", "hero", 0.6),)),
 }

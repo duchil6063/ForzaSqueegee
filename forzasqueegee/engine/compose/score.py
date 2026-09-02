@@ -75,7 +75,7 @@ ROCKER_INK = (16, 17, 20)
 # **바닥 요소** — 프레임을 관통하는 판·띠와 로커. 구도의 뼈대라 어수선·여백·위계
 # 자로는 안 잰다 (그 셋은 **모티프**의 자다). 세면 판이 서는 계열이 전부
 # "어수선"으로 떨어지고 여백이 늘 차 있다.
-GROUND = ("itasha_bed", "itasha_stripe")
+GROUND = ("itasha_bed", "itasha_stripe", "itasha_stack")
 
 
 @dataclass

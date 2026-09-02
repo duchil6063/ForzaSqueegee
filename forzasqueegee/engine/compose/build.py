@@ -33,7 +33,7 @@ from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
 from .intent import read_intent
 from . import whole as wholecar
-from .design import Design, compose_design
+from .design import Design, _macro_colors, compose_design
 from .families import FAMILIES
 from .textspec import TextSpec
 from .textbuild import mirrored_set
@@ -481,6 +481,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 옆면이 이음새로 내보내는 두 선 — 큰 색면의 띠와 하부 투톤의 윗선 (면 유닛).
     # 잇는 자는 `compose.seams`이고, 띠는 **어디서 쟀는지**(`Band.at_u`)를 같이 든다.
     side_band: "gseams.Band | None" = None
+    # 스택의 관통 띠들 — (띠, 색, 조각 이름). 벨트 블랙아웃이 여기로 나간다.
+    side_stack: list[tuple["gseams.Band", tuple[int, int, int], str]] = []
     side_rocker_top: float | None = None
     design: Design | None = None
     face_summary: dict | None = None
@@ -557,6 +559,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 v=fcv + prim.y * u, angle=a - 180.0 if a > 90.0 else a,
                 thickness=2 * abs(prim.sy) * UNITS_PER_SCALE * u,
                 at_u=fcu + prim.x * u)
+        # 스택의 **관통 띠**(벨트 블랙아웃)도 이음새로 내보낸다 — 프레임 좌표는
+        # 면 유닛의 균등 축소라 자리·두께에 `u`만 곱한다. 색은 그 조각의 역할색.
+        _scol = _macro_colors(design.pal)
+        for pc in design.stack:
+            if pc.kind == "belt":
+                side_stack.append((gseams.Band(
+                    v=fcv + pc.at[1] * u, angle=pc.ang, thickness=pc.width * u,
+                    at_u=fcu + pc.at[0] * u), _scol.get(pc.role, design.pal.dark), pc.kind))
         # 하부 투톤의 **윗선** — 이것이 이음새를 건너 앞·뒤 범퍼로 이어진다.
         # 눈이 따라가는 것은 밴드의 두께가 아니라 이 선이다.
         rk = next((l for l in design.back if l.label == "itasha_stripe"), None)
@@ -733,6 +743,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         wcp.links = wholecar.seam_links(wcp, atlas, {mp.surface for mp in hand})
 
     carried: dict = {}
+    carried_stack: list[dict] = []
     rocker_carry: dict = {}
 
     def _carry_macro(name: str) -> list[dict]:
@@ -746,7 +757,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         가파른 색면은 안 잇는다: 위아래(벨트라인·로커)로 나가므로 애초에
         앞뒤 이음새에 안 닿는다.
         """
-        if atlas is None or side_band is None or not use_deco or design is None:
+        if atlas is None or not use_deco or design is None:
+            return []
+        if side_band is None and not side_stack:
             return []
         # **흐름이 가리키는 면에만** 잇는다. 양쪽으로 다 이으면 색면이 차를 한
         # 바퀴 두르는 띠가 되고, 실측으로도 흐름 반대쪽에서는 오히려 어긋났다
@@ -754,35 +767,47 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 흐름 쪽 리어는 0.225 → 0.136으로 좋아졌다).
         if name != (ROLE_REAR if flow_rear else "front"):
             return []
-        carried["from"] = deco_src
         sm = maps.get(name)
         seam = atlas.seam_to(deco_src, name)
-        if sm is None or sm.uncertain or seam is None:
-            carried["why"] = msg("이음새를 못 푼다")
-            return []
-        if abs(side_band.angle) > MACRO_CARRY_TILT:
-            carried["why"] = msg("색면이 가파르다 ({ang:.0f}°) — 앞뒤 이음새에 안 닿는다",
-                                 ang=side_band.angle)
-            return []
-        # 건너온 띠의 **두께는 지키고**, 못 지킬 만큼 좁은 면이면 아예 안 잇는다
-        # (`seams.WIDTH_MIN`). 반으로 깎인 띠를 이어 붙이면 이음새에서 만나는 두
-        # 띠가 서로 다른 띠로 읽힌다 — 이을 바에는 끊는 편이 사람 문법이다.
-        ph = sm.paint[3] - sm.paint[1]
-        con = gseams.carry(seam.fold, side_band, "macro", dst_box=sm.paint,
-                           tilt_max=MACRO_CARRY_OUT, thick_max=MACRO_CARRY_H * ph)
-        carried.update({"to": name, "policy": con.policy, "why": con.why,
-                        "v_side": rnd(side_band.v, 1),
-                        "ang_side": rnd(side_band.angle, 1)})
-        carried.update(con.metrics)
-        if not con.carried:
-            return []
-        b2 = con.band
-        carried.update({"v": rnd(b2.v, 1), "ang": rnd(b2.angle, 1),
+
+        def _one(band: "gseams.Band", color, rec: dict) -> list[dict]:
+            rec["from"] = deco_src
+            if sm is None or sm.uncertain or seam is None:
+                rec["why"] = msg("이음새를 못 푼다")
+                return []
+            if abs(band.angle) > MACRO_CARRY_TILT:
+                rec["why"] = msg("색면이 가파르다 ({ang:.0f}°) — 앞뒤 이음새에 안 닿는다",
+                                 ang=band.angle)
+                return []
+            # 건너온 띠의 **두께는 지키고**, 못 지킬 만큼 좁은 면이면 아예 안 잇는다
+            # (`seams.WIDTH_MIN`). 반으로 깎인 띠를 이어 붙이면 이음새에서 만나는 두
+            # 띠가 서로 다른 띠로 읽힌다 — 이을 바에는 끊는 편이 사람 문법이다.
+            ph = sm.paint[3] - sm.paint[1]
+            con = gseams.carry(seam.fold, band, "macro", dst_box=sm.paint,
+                               tilt_max=MACRO_CARRY_OUT, thick_max=MACRO_CARRY_H * ph)
+            rec.update({"to": name, "policy": con.policy, "why": con.why,
+                        "v_side": rnd(band.v, 1), "ang_side": rnd(band.angle, 1)})
+            rec.update(con.metrics)
+            if not con.carried:
+                return []
+            b2 = con.band
+            rec.update({"v": rnd(b2.v, 1), "ang": rnd(b2.angle, 1),
                         "seam_err": {k: rnd(v, 3) for k, v in
-                                     gseams.seam_error(seam.fold, side_band, b2).items()}})
-        return flow_shapes(design.pal.bed, sm, mode="macro", center_v=b2.v,
-                           anchor_u=b2.at_u, rot=b2.angle,
-                           height=b2.thickness, cat=cat)
+                                     gseams.seam_error(seam.fold, band, b2).items()}})
+            return flow_shapes(color, sm, mode="macro", center_v=b2.v,
+                               anchor_u=b2.at_u, rot=b2.angle,
+                               height=b2.thickness, cat=cat)
+
+        out: list[dict] = []
+        if side_band is not None:
+            out += _one(side_band, design.pal.bed, carried)
+        # **스택의 관통 띠**(벨트 블랙아웃)도 같은 자로 건넌다 — 블록 위에 얹힌
+        # 층이라 블록 뒤에 그린다 (목록 뒤가 위다). 기록은 띠마다 한 벌.
+        for band, color, kind in side_stack:
+            rec = {"kind": kind}
+            out += _one(band, color, rec)
+            carried_stack.append(rec)
+        return out
 
     def _carry_rocker(name: str) -> float | None:
         """옆면 하부 투톤의 **윗선**이 이 면에서 갖는 높이 (없으면 None).
@@ -989,10 +1014,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             tsegs = top_segments(sm) if name == ROLE_EXTRA else []
             if tsegs:                          # 후드 구간에만 흩는다 (씨앗은 로케이터)
                 tsegs = tsegs[hood_index(tsegs, hood_u):]
+            # 리어·프론트는 **옆면의 띠를 건너 받는다** — 큰 색면(과 스택의 벨트
+            # 띠)은 `_carry_macro`, 하부 투톤의 윗선은 `_carry_rocker`. 도안이 앉은
+            # 면이라고 제 몫(범퍼 로케이터)으로 따로 잡으면 이음새에서 계단이
+            # 진다. 옛 판은 이 길에서 잇기를 안 불러 33판 전부 `carry`가 비었다.
+            rtop = _carry_rocker(name) if name in (ROLE_REAR, "front") else None
+            band_kw = ({} if name == ROLE_EXTRA
+                       else {"top_v": rtop} if rtop is not None
+                       else {"center_v": _bumper_seed(media, name)})
             sh = (roof_sh if name == ROLE_EXTRA else []) \
-                + _flow(sm, mode="stripe" if name == ROLE_EXTRA else "rocker",
-                        **({} if name == ROLE_EXTRA
-                           else {"center_v": _bumper_seed(media, name)})) \
+                + (_carry_macro(name) if name in (ROLE_REAR, "front") else []) \
+                + _flow(sm, mode="stripe" if name == ROLE_EXTRA else "rocker", **band_kw) \
                 + _motifs(motif_c, sm, cat, n=_n(7), shapes=motifs_v,
                           box=tsegs[0] if tsegs else None)
             # **리어 데크에도 흩는다** — 블랙아웃은 지붕·필러만 덮고 데크는 본색
@@ -1209,6 +1241,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             "bed_level": round(design.level, 2),
             # 이긴 매크로 어휘 짝과 좌표하강 손잡이 — "왜 이 꼴인가"의 첫 줄이다
             "macro": list(design.macro),
+            # 블록 위의 색면 스택 — 어느 조각이 섰나 (`compose.stack`)
+            "stack": [p.kind for p in design.stack],
             "tweak": {k: round(v, 3) for k, v in vars(design.tweak).items()},
             "score": round(design.score.total, 4),
             "parts": {k: round(v, 3) for k, v in design.score.parts.items()},
@@ -1218,6 +1252,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # 이음새를 건너간 큰 색면 — 어느 면으로, 어느 높이·각으로 (`compose.seams`).
             # 비면 안 이었다는 뜻이다 (가파른 색면이거나 이음새를 못 푸는 차).
             "carry": dict(carried),
+            # 스택의 관통 띠가 건너간 기록 — 띠마다 한 벌 (벨트 블랙아웃)
+            "carry_stack": [dict(r) for r in carried_stack],
             # **이음새 원자료** — 점수에 안 들어간다. 옆면이 이음새로 내보낸 선과
             # 면마다의 결정(이었나·끊었나·왜)이다. 이어 붙인 결과가 실제로 맞았나는
             # 이 값과 면 도형을 대 보면 나온다 (`work/lab/deco/seamcheck.py`).
