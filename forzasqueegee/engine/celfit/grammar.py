@@ -73,8 +73,26 @@ _SEAM_GAP_MUL = float(os.environ.get("FS_SEAM_GAP", 1.0))
 _SEAM_COV_MUL = float(os.environ.get("FS_SEAM_COV", 1.0))
 
 
+# **컴팩트 특징의 채움 어휘** (cel 노선) — 눈꺼풀·속눈썹 뭉치·동공처럼 굵은 잉크
+# 덩어리를 사람은 선으로 두르지 않고 **면 몇 장을 겹쳐** 짓는다 (사람 리버리
+# 31벌 실측: 작은 도형 군집의 71%가 면형이고 A_36 초승달 21% · A_02 타원 20% ·
+# A_27 9.8% · A_04/U_04 삼각 4%, `work/lab/humanref`). 그래서 굵은 덩어리는
+# 타원 한 종이 아니라 이 어휘가 겨룬다 — 씨앗은 2차 모멘트 정합
+# (`fill._seed_moment`)이고 점수는 같은 채점판이다. line 노선은 종전 그대로
+# (타원 한 종·모멘트 씨앗) — 선화가 면을 그리기 시작하면 안 된다.
+_FAT_VOCAB = ("A_02", "A_27", "A_36", "U_35", "U_04")
+_FAT_MAX_CEL = 3          # cel 노선에서 덩어리 하나에 쓸 도형 상한
+# cel 노선의 **굵고 짧은 띠**도 덩어리다 (`engine.build_strokes`) — 폭이 선
+# 폭(최소 도형 폭)의 이 배수를 넘고, 길이가 폭의 이 배 안이면 눈꺼풀·속눈썹
+# 뭉치처럼 사람이 초승달 한 장으로 세우는 자리다. 그보다 가늘거나 길면 선이다
+_FAT_THICK_MUL = float(os.environ.get("FS_FAT_THICK", 2.5))
+_FAT_ASPECT_MAX = float(os.environ.get("FS_FAT_ASPECT", 25.0))
+_FAT_CEL = os.environ.get("FS_FAT_CEL", "1") != "0"
+
+
 def _fill_fat(plan: LayerPlan, sc: _Scorer, cel: CelArt, upp: float,
-              ys: np.ndarray, xs: np.ndarray, sid: int, left: int) -> int:
+              ys: np.ndarray, xs: np.ndarray, sid: int, left: int,
+              vocab: tuple[str, ...] | None = None) -> int:
     """뚱뚱 덩어리 하나를 **모멘트 타원 1~2장**으로 채운다 (ROI-로컬 좌표).
 
     사람의 검정 덩어리 문법 — 눈동자·속눈썹 뭉치·장식은 획이 아니라 채운
@@ -82,9 +100,15 @@ def _fill_fat(plan: LayerPlan, sc: _Scorer, cel: CelArt, upp: float,
     안 그물 뼈대가 낙서가 된다 (01 preview의 눈가 낙서 실측). 2차 모멘트가
     같은 타원을 놓고 하강으로 다듬는다 — 잔여가 40% 넘게 남으면 가장 큰
     잔여 조각에 한 장 더 (상한 2장 — 선 노선이 면을 그리기 시작하면 안 된다).
+
+    `vocab`을 주면(cel 노선) 타원 대신 **컴팩트 특징 어휘**(`_FAT_VOCAB`)가
+    모멘트 씨앗으로 겨루고 상한이 `_FAT_MAX_CEL`이다 — 눈꺼풀은 초승달,
+    속눈썹 뭉치는 삼각·물방울이 이긴다. 안 주면 종전 그대로다.
     """
     if left <= 0 or not len(ys):
         return 0
+    from .fill import _seed_moment
+
     rx0, ry0 = sc.roi[0], sc.roi[1]
     band = np.zeros(sc.residual.shape, bool)
     band[ys, xs] = True
@@ -95,25 +119,42 @@ def _fill_fat(plan: LayerPlan, sc: _Scorer, cel: CelArt, upp: float,
     n = 0
     cur = band.copy()
     area0 = float(len(ys))
-    for _ in range(2):
+    rounds = _FAT_MAX_CEL if vocab else 2
+    for _ in range(rounds):
         yy, xx = np.nonzero(cur)
         if len(yy) < _FAT_MIN_AREA or n >= left:
             break
-        cy, cx = float(yy.mean()), float(xx.mean())
-        dy, dx = yy - cy, xx - cx
-        c20 = float((dx * dx).mean())
-        c02 = float((dy * dy).mean())
-        c11 = float((dx * dy).mean())
-        tr, det = c20 + c02, c20 * c02 - c11 * c11
-        disc = max(0.0, tr * tr / 4.0 - det) ** 0.5
-        l1, l2 = tr / 2.0 + disc, max(tr / 2.0 - disc, 1e-6)
-        theta = 0.5 * np.arctan2(2.0 * c11, c20 - c02)
-        lay = _layer(_FILL_SHAPE, rx0 + cx, ry0 + cy,
-                     max(2.0 * np.sqrt(l1), 1.0), max(2.0 * np.sqrt(l2), 1.0),
-                     theta, 0.0, color, sc.upp, sc.w, sc.h,
-                     label="ink", stroke=sid)
         sc.set_band(band_d)
-        gain, q = _descend(sc, lay, color, passes=2)
+        if vocab:
+            # 어휘 겨루기 — 씨앗마다 점수를 물어 최선에서 하강한다. 동점은
+            # 어휘 순서 (결정적)
+            pw = np.stack([xx, yy], axis=1).astype(np.float64)
+            best = None
+            for name in vocab:
+                for alt in _seed_moment(sc, pw, name, color, sc.cat):
+                    alt.label, alt.stroke = "ink", sid
+                    s0 = sc.score_val(alt)
+                    if best is None or s0 > best[0]:
+                        best = (s0, alt)
+            if best is None:
+                sc.set_band(None)
+                break
+            gain, q = _descend(sc, best[1], color, passes=2)
+        else:
+            cy, cx = float(yy.mean()), float(xx.mean())
+            dy, dx = yy - cy, xx - cx
+            c20 = float((dx * dx).mean())
+            c02 = float((dy * dy).mean())
+            c11 = float((dx * dy).mean())
+            tr, det = c20 + c02, c20 * c02 - c11 * c11
+            disc = max(0.0, tr * tr / 4.0 - det) ** 0.5
+            l1, l2 = tr / 2.0 + disc, max(tr / 2.0 - disc, 1e-6)
+            theta = 0.5 * np.arctan2(2.0 * c11, c20 - c02)
+            lay = _layer(_FILL_SHAPE, rx0 + cx, ry0 + cy,
+                         max(2.0 * np.sqrt(l1), 1.0), max(2.0 * np.sqrt(l2), 1.0),
+                         theta, 0.0, color, sc.upp, sc.w, sc.h,
+                         label="ink", stroke=sid)
+            gain, q = _descend(sc, lay, color, passes=2)
         _, mfin = sc.score(q)
         sc.set_band(None)
         if gain <= _MIN_GAIN * 0.5 or not mfin.any():

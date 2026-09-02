@@ -36,12 +36,14 @@ from .graph import (_BND, _CONF, _DE, _DETAIL_W, _ISO_LEN_REL, _LINE_FRAG_REL,
                     _SIL, _SUP_OK, COLOR_BOUNDARY, FEATURE, NOISE, TEXTURE,
                     LogicalStroke, classify, continue_strokes,
                     texture_representatives)
-from .grammar import (_FAT_MAX_MUL, _FAT_MIN_AREA, _LINE_W_REL, _WCAP_CV,
+from .grammar import (_FAT_ASPECT_MAX, _FAT_CEL, _FAT_MAX_MUL, _FAT_MIN_AREA,
+                      _FAT_THICK_MUL, _FAT_VOCAB, _LINE_W_REL, _WCAP_CV,
                       _fill_fat, _patch_seams)
 from .merge import merge_costrokes
 from .policy import _SPAN_REL
 from .scoring import _PEN_FAR, _PEN_LINE, _RETRACE, _Scorer
 from .skeleton import (_dt_along, _paths, _prune_spurs, _thin, smooth_path)
+from . import stroke as _S
 from .stroke import _STROKE_SLIM, _path_worth
 from .vocabulary import min_stroke_width_px
 
@@ -218,6 +220,7 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
 
     rec = Reconstruction()
     fat_cands: list = []
+    fat_cel = bool(_FAT_CEL and pol.fill_below)   # cel 노선의 컴팩트 특징 문법
     raw: list[LogicalStroke] = []
     ncc, cc, cstats, _ = cv2.connectedComponentsWithStats(
         lm.astype(np.uint8), connectivity=8)
@@ -256,7 +259,13 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
                     continue
                 ln = float(_thin(blob).sum())
                 if ln > 1 and (len(ys) / ln) / ln <= _STROKE_SLIM:
-                    continue
+                    # **굵고 짧은 띠는 cel에서 덩어리다** (`grammar._FAT_VOCAB`
+                    # 문서) — 눈꺼풀·속눈썹 뭉치. 띠 폭은 성분 거리변환의
+                    # 최대(반폭)×2로 잰다
+                    wb = 2.0 * float(dt[blob].max())
+                    if not (fat_cel and wb >= _FAT_THICK_MUL * min_w
+                            and ln <= _FAT_ASPECT_MAX * wb):
+                        continue
                 fat_cands.append((sc, ys, xs))
         skel = _prune_spurs(_thin(m), max(3.0, 1.2 * res_w))
         src = cel.src_rgb[y0:y1, x0:x1]
@@ -303,12 +312,15 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
 
     # 뚱뚱 덩어리 채움 — 획 분류보다 먼저 놓는다
     filled = np.zeros((h, w), bool)
-    cap_area = (_FAT_MAX_MUL * min_w) ** 2
+    # cel은 면을 그려도 되는 노선이라 뚜껑을 네 배 연다 — 눈꺼풀 띠가 이 안에
+    # 든다. line 노선은 종전 그대로다
+    cap_area = (_FAT_MAX_MUL * min_w) ** 2 * (4.0 if fat_cel else 1.0)
     for sc, ys, xs in fat_cands:
         if len(ys) > cap_area:
             continue
         got = _fill_fat(plan, sc, cel, upp, ys, xs,
-                        next(sids) if sids else -1, 2)
+                        next(sids) if sids else -1, 3 if fat_cel else 2,
+                        vocab=_FAT_VOCAB if fat_cel else None)
         if got:
             filled[np.clip(ys + sc.roi[1], 0, h - 1),
                    np.clip(xs + sc.roi[0], 0, w - 1)] = True
@@ -411,10 +423,8 @@ def build_strokes(plan: LayerPlan, cel: CelArt, maps: EvidenceMaps,
 _OWN_TROUGH = float(os.environ.get("FS_OWN_TROUGH", 0.02))
 _OWN_DE = float(os.environ.get("FS_OWN_DE", 2.0))      # `_DE` 배수
 _OWN = os.environ.get("FS_OWN", "1") != "0"
-
-
 def _fill_owns(s, pol) -> bool:
-    """이 경계를 **선 없이 색면 둘이** 그려도 되나 (cel 노선만).
+    """이 경계를 **선 없이 색면 둘이** 그려도 되나 (cel 노선만) — ①~④.
 
     line 노선에는 절대 안 건다 (`pol.fill_below`) — 거기는 받쳐 줄 색면이 없어
     선이 빠지면 그 자리가 통째로 빈다. 선화 자체가 출력 목적인 노선의 의미를
@@ -570,6 +580,11 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
     ink_so_far = _ink_map(plan.layers, cat, upp, w, h)
     # 면이 통째로 맡을 수 있는 경계 짝 — 획 하나씩이 아니라 **윤곽 단위**다
     own_pairs = owned_pairs(rec.strokes, pol)
+    # 굵은 획의 자 — 이 그림의 보통 선 폭 (`stroke._THICK_MUL` 문서)
+    w_med = (float(np.median([s.width for s in rec.strokes]))
+             if rec.strokes else 0.0)
+    thick_on = bool(_S._THICK_ON and pol.fill_below and w_med > 0.0)
+    n_thick = 0
     for k, s in enumerate(rec.strokes):
         if progress and (k & 15) == 0:
             progress(k / total, msg("획 {cur}/{total}", cur=k + 1, total=total))
@@ -618,16 +633,23 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
                           max(s.width, wfloor), wfloor)
         # 한 획의 도형 상한은 **길이가 정한다** (`policy.shapes_for`) — 상수
         # 상한이 긴 획을 깨던 자리다 (끊김이 길이 400px 위에서 73%)
-        cands = C.build(sc, s.dt, s.path, s.width, s.color, s.sid, forms, cat,
-                        upp, w, h, allow, pol, band,
-                        max(1, min(budget - n,
-                                   pol.shapes_for(s.ev.length, base))),
-                        ink_so_far,
-                        core=core,
-                        wprof=s.widths if len(s.widths) == len(s.path) else None,
-                        it=s.intent if (s.intent is not None
-                                        and len(s.intent.corner) == len(s.path))
-                        else None)
+        _S._THICK[0] = bool(thick_on and s.width >= _S._THICK_MUL * w_med)
+        n_thick += int(_S._THICK[0])
+        try:
+            cands = C.build(sc, s.dt, s.path, s.width, s.color, s.sid, forms,
+                            cat, upp, w, h, allow, pol, band,
+                            max(1, min(budget - n,
+                                       pol.shapes_for(s.ev.length, base))),
+                            ink_so_far,
+                            core=core,
+                            wprof=(s.widths if len(s.widths) == len(s.path)
+                                   else None),
+                            it=s.intent if (s.intent is not None
+                                            and len(s.intent.corner)
+                                            == len(s.path))
+                            else None)
+        finally:
+            _S._THICK[0] = False
         best = C.pick(cands, pol)
         if best is None:
             s.dropped = "nofit"
@@ -656,6 +678,7 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
     # §9 계측 — 색면이 맡아 안 그은 획 (A/B가 읽는 자)
     rec.stats["fill_owned_strokes"] = n_owned
     rec.stats["joint_moves"] = n_joint
+    rec.stats["thick_strokes"] = n_thick
     if n_owned:
         log(msg("  색면이 맡는 경계 {n}개 — 선을 안 긋는다 (원화에 선이 없고 "
                 "양옆 색이 갈린다)", n=n_owned))

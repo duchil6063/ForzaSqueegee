@@ -184,6 +184,28 @@ _STROKE_END = float(os.environ.get("FS_STROKE_END", 0.45))
 # 두 자를 직접 견줄 수는 없고, 여기서는 우리 분포의 꼬리(p90 2.2 이상)만
 # 잘라 내는 자리로 세운 것이다.
 _STROKE_BULGE = float(os.environ.get("FS_STROKE_BULGE", 1.8))
+# **굵은 획은 도형이다** (cel 노선의 컴팩트 특징 문법). 눈꺼풀·굵은 윤곽처럼
+# 그림의 보통 선보다 `_THICK_MUL`배 넘게 굵은 획을 사람은 획으로 두르지 않고
+# **초승달·타원 한 장**으로 세운다 (사람 리버리 실측: 눈꺼풀 = A_02 한 장
+# 0.129×0.033, 작은 도형 군집의 A_36 초승달 21%). 위 세 자(테이퍼·끝·
+# 배부름)는 가는 선의 자라 초승달을 "잎사귀"로 걸러 내고, 그러면 굵은 획이
+# 막대 사슬 서너 토막이 된다 (08 실측: 눈꺼풀 193px이 coarse 4장). 그래서
+# 굵은 획에는 자를 연다 — 테이퍼 6 · 끝 자유 · 배부름 3. 폭 프로파일 벌점
+# (`_W_PROF`)은 그대로라 원화 띠와 다른 모양은 여전히 진다. 켜고 끄는 자리는
+# `engine.place_strokes`(획마다) — line 노선은 안 켠다
+_THICK_MUL = float(os.environ.get("FS_THICK_MUL", 1.6))
+_THICK_TAPER = float(os.environ.get("FS_THICK_TAPER", 6.0))
+_THICK_END = float(os.environ.get("FS_THICK_END", 0.0))
+_THICK_BULGE = float(os.environ.get("FS_THICK_BULGE", 3.0))
+_THICK_ON = os.environ.get("FS_THICK", "1") != "0"
+_THICK = [False]        # 지금 놓는 획이 굵은 획인가 (단일 스레드·결정적)
+
+
+def _gates() -> tuple[float, float, float]:
+    """놓인 폭 모양의 세 자 — (테이퍼, 끝, 배부름). 굵은 획이면 열린 자."""
+    if _THICK[0]:
+        return _THICK_TAPER, _THICK_END, _THICK_BULGE
+    return _STROKE_TAPER, _STROKE_END, _STROKE_BULGE
 
 
 def _straight_dev(path: np.ndarray) -> float:
@@ -539,10 +561,11 @@ def _width_shape_ok(i: int, lay) -> bool:
     같은 닫힌 식으로 다시 묻는다 — 새 문턱이 아니라 **같은 자를 늦게 한 번 더**
     거는 것이다. 하강이 자세를 민 뒤에도 성립해야 "폭을 맞췄다"가 참이 된다.
     """
-    if _end_ratio(i, lay.sx, lay.sy, lay.skew) < _STROKE_END:
+    tp_lim, end_lim, bulge_lim = _gates()
+    if _end_ratio(i, lay.sx, lay.sy, lay.skew) < end_lim:
         return False
-    return not (_STROKE_BULGE > 0.0
-                and _bulge_ratio(i, lay.sx, lay.sy, lay.skew) > _STROKE_BULGE)
+    return not (bulge_lim > 0.0
+                and _bulge_ratio(i, lay.sx, lay.sy, lay.skew) > bulge_lim)
 
 
 def _raster_iso(sh, size: int) -> tuple[np.ndarray, float]:
@@ -879,6 +902,7 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     # 자리다. 상수가 아니라 호에서 유도한다
     arc_len = float(np.hypot(*np.diff(path, axis=0).T).sum())
     slim_lim = max(_STROKE_SLIM, wtgt / max(arc_len, 1.0))
+    taper_lim, end_lim, bulge_lim = _gates()
     for i in rank:
         if not ok[i] or len(order) >= _CURVE_TOP:
             break
@@ -888,7 +912,7 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
         fi, kk = int(fidx[i]), float(skw[i])
         if line:
             tp, sl, wu = _placed_form(fi, float(sx[i]), float(sy[i]), kk)
-            if tp > _STROKE_TAPER or sl > slim_lim:
+            if tp > taper_lim or sl > slim_lim:
                 n_shape += 1
                 continue
             # **폭 충실도** — 놓인 폭이 원화 띠보다 이만큼 넘게 굵으면 획이
@@ -924,13 +948,13 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
                 continue
             # **끝 뭉툭함** — 뾰족한 끝은 획이 아니라 잎사귀다 (`_STROKE_END`)
             if (prof_fit and _end_ratio(fi, float(sx[i]),
-                                        float(sy[i]), kk) < _STROKE_END):
+                                        float(sy[i]), kk) < end_lim):
                 n_shape += 1
                 continue
             # **몸통 배부름** — 비등방 스케일이 만든 쐐기다 (`_STROKE_BULGE`)
-            if (prof_fit and _STROKE_BULGE > 0.0
+            if (prof_fit and bulge_lim > 0.0
                     and _bulge_ratio(fi, float(sx[i]), float(sy[i]),
-                                     kk) > _STROKE_BULGE):
+                                     kk) > bulge_lim):
                 n_shape += 1
                 continue
         order.append(i)
