@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import weakref
 
 import cv2
 import numpy as np
@@ -180,6 +181,48 @@ _EDGE_SLACK = int(os.environ.get("FS_EDGE_SLACK", 1))
 # 그 밖으로 나가는 후보는 점수가 아니라 자격에서 진다.
 
 
+# ── 채점판의 **비트 평면** (`_Scorer._score_impl` 문서) ──────────────────
+# 점수의 항은 전부 "도형 마스크 ∩ (판 몇 장의 논리식)"의 픽셀 수다. 판을
+# 픽셀마다 한 비트씩 한 배열(uint16)에 겹쳐 두면, 도형 하나의 채점은 그 배열을
+# 마스크로 한 번 모아(`codes`) 코드별 도수(`bincount`)를 세고 코드 → 항 표
+# (`_term_table`)와 곱하는 것으로 끝난다 — 항마다 상자 창을 자르고 마스크와
+# 곱해 세던 여덟~열한 번의 numpy 호출이 셋으로 준다. 셈은 전부 정수라 결과가
+# 종전과 **같은 정수**이고, 그 뒤의 실수식은 그대로다 (바이트 동일).
+(_B_RES, _B_FORB, _B_BG, _B_SPILL, _B_OUTB, _B_BAND, _B_MASK, _B_FREE,
+ _B_FARM, _B_FARBG, _B_LIM, _B_CORE) = (1 << i for i in range(12))
+_B_DYN = np.uint16(_B_RES | _B_BAND)         # 확정·되돌리기가 만지는 비트
+_B_BANDBITS = np.uint16(_B_LIM | _B_CORE)    # `set_band`가 만지는 비트
+_N_CODES = 1 << 12
+
+
+def _term_table(has_limit: bool, has_core: bool) -> np.ndarray:
+    """코드(판 12비트) → 항 13개의 소속 (0/1, int64). 밴드·이상 띠가 없으면
+    그 비트는 "모두 1"로 읽는다 — 종전 식에서 그 항이 통째로 빠지거나
+    (`mask & ~limit` → 0) 한정이 없어지는(`res & limit` → `res`) 것과 같다."""
+    c = np.arange(_N_CODES, dtype=np.int64)
+    ones = np.ones(_N_CODES, bool)
+    zeros = np.zeros(_N_CODES, bool)
+
+    def b(bit: int) -> np.ndarray:
+        return (c & bit) != 0
+
+    lim = b(_B_LIM) if has_limit else ones
+    core = b(_B_CORE) if has_core else ones
+    new = b(_B_RES) & lim
+    cols = (new, b(_B_FORB), b(_B_BG), b(_B_SPILL), b(_B_OUTB), b(_B_BAND),
+            (b(_B_MASK) & ~lim) if has_limit else zeros,     # 밴드 밖 제 성분
+            (b(_B_FREE) & ~core) if has_core else zeros,     # 이상 띠 밖 물림
+            (new & ~core) if has_core else zeros,            # 띠 밖 잔여(이웃 가닥)
+            b(_B_MASK) & lim & core,                         # 이어긋기 자리
+            new & core,                                      # 띠 안 새 잉크
+            b(_B_FARM), b(_B_FARBG))
+    return np.stack(cols, axis=1).astype(np.int64)
+
+
+_TERMS = {(hl, hc): _term_table(hl, hc)
+          for hl in (False, True) for hc in (False, True)}
+
+
 def _shrink(m: np.ndarray) -> np.ndarray:
     """도형 마스크에서 가장자리 `_EDGE_SLACK` 겹을 깎는다 (§24-b)."""
     if _EDGE_SLACK <= 0:
@@ -321,6 +364,32 @@ class _Scorer:
         # 이긴 하나만 남긴다. 잔여 전장을 후보마다 복사하면 그 비용이 채점을
         # 넘으므로, 지운 픽셀만 창 단위로 적어 두고 되돌린다
         self._journal: list | None = None
+        # 비트 평면 (모듈 머리의 `_B_*`) — 잔여·띠 비트는 확정·되돌리기가,
+        # 밴드·이상 띠 비트는 `set_band`가 제 자리에서 같이 적는다
+        self._bits = np.zeros(mask.shape, np.uint16)
+        for bit, arr in ((_B_RES, self.residual), (_B_FORB, self.forbid),
+                         (_B_BG, self.bg), (_B_SPILL, self._spill),
+                         (_B_OUTB, self.outb), (_B_BAND, self.band_res),
+                         (_B_MASK, self.mask), (_B_FREE, self.free),
+                         (_B_FARM, self._farm), (_B_FARBG, self.farbg)):
+            if arr is not None:
+                np.bitwise_or(self._bits, np.uint16(bit), out=self._bits,
+                              where=arr)
+        self._ind = _TERMS[(False, False)]
+        self._band_box: tuple | None = None
+        self._full_box: dict = {}          # `score()`가 준 전장 마스크 → 창
+
+    def _bits_and(self, m: np.ndarray, sl=None) -> None:
+        """확정 — `m`인 자리의 잔여·띠 비트를 지운다 (`residual &= ~m`의 짝)."""
+        sub = self._bits if sl is None else self._bits[sl]
+        np.bitwise_and(sub, ~_B_DYN, out=sub, where=m)
+
+    def _bits_or(self, bit: int, m: np.ndarray | None, sl=None) -> None:
+        """되돌리기 — `m`인 자리에 비트를 되살린다 (`residual |= removed`의 짝)."""
+        if m is None:
+            return
+        sub = self._bits if sl is None else self._bits[sl]
+        np.bitwise_or(sub, np.uint16(bit), out=sub, where=m)
 
     def set_band(self, m: np.ndarray | None,
                  core: np.ndarray | None = None) -> None:
@@ -349,9 +418,48 @@ class _Scorer:
         self.limit = m
         self.core = core
         self._memo.clear()
+        # 비트 평면의 밴드·이상 띠 비트 — 둘의 상자 안에서만 적고 지운다
+        if self._band_box is not None:
+            sub = self._bits[self._band_box]
+            sub &= ~_B_BANDBITS
+            self._band_box = None
+        if m is not None or core is not None:
+            rows = cols = None
+            for arr in (m, core):
+                if arr is None:
+                    continue
+                r = arr.any(axis=1)
+                c = arr.any(axis=0)
+                rows = r if rows is None else (rows | r)
+                cols = c if cols is None else (cols | c)
+            ry = np.flatnonzero(rows)
+            cx = np.flatnonzero(cols)
+            if len(ry) and len(cx):
+                sl = (slice(int(ry[0]), int(ry[-1]) + 1),
+                      slice(int(cx[0]), int(cx[-1]) + 1))
+                self._band_box = sl
+                if m is not None:
+                    self._bits_or(_B_LIM, m[sl], sl)
+                if core is not None:
+                    self._bits_or(_B_CORE, core[sl], sl)
+        self._ind = _TERMS[(m is not None, core is not None)]
 
-    def commit(self, m: np.ndarray) -> None:
-        """배치 확정 — 잔여(와 덧칠 띠)에서 m을 지운다. 메모도 비운다."""
+    def commit(self, m: np.ndarray, box: tuple | None = None) -> None:
+        """배치 확정 — 잔여(와 덧칠 띠)에서 m을 지운다. 메모도 비운다.
+
+        `m`이 `score()`가 준 ROI 전장 마스크면 그 창(`_full_box`)만 만진다 —
+        창 밖은 어차피 0이라 결과가 같고, 성분 ROI가 화면 전체인 획 배치에서
+        확정마다 전장을 네 번 훑던 비용이 창 크기로 준다. `box`를 직접 주면
+        (마무리의 연결성분) 그 창을 쓴다.
+        """
+        if box is None:
+            got = self._full_box.get(id(m))
+            if got is not None and got[0]() is m:
+                box = got[1]
+        if box is not None:
+            bx0, by0, bx1, by1 = box
+            self.commit_box(m[by0:by1, bx0:bx1], box)
+            return
         if self._journal is not None:
             self._journal.append(
                 (None, (m & self.residual).copy(),
@@ -363,6 +471,7 @@ class _Scorer:
             self.band_res &= ~m
         if self.res_edge is not None:
             self.res_edge &= ~_shrink(m)
+        self._bits_and(m)
         self._memo.clear()
 
     def commit_box(self, m: np.ndarray, box: tuple[int, int, int, int]) -> None:
@@ -383,6 +492,7 @@ class _Scorer:
             self.band_res[by0:by1, bx0:bx1] &= ~m
         if self.res_edge is not None:
             self.res_edge[by0:by1, bx0:bx1] &= ~_shrink(m)
+        self._bits_and(m, (slice(by0, by1), slice(bx0, bx1)))
         self._memo.clear()
 
     def eats(self, m: np.ndarray, box: tuple[int, int, int, int] | None) -> bool:
@@ -426,17 +536,22 @@ class _Scorer:
         for box, removed, bnd, edg in reversed(journal[mark:]):
             if box is None:
                 self.residual |= removed
+                self._bits_or(_B_RES, removed)
                 if bnd is not None and self.band_res is not None:
                     self.band_res |= bnd
+                    self._bits_or(_B_BAND, bnd)
                 if edg is not None and self.res_edge is not None:
                     self.res_edge |= edg
             else:
                 bx0, by0, bx1, by1 = box
-                self.residual[by0:by1, bx0:bx1] |= removed
+                sl = (slice(by0, by1), slice(bx0, bx1))
+                self.residual[sl] |= removed
+                self._bits_or(_B_RES, removed, sl)
                 if bnd is not None and self.band_res is not None:
-                    self.band_res[by0:by1, bx0:bx1] |= bnd
+                    self.band_res[sl] |= bnd
+                    self._bits_or(_B_BAND, bnd, sl)
                 if edg is not None and self.res_edge is not None:
-                    self.res_edge[by0:by1, bx0:bx1] |= edg
+                    self.res_edge[sl] |= edg
         del journal[mark:]
         self._memo.clear()
 
@@ -459,37 +574,75 @@ class _Scorer:
         # (실측: 채움 타원이 여유 구간의 피부 위로 뻗어 목을 가로질렀다)
         margin = (self.guard if self.guard is not None
                   else 24.0 + 0.25 * max(x1 - x0, y1 - y0))
+        # 상자는 꼭짓점의 최소·최대에서 바로 — 반올림이 단조라 "반올림한
+        # 점들의 최소"와 "최소의 반올림"이 같은 정수다 (폴리곤마다 축별
+        # min/max 여덟 번을 두 번으로)
+        lo = hi = None
         for p in polys:
-            if (p[:, 0].min() < -margin or p[:, 1].min() < -margin
-                    or p[:, 0].max() > (x1 - x0) + margin
-                    or p[:, 1].max() > (y1 - y0) + margin):
+            pmin, pmax = p.min(axis=0), p.max(axis=0)
+            if (pmin[0] < -margin or pmin[1] < -margin
+                    or pmax[0] > (x1 - x0) + margin
+                    or pmax[1] > (y1 - y0) + margin):
                 return -1e9, None, None
-        rp = [np.round(p).astype(np.int32) for p in polys]
-        bx0 = max(0, min(int(p[:, 0].min()) for p in rp) - 1)
-        by0 = max(0, min(int(p[:, 1].min()) for p in rp) - 1)
-        bx1 = min(x1 - x0, max(int(p[:, 0].max()) for p in rp) + 2)
-        by1 = min(y1 - y0, max(int(p[:, 1].max()) for p in rp) + 2)
+            lo = pmin if lo is None else np.minimum(lo, pmin)
+            hi = pmax if hi is None else np.maximum(hi, pmax)
+        rlo, rhi = np.round(lo), np.round(hi)
+        bx0 = max(0, int(rlo[0]) - 1)
+        by0 = max(0, int(rlo[1]) - 1)
+        bx1 = min(x1 - x0, int(rhi[0]) + 2)
+        by1 = min(y1 - y0, int(rhi[1]) + 2)
         if bx0 >= bx1 or by0 >= by1:
             return 0.0, None, None
         off = np.array([bx0, by0], np.int32)
         m = np.zeros((by1 - by0, bx1 - bx0), np.uint8)
-        if len(rp) == 1:
-            cv2.fillPoly(m, [rp[0] - off], 1)
+        if len(polys) == 1:
+            cv2.fillPoly(m, [np.round(polys[0]).astype(np.int32) - off], 1)
         else:
-            for p in rp:
+            for p in polys:
                 mm = np.zeros_like(m)
-                cv2.fillPoly(mm, [p - off], 1)
+                cv2.fillPoly(mm, [np.round(p).astype(np.int32) - off], 1)
                 m ^= mm
-        m = m.astype(bool)
+        m = m.view(bool)
         # 알파 프로파일 도형은 **가중해서** 센다 — 반투명한 자리는 그만큼만
         # 덮은 것이고 그만큼만 침범한 것이다. 단색이면 wt가 None이라 정수
         # 카운트로 간다 (기본 어휘에는 그라디언트가 없다)
         wt = _grad_alpha(self.cat, lay, self.upp, self.w, self.h,
                          x0, y0, bx0, by0, m.shape)
+        if wt is None:
+            # 비트 평면 한 번에 항 전부 (모듈 머리 문서) — 정수 셈이라 아래
+            # 가중 경로의 정수 카운트와 같은 수가 나온다
+            codes = self._bits[by0:by1, bx0:bx1][m]
+            hist = np.bincount(codes, minlength=_N_CODES)
+            nz = np.flatnonzero(hist)
+            c = (hist[nz] @ self._ind[nz]).tolist()
+            if self.farbg is not None and c[12]:   # §17 — 자격 판정 (점수 아님)
+                return -1e9, None, None
+            new = float(c[0])
+            forb = float(c[1])
+            bg = float(c[2])
+            waste = float(c[3]) - forb - bg
+            s = (new - _PEN_BG * bg - self.pen_forbid * forb
+                 - self.pen_waste * waste)
+            if self.pen_out:
+                s -= self.pen_out * float(c[4])
+            if self.band_res is not None:  # §24 — 덧칠 띠는 잔여처럼 닳는다
+                s += _BAND_GAIN * float(c[5])
+            if self.limit is not None:     # 밴드 밖 제 성분 위 잉크도 낭비다
+                s -= self.pen_waste * float(c[6])
+            if self.core is not None:      # 이상 띠 밖의 물림은 공짜가 아니다
+                s -= self.pen_waste * float(c[7])
+                if _CORE_GAIN < 1.0:       # 띠 밖 잔여 = **이웃 가닥** (위 문서)
+                    s -= (1.0 - _CORE_GAIN) * float(c[8])
+            if self.retrace:               # 이어긋기 — 덮인 밴드 위도 값이다
+                fresh = new if self.core is None else float(c[10])
+                s += self.retrace * (float(c[9]) - fresh)
+            if self._farm is not None:     # 먼 이탈만 더 문다 (near는 오차)
+                s -= self.pen_far * float(c[11])
+            return s, m, (bx0, by0, bx1, by1)
 
         def cnt(sel: np.ndarray) -> float:
             hit = m & sel
-            return float(np.count_nonzero(hit) if wt is None else wt[hit].sum())
+            return float(wt[hit].sum())
 
         if self.farbg is not None:         # §17 — 자격 판정 (점수 아님)
             if np.count_nonzero(m & self.farbg[by0:by1, bx0:bx1]):
@@ -529,10 +682,9 @@ class _Scorer:
             s += self.retrace * (cnt(trace_box) - fresh)
         if self._farm is not None:         # 먼 이탈만 더 문다 (near는 오차)
             s -= self.pen_far * cnt(self._farm[by0:by1, bx0:bx1])
-        if wt is not None:
-            # 확정용 마스크는 **실제로 덮은 자리**로 좁힌다 — 알파가 옅은
-            # 가장자리를 잔여에서 지우면 그 자리를 아무도 다시 안 줍는다
-            m = m & (wt >= 0.5)
+        # 확정용 마스크는 **실제로 덮은 자리**로 좁힌다 — 알파가 옅은
+        # 가장자리를 잔여에서 지우면 그 자리를 아무도 다시 안 줍는다
+        m = m & (wt >= 0.5)
         return s, m, (bx0, by0, bx1, by1)
 
     def worth(self, m: np.ndarray | None,
@@ -617,6 +769,11 @@ class _Scorer:
         full = np.zeros((y1 - y0, x1 - x0), bool)
         if m is not None:
             full[box[1]:box[3], box[0]:box[2]] = m
+            # 전장 마스크의 창을 기억한다 (`commit` 문서). 약한 참조로 같은
+            # 배열인지 확인하므로 id가 재활용돼도 남의 창을 안 쓴다
+            if len(self._full_box) >= 8:
+                self._full_box.clear()
+            self._full_box[id(full)] = (weakref.ref(full), box)
         return s, full
 
 

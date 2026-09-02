@@ -340,7 +340,7 @@ def _dp_nodes(path: np.ndarray, wmed: float, it=None,
 
 def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
                 forms: tuple, it=None, max_shapes: int = 0,
-                res_mul: float = 1.0) -> list[int] | None:
+                res_mul: float = 1.0, memo: dict | None = None) -> list[int] | None:
     """도형 수와 잔차를 함께 최소화하는 마디 분할 (작은 동적계획, 결정적).
 
     비용 = 도형 수 × `_DP_SHAPE` + Σ(정규화 잔차) + **각 아닌 자리에서 끊는
@@ -354,14 +354,23 @@ def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
     `res_mul`은 **한 장에 담을 자격만** 그만큼 연다 (`_LONG_RES`) — 비용에
     들어가는 `r / wlim`은 안 건드린다. 그래서 문턱이 열려도 잔차가 큰 스팬은
     여전히 그만큼 비싸고, 값이 될 때만 길게 간다. 1.0이면 종전 그대로다.
+
+    `memo`는 **같은 획**에서 문턱만 바꿔 다시 부를 때 마디와 스팬 잔차를
+    되쓰는 칸이다 — 둘 다 `res_mul`과 무관하니 값이 같다. 긴 스팬 안이 이
+    DP를 획마다 세 번 돌리는데, 잔차가 그 비용의 태반이었다 (실측 11번 판:
+    DP 22초 중 15초가 두 번째·세 번째 벌의 되풀이).
     """
     _, U = forms
     if U is None or len(path) < 4:
         return None
     # 마디 후보 수는 이 획에 허용된 도형 수를 따라간다 — 상한이 길이에
     # 비례하는데 후보가 상수면 긴 획에서 DP가 애초에 그 안을 못 지어 본다
-    nodes = _dp_nodes(path, wmed, it,
-                      max(_DP_NODES, min(int(max_shapes) + 2, 2 * _DP_NODES)))
+    cap = max(_DP_NODES, min(int(max_shapes) + 2, 2 * _DP_NODES))
+    nodes = None if memo is None else memo.get(("nodes", cap))
+    if nodes is None:
+        nodes = _dp_nodes(path, wmed, it, cap)
+        if memo is not None:
+            memo[("nodes", cap)] = nodes
     if len(nodes) < 3:
         return None
     n_form = U.shape[1]
@@ -379,7 +388,11 @@ def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
             seg = path[nodes[i]:nodes[j] + 1]
             if len(seg) < 3:
                 continue
-            r = _seg_residual(U, seg, sc, n_form)
+            r = None if memo is None else memo.get((nodes[i], nodes[j]))
+            if r is None:
+                r = _seg_residual(U, seg, sc, n_form)
+                if memo is not None:
+                    memo[(nodes[i], nodes[j])] = r
             if not np.isfinite(r) or r > gate:
                 continue
             c = cost[i] + _DP_SHAPE + r / max(wlim, 1e-9)
@@ -489,10 +502,11 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
         # ② DP 분절 — 도형 수와 잔차를 함께 최소화한 마디
         n_long = 0
         seen_idx: set = set()
+        dp_memo: dict = {}                 # 마디·스팬 잔차 — 세 벌이 나눠 쓴다
 
         def _dp(kind: str, mul: float) -> None:
             jdx = dp_segments(path, wmed, sc, forms, it, max_shapes,
-                              res_mul=mul)
+                              res_mul=mul, memo=dp_memo)
             if jdx is None or len(jdx) - 1 > max_shapes:
                 return
             key = tuple(jdx)

@@ -131,6 +131,22 @@ _SKEW_ON = os.environ.get("FS_SKEW", "0") != "0" and \
 # (`holes.count_hole_clusters`의 4px+ 게이트)가 여전히 서는 자리라 그대로 두고,
 # 그 위에 진실의 자를 얹는다 — 둘 다 통과한 이동은 봉인의 자에서도 통과다.
 _HARD2X = os.environ.get("FS_FT_HARD2X", "1") != "0"
+# **둘째 패스부터는 바뀐 자리만 본다** (기본 켜짐 · `FS_FT_SKIP=0`으로 끈다).
+#
+# 한 레이어의 이동 판정은 전부 **국소**다 — 제 상자와 후보 상자 안의 소유자
+# 지도, 그 자리에 겹치는 아래 레이어들의 마스크(`unders`), 같은 자리의 2배
+# 표본 셈(`hard`), 그리고 같은 획의 이음 상대(`widens_joint`)뿐이다. 그래서
+# 지난 패스에서 한 번도 안 움직인 레이어는, 그 뒤로 **그 레이어가 살펴본
+# 자리**(제 상자 + 물어본 후보 상자들)에 아무 이동도 안 닿았고 이음 상대도
+# 안 움직였으면, 다시 물어봐야 같은 후보에 같은 기각이 나온다. 그 물음을
+# 건너뛴다 — 결과는 같고 셈만 준다. 실측 11번 판: 전역 패스 2·3이 각각
+# 패스 1과 같은 시간을 물었는데 받는 이동은 1,254 → 461 → 151회였다.
+#
+# "살펴본 자리"는 후보마다 `try_move`가 상자를 만드는 첫 줄에서 모은다 —
+# 조기 기각(돌출 증가)도 그 앞에서 상자를 이미 만들었으므로 빠짐없다.
+# 닿았나는 받은 이동마다 적어 둔 옛·새 상자(`cboxes`)와의 **정확한 교차**로
+# 묻는다 — 지난 도장 뒤의 이동만 보므로 한 레이어당 수백 행의 벡터 비교다.
+_SKIP = os.environ.get("FS_FT_SKIP", "1") != "0"
 
 
 def _win_mask(cat: Catalog, lay: Layer, upp: float, w: int, h: int
@@ -141,13 +157,16 @@ def _win_mask(cat: Catalog, lay: Layer, upp: float, w: int, h: int
     — 게이트가 보는 커버리지와 이 패스의 소유자 모델이 같은 픽셀을 본다.
     """
     polys = _poly_px(cat, lay, upp, w, h)
-    xs = np.concatenate([p[:, 0] for p in polys])
-    ys = np.concatenate([p[:, 1] for p in polys])
-    ext = float(max(0.0, -xs.min(), xs.max() - w, -ys.min(), ys.max() - h))
-    x0 = max(0, int(np.floor(xs.min())) - 1)
-    y0 = max(0, int(np.floor(ys.min())) - 1)
-    x1 = min(w, int(np.ceil(xs.max())) + 2)
-    y1 = min(h, int(np.ceil(ys.max())) + 2)
+    if len(polys) == 1:
+        lo, hi = polys[0].min(axis=0), polys[0].max(axis=0)
+    else:
+        lo = np.min([p.min(axis=0) for p in polys], axis=0)
+        hi = np.max([p.max(axis=0) for p in polys], axis=0)
+    ext = float(max(0.0, -lo[0], hi[0] - w, -lo[1], hi[1] - h))
+    x0 = max(0, int(np.floor(lo[0])) - 1)
+    y0 = max(0, int(np.floor(lo[1])) - 1)
+    x1 = min(w, int(np.ceil(hi[0])) + 2)
+    y1 = min(h, int(np.ceil(hi[1])) + 2)
     if x0 >= x1 or y0 >= y1:
         return np.array([0, 0, 0, 0], np.int32), np.zeros((0, 0), bool), ext
     m = np.zeros((y1 - y0, x1 - x0), np.uint8)
@@ -225,10 +244,18 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
     masks: list[np.ndarray] = [None] * n              # type: ignore[list-item]
     exts = np.zeros(n, np.float64)
     owner = np.full((h, w), -1, np.int32)             # 최상위 레이어 (-1 = 배경)
+    # **그 밑** 레이어 — 맨 위가 비켜나면 드러나는 것. 이동 평가마다 아래
+    # 레이어들을 훑어 찾던 것(`unders`)을 지도 하나로 답한다: 평가는 읽기만
+    # 하고, **받은 이동**에서만 바뀐 자리를 다시 훑는다 (평가 20만 회에
+    # 받는 이동 2천 회 — 실측 11번 판에서 그 훑기가 이 단의 4분의 1이었다)
+    under = np.full((h, w), -1, np.int32)
     for i, l in enumerate(layers):
         boxes[i], masks[i], exts[i] = _win_mask(cat, l, upp, w, h)
         x0, y0, x1, y1 = boxes[i]
-        owner[y0:y1, x0:x1][masks[i]] = i
+        o_ = owner[y0:y1, x0:x1]
+        u_ = under[y0:y1, x0:x1]
+        u_[masks[i]] = o_[masks[i]]
+        o_[masks[i]] = i
 
     # §18 자격의 자 — 스택 전수 한 번 (그 뒤로는 받은 이동만 증분 반영)
     hard = HardCoverage(plan, cel, cat) if _HARD2X else None
@@ -303,19 +330,34 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             d[unc] = ucost[ys[unc], xs[unc]]
         return d
 
-    def unders(i: int, ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
-        """i가 비켜난 픽셀들이 드러내는 소유자 (i 아래 최상위, 없으면 -1)."""
+    # **지금 주인의 비용 지도** — 이동 평가마다 "지금 이 자리의 비용"을 두 번
+    # 다시 셈하던 것(`cost_at(…, 지금 주인)`)을 픽셀마다 한 번 적어 두고 읽는다.
+    # 비용은 픽셀마다 독립이라(목표·주인 색·실루엣·대역만 본다) 지도의 값과
+    # 그때그때 셈한 값이 같고, 받은 이동에서 주인이 바뀐 자리만 다시 적는다
+    ccur = np.empty((h, w), np.float64)
+    _ys, _xs = np.nonzero(np.ones((h, w), bool))
+    ccur[_ys, _xs] = cost_at(_ys, _xs, owner[_ys, _xs])
+    del _ys, _xs
+
+    def unders(ys: np.ndarray, xs: np.ndarray, lim: np.ndarray) -> np.ndarray:
+        """픽셀마다 `lim` **아래** 최상위 레이어 (없으면 -1) — `under` 지도의
+        되채우기. 받은 이동이 드러낸 자리에서만 부른다."""
         u = np.full(len(ys), -1, np.int32)
+        if not len(ys):
+            return u
+        top = int(lim.max())
+        if top <= 0:
+            return u
         dy0, dy1 = int(ys.min()), int(ys.max())
         dx0, dx1 = int(xs.min()), int(xs.max())
-        js = np.flatnonzero((boxes[:i, 0] <= dx1) & (boxes[:i, 2] > dx0)
-                            & (boxes[:i, 1] <= dy1) & (boxes[:i, 3] > dy0))
+        js = np.flatnonzero((boxes[:top, 0] <= dx1) & (boxes[:top, 2] > dx0)
+                            & (boxes[:top, 1] <= dy1) & (boxes[:top, 3] > dy0))
         unres = np.ones(len(ys), bool)
         for j in js[::-1]:
             if not unres.any():
                 break
             bx0, by0, bx1, by1 = boxes[j]
-            sel = (unres & (ys >= by0) & (ys < by1)
+            sel = (unres & (lim > j) & (ys >= by0) & (ys < by1)
                    & (xs >= bx0) & (xs < bx1))
             if not sel.any():
                 continue
@@ -326,9 +368,48 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             unres[idx] = False
         return u
 
+    # 건너뛰기의 장부 (`_SKIP` 문서) — 이동 번호·판·레이어별 도장
+    ver = [0]                              # 받은 이동의 일련번호
+    cboxes = np.zeros((2 * n + 64, 4), np.int64)   # 이동 k의 옛·새 상자 (행 2k, 2k+1)
+    stamp = np.full(n, -1, np.int64)       # 마지막으로 다 물어본 시점
+    last_moved = np.full(n, -1, np.int64)  # 마지막으로 받은 이동의 번호
+    clean = np.zeros(n, bool)              # 마지막 물음에서 한 번도 안 움직였나
+    region = np.zeros((n, 4), np.int64)    # 마지막 물음에서 살펴본 자리
+    cur = [0, 0, 0, 0]                     # 지금 물어보는 레이어의 살펴본 자리
+
+    def _look(box) -> None:
+        if box[0] >= box[2] or box[1] >= box[3]:
+            return
+        cur[0] = min(cur[0], int(box[0])); cur[1] = min(cur[1], int(box[1]))
+        cur[2] = max(cur[2], int(box[2])); cur[3] = max(cur[3], int(box[3]))
+
+    def _mark(k: int, box_o, box_n) -> None:
+        nonlocal cboxes
+        if 2 * k + 2 > len(cboxes):
+            cboxes = np.concatenate([cboxes, np.zeros_like(cboxes)])
+        cboxes[2 * k] = box_o
+        cboxes[2 * k + 1] = box_n
+
+    def _unchanged(i: int) -> bool:
+        """지난 물음 뒤로 이 레이어의 답이 바뀔 일이 없었나."""
+        if not _SKIP or stamp[i] < 0 or not clean[i]:
+            return False
+        x0, y0, x1, y1 = region[i]
+        if x0 >= x1 or y0 >= y1:
+            return False
+        cb = cboxes[2 * (int(stamp[i]) + 1):2 * (ver[0] + 1)]
+        if len(cb) and bool(((cb[:, 0] < x1) & (cb[:, 2] > x0)
+                             & (cb[:, 1] < y1) & (cb[:, 3] > y0)).any()):
+            return False
+        for pr in partners.get(i) or ():
+            if pr is not None and last_moved[pr[0]] > stamp[i]:
+                return False
+        return True
+
     def try_move(i: int, cand: Layer):
         """이동 평가 — (Δ비용, 커밋 데이터) 또는 None(기각)."""
         box_n, m_n, ext_n = _win_mask(cat, cand, upp, w, h)
+        _look(box_n)
         if ext_n > exts[i] + 0.5:          # 캔버스 밖 돌출 증가 — 무벌점 구간
             return None
         box_o, m_o = boxes[i], masks[i]
@@ -350,34 +431,60 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         ysD, xsD = np.nonzero(rem)
         if not len(ysA) and not len(ysD):
             return None
-        u = np.zeros(0, np.int32)
+        u = oa = np.zeros(0, np.int32)
+        cD = cA = None
         if len(ysD):
             ysD = ysD + uy0; xsD = xsD + ux0
-            u = unders(i, ysD, xsD)
+            u = under[ysD, xsD]            # i가 맨 위였으니 그 밑이 곧 드러난다
             if bool(((u < 0) & sil[ysD, xsD]).any()):
                 return None                # 실루엣 신규 노출 = 새 구멍 — 기각
-            cur = cost_at(ysD, xsD, np.full(len(ysD), i, np.int32))
-            delta += float(cost_at(ysD, xsD, u).sum() - cur.sum())
+            cur = ccur[ysD, xsD]           # 지금 주인(i)의 비용 — 지도에서
+            cD = cost_at(ysD, xsD, u)
+            delta += float(cD.sum() - cur.sum())
         if len(ysA):
             ysA = ysA + uy0; xsA = xsA + ux0
-            cur = cost_at(ysA, xsA, ow[add])
-            delta += float(cost_at(ysA, xsA,
-                                   np.full(len(ysA), i, np.int32)).sum()
-                           - cur.sum())
-        return delta, (ysA, xsA, ysD, xsD, u, box_n, m_n, ext_n)
+            oa = ow[add]
+            cur = ccur[ysA, xsA]           # 지금 주인들의 비용 — 지도에서
+            cA = cost_at(ysA, xsA, np.full(len(ysA), i, np.int32))
+            delta += float(cA.sum() - cur.sum())
+        return delta, (ysA, xsA, ysD, xsD, u, box_n, m_n, ext_n,
+                       oa, mo, mn, ux0, uy0, cD, cA)
 
     def commit(i: int, cand: Layer, data) -> None:
-        ysA, xsA, ysD, xsD, u, box_n, m_n, ext_n = data
+        (ysA, xsA, ysD, xsD, u, box_n, m_n, ext_n, oa, mo, mn, ux0, uy0,
+         cD, cA) = data
+        ver[0] += 1
+        _mark(ver[0], boxes[i], box_n)
+        last_moved[i] = ver[0]
         if hard is not None:
             hard.swap(layers[i], cand)
-        if len(ysD):
+        # `under` 지도 — 위에 남이 있는 자리(가려진 몫)부터 고친다: i가 그
+        # 밑에서 빠지면 그 자리의 밑을 다시 찾고, 새로 밑에 들면 i가 그 밑이다
+        uh, uw = mo.shape
+        ow_ = owner[uy0:uy0 + uh, ux0:ux0 + uw]
+        un_ = under[uy0:uy0 + uh, ux0:ux0 + uw]
+        hid = ow_ > i
+        left = mo & ~mn & hid & (un_ == i)
+        if left.any():
+            yl, xl = np.nonzero(left)
+            yl = yl + uy0; xl = xl + ux0
+            under[yl, xl] = unders(yl, xl, np.full(len(yl), i, np.int32))
+        came = mn & ~mo & hid & (un_ < i)
+        if came.any():
+            un_[came] = i
+        if len(ysD):                       # 드러난 자리 — 밑이 올라오고 그 밑은 다시 찾는다
             owner[ysD, xsD] = u
-        if len(ysA):
+            under[ysD, xsD] = unders(ysD, xsD, u)
+            ccur[ysD, xsD] = cD
+        if len(ysA):                       # 새로 덮은 자리 — 옛 주인이 밑이 된다
+            under[ysA, xsA] = oa
             owner[ysA, xsA] = i
+            ccur[ysA, xsA] = cA
         boxes[i], masks[i], exts[i] = box_n, m_n, ext_n
         layers[i] = cand
 
     accepts = 0
+    skipped = 0                            # 지난 답 그대로라 안 물어본 수
     hard_rej = 0                           # 1x는 통과했는데 §18 자격이 막은 수
     moved = np.zeros(n, bool)
     gain = 0.0
@@ -395,6 +502,12 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             if progress and si % 64 == 0:
                 progress((p + si / len(todo)) / max_passes,
                          msg("미세 조정 {p}/{total}", p=p + 1, total=max_passes))
+            if _unchanged(i):
+                skipped += 1
+                continue                   # 지난 답 그대로다 (`_SKIP` 문서)
+            bx = boxes[i]
+            cur[0], cur[1], cur[2], cur[3] = int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])
+            ver_at = ver[0]
             # **0으로 돌아갈 길을 먼저 연다** (§11) — 전단이 값을 잃은 자세로
             # 흘러간 레이어는 접어야 한다. 비용이 **안 나빠지면** 받는다
             # (엄격한 개선을 요구하면 완전 동률에서 전단이 그대로 남는다)
@@ -460,6 +573,10 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                         accepts += 1
                         pass_accepts += 1
                         moved[i] = True
+            # 다 물어봤다 — 도장을 찍는다 (`_unchanged`가 다음 패스에 읽는다)
+            stamp[i] = ver[0]
+            clean[i] = ver[0] == ver_at
+            region[i] = cur
         log(msg("  {tag} 미세 조정 패스 {p}: 이동 {n}회 수락",
                 tag=msg(tag), p=p + 1, n=pass_accepts))
         if pass_accepts < max(8, len(todo) // 100):
@@ -468,6 +585,7 @@ def refine_plan(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         progress(1.0, msg("미세 조정 완료"))
     stats = {"moved_layers": int(moved.sum()), "accepts": accepts,
              "cost_gain": round(gain, 0), "hard_rejects": hard_rej,
+             "skipped": skipped,
              # §14 — 이 패스가 끝난 뒤 전단을 쓰는 레이어 수
              "skew_layers": sum(1 for l in layers if l.skew)}
     log(msg("  {tag} 미세 조정: 레이어 {moved}/{total}개 이동 (수락 {n}회)",

@@ -23,6 +23,34 @@ from .vocabulary import _FILL_SHAPE
 _FIX_LINEGAIN = 0.5
 
 
+def _split(sub: np.ndarray, oy: int, ox: int) -> list:
+    """`sub` 안 8-연결 성분마다 (최심 반경, 최심점 y, x, 상자 y0, x0, 마스크 조각).
+
+    좌표는 `sub`의 원점 `(oy, ox)`를 더한 값이다. 거리변환은 **성분 조각마다
+    따로** 뜬다 — 8-연결 성분은 서로 맞닿지 않으므로 어느 성분 픽셀의 8-이웃도
+    제 성분 아니면 0이고, 거리변환(3×3 챔퍼)은 그 0의 테에서만 안으로
+    퍼지므로 그룹 전체에서 뜬 값과 같다. 최심점은 조각 안 행우선 첫 최대다 —
+    그룹 전체의 `argmax`와 같은 자리다.
+    """
+    if not sub.any():
+        return []
+    ncc, cc, st, _ = cv2.connectedComponentsWithStats(sub.astype(np.uint8),
+                                                      connectivity=8)
+    out = []
+    for ci in range(1, ncc):
+        bx0 = int(st[ci, cv2.CC_STAT_LEFT]); by0 = int(st[ci, cv2.CC_STAT_TOP])
+        bx1 = bx0 + int(st[ci, cv2.CC_STAT_WIDTH])
+        by1 = by0 + int(st[ci, cv2.CC_STAT_HEIGHT])
+        crop = cc[by0:by1, bx0:bx1] == ci
+        dt = cv2.distanceTransform(np.pad(crop, 1).astype(np.uint8),
+                                   cv2.DIST_L2, 3)[1:-1, 1:-1]
+        k = int(dt.argmax())
+        sy, sx = divmod(k, dt.shape[1])
+        out.append((float(dt.max()), oy + by0 + sy, ox + bx0 + sx,
+                    oy + by0, ox + bx0, crop))
+    return out
+
+
 def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
                     log=print, thr: float = 12.0, thr_line: float = 25.0,
                     min_px: int = 16, min_gain: float = 900.0,
@@ -123,6 +151,16 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
 
     added = {"fill": [], "over": [], "line": []}
     n = 0
+    lab_of: dict = {}                      # 패치 색 → Lab (같은 색을 되묻지 않는다)
+
+    def _lab(color) -> np.ndarray:
+        got = lab_of.get(color)
+        if got is None:
+            got = cv2.cvtColor(np.array([[color]], np.uint8), cv2.COLOR_RGB2LAB
+                               ).reshape(3).astype(np.float32)
+            lab_of[color] = got
+        return got
+
     for _score, y0, x0, kind, rem0 in groups:
         stop_here()
         if n >= max_layers:
@@ -134,19 +172,24 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
         # 쪼개져 잡힌다
         n_patch = min(12, max(4, int(np.count_nonzero(rem)) // 150))
         placed = 0
-        while placed < n_patch and n < max_layers and rem.any():
+        # 잔여를 **성분 단위**로 들고 간다 (`_split` 문서) — 패치마다 그룹 상자
+        # 전체의 거리변환·성분 분해·argmax를 다시 뜨던 것(긴 획 자국은 상자가
+        # 수십만 px인데 잔여는 성기다)을, 패치가 건드린 성분만 다시 가른다.
+        # 고르는 성분은 종전의 전장 argmax와 같다: 최심 반경이 가장 크고, 같으면
+        # 행우선으로 앞선 최심점
+        comps = _split(rem, 0, 0)
+        while placed < n_patch and n < max_layers and comps:
             # 패치는 잔여의 **최심점이 속한 연결 성분** 하나에 맞춘다 — 팽창
             # 묶음 그룹은 색이 다른 여러 자국을 품을 수 있어, 전체 PCA는
             # 헐렁한 타원이 되어 기각만 남는다. 기각해도 그 성분만 접고 다음
             # 성분으로 간다 — 그룹째 포기하면 덧칠 수요의 절반이 안 잡힌다
-            dtc = cv2.distanceTransform(np.pad(rem, 1).astype(np.uint8),
-                                        cv2.DIST_L2, 3)[1:-1, 1:-1]
-            r0 = float(dtc.max())
-            spy, spx = np.unravel_index(int(dtc.argmax()), dtc.shape)
+            cur = min(comps, key=lambda c: (-c[0], c[1], c[2]))
+            r0, spy, spx, cy0c, cx0c, cmask = cur
+            ch, cw = cmask.shape
             color = tuple(int(v) for v in flat[y0 + spy, x0 + spx])
-            _, cc2 = cv2.connectedComponents(rem.astype(np.uint8), connectivity=8)
-            comp = cc2 == cc2[spy, spx]
-            ys2, xs2 = np.nonzero(comp)
+            ys2, xs2 = np.nonzero(cmask)
+            ys2 = ys2 + cy0c
+            xs2 = xs2 + cx0c
             pw = np.stack([xs2, ys2], axis=1).astype(np.float64)
             ctr = pw.mean(axis=0)
             if len(pw) > 4:
@@ -174,10 +217,7 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
                 vis = (mm & (owner[wy0:wy1, wx0:wx1] < ink0)
                        if kind == "fill" else mm)
                 ins = insil[wy0:wy1, wx0:wx1]
-                c_lab = cv2.cvtColor(np.array([[color]], np.uint8),
-                                     cv2.COLOR_RGB2LAB
-                                     ).reshape(3).astype(np.float32)
-                de_new = np.linalg.norm(flat_lab[wy0:wy1, wx0:wx1] - c_lab,
+                de_new = np.linalg.norm(flat_lab[wy0:wy1, wx0:wx1] - _lab(color),
                                         axis=-1)
                 vin = vis & ins
                 gain = float(err[wy0:wy1, wx0:wx1][vin].sum())
@@ -205,16 +245,67 @@ def repair_mismatch(plan: LayerPlan, cel: CelArt, cat: Catalog,
                 # 성분은 전체 PCA 타원이 헐렁해 기각되지만, 최심점의 원은
                 # 국소적으로 순이득이 난다
                 net, lay, upd = _try(x0 + spx, y0 + spy, r0 + 1.2, r0 + 1.2, 0.0)
-            covered = rem & _mask_px(cat, lay, upp, w, h, (x0, y0, gx1, gy1))
-            if net < min_gain or not (covered & comp).any():
-                rem &= ~comp                # 이 성분은 포기 — 다음 성분 진행
+            # 덮은 자리는 **패치 상자 안에서만** 뜬다 — 그 밖은 어차피 0이다
+            _pp = _poly_px(cat, lay, upp, w, h)
+            _px = np.concatenate([q[:, 0] for q in _pp])
+            _py = np.concatenate([q[:, 1] for q in _pp])
+            cy0 = max(y0, int(np.floor(_py.min())) - 1)
+            cy1 = min(gy1, int(np.ceil(_py.max())) + 2)
+            cx0 = max(x0, int(np.floor(_px.min())) - 1)
+            cx1 = min(gx1, int(np.ceil(_px.max())) + 2)
+            cov_box = None                 # 그룹 기준 (y0, y1, x0, x1)
+            covered = None
+            if cy0 < cy1 and cx0 < cx1:
+                cov_box = (cy0 - y0, cy1 - y0, cx0 - x0, cx1 - x0)
+                covered = (rem[cov_box[0]:cov_box[1], cov_box[2]:cov_box[3]]
+                           & _mask_px(cat, lay, upp, w, h, (cx0, cy0, cx1, cy1)))
+            # 이 성분이 덮였나 — 패치 상자와 성분 조각의 겹침에서만 본다
+            hit = False
+            if covered is not None:
+                iy0, iy1 = max(cov_box[0], cy0c), min(cov_box[1], cy0c + ch)
+                ix0, ix1 = max(cov_box[2], cx0c), min(cov_box[3], cx0c + cw)
+                if iy0 < iy1 and ix0 < ix1:
+                    hit = bool((covered[iy0 - cov_box[0]:iy1 - cov_box[0],
+                                        ix0 - cov_box[2]:ix1 - cov_box[2]]
+                                & cmask[iy0 - cy0c:iy1 - cy0c,
+                                        ix0 - cx0c:ix1 - cx0c]).any())
+            if net < min_gain or not hit:
+                # 이 성분은 포기 — 다음 성분 진행 (잔여에서 성분째 지운다)
+                rem[cy0c:cy0c + ch, cx0c:cx0c + cw] &= ~cmask
+                comps.remove(cur)
                 continue
             added[kind].append(lay)
             n += 1
             placed += 1
             wy0, wy1, wx0, wx1, vin, de_new = upd
             err[wy0:wy1, wx0:wx1][vin] = de_new[vin]   # 이중 수리 방지
-            rem &= ~covered
+            rem[cov_box[0]:cov_box[1], cov_box[2]:cov_box[3]] &= ~covered
+            # 패치가 건드린 성분만 다시 가른다 — 나머지는 픽셀도 테도 그대로라
+            # 최심 반경·최심점이 안 바뀐다
+            keep, hitc = [], []
+            for c in comps:
+                _, _, _, yc, xc, mk = c
+                hh, ww = mk.shape
+                iy0, iy1 = max(cov_box[0], yc), min(cov_box[1], yc + hh)
+                ix0, ix1 = max(cov_box[2], xc), min(cov_box[3], xc + ww)
+                if (iy0 < iy1 and ix0 < ix1
+                        and (covered[iy0 - cov_box[0]:iy1 - cov_box[0],
+                                     ix0 - cov_box[2]:ix1 - cov_box[2]]
+                             & mk[iy0 - yc:iy1 - yc, ix0 - xc:ix1 - xc]).any()):
+                    hitc.append(c)
+                else:
+                    keep.append(c)
+            if hitc:
+                uy0 = min(c[3] for c in hitc); ux0 = min(c[4] for c in hitc)
+                uy1 = max(c[3] + c[5].shape[0] for c in hitc)
+                ux1 = max(c[4] + c[5].shape[1] for c in hitc)
+                sub = np.zeros((uy1 - uy0, ux1 - ux0), bool)
+                for _, _, _, yc, xc, mk in hitc:
+                    hh, ww = mk.shape
+                    sub[yc - uy0:yc - uy0 + hh, xc - ux0:xc - ux0 + ww] |= (
+                        mk & rem[yc:yc + hh, xc:xc + ww])
+                keep.extend(_split(sub, uy0, ux0))
+            comps = keep
     if n:
         plan.layers[ink0:ink0] = added["fill"]
         plan.layers.extend(added["over"])

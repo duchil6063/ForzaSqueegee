@@ -237,13 +237,24 @@ def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
     for i in range(n):
         for j in forb[i]:
             d[i, j] = d[j, i] = np.inf
+    # **가장 가까운 쌍은 힙이 낸다** — 행렬 전체 `argmin`을 바퀴마다 돌리면
+    # 기각(반경 밖)이 잦은 판에서 그 하나가 이 단의 태반이다 (실측 11번 판:
+    # 1,354색에 바퀴 59,321번 · 9초). 행렬은 종전 그대로 쓰고(값·기각·행
+    # 갱신이 전부 같은 자리에 같은 값으로 적힌다) 힙은 그 위의 색인일 뿐이다:
+    # 꺼낸 항목의 값이 행렬의 지금 값과 다르면 낡은 것이라 버린다. 동점은
+    # `(값, i, j)` 순이라 `argmin`의 행우선 첫 자리와 같은 쌍이 나온다.
+    import heapq
+
+    iu, ju = np.triu_indices(n, 1)
+    vals = d[iu, ju]
+    fin = np.isfinite(vals)
+    heap = list(zip(vals[fin].tolist(), iu[fin].tolist(), ju[fin].tolist()))
+    heapq.heapify(heap)
     live = n
-    while live > 1:
-        i, j = np.unravel_index(int(np.argmin(d)), d.shape)
-        if not np.isfinite(d[i, j]):
-            break                                  # 더 못 묶는다
-        if i > j:
-            i, j = j, i
+    while live > 1 and heap:
+        val, i, j = heapq.heappop(heap)
+        if d[i, j] != val:
+            continue                               # 낡은 항목 (갱신·기각·사망)
         wt = w[i] + w[j]
         cn = (cen[i] * w[i] + cen[j] * w[j]) / max(wt, 1e-12)
         # **어느 원색도 반경 밖으로 안 나간다** — 나가면 그 쌍만 막고 계속한다
@@ -271,6 +282,8 @@ def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
         # 금지 관계는 대칭이라 상대 쪽 줄도 막는다
         d[i, :] = nd
         d[:, i] = nd
+        for k in np.flatnonzero(np.isfinite(nd)).tolist():
+            heapq.heappush(heap, (float(nd[k]), min(i, k), max(i, k)))
         live -= 1
     # 무리 대표 색인
     root = np.arange(n)

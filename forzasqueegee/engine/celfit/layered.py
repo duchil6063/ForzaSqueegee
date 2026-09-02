@@ -349,6 +349,9 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
             _mop_leftover(cen, cnt, cstats, "min_blob", n)
             return n
         cm = cc == ci
+        cbox = (int(cstats[ci, cv2.CC_STAT_LEFT]), int(cstats[ci, cv2.CC_STAT_TOP]),
+                int(cstats[ci, cv2.CC_STAT_LEFT] + cstats[ci, cv2.CC_STAT_WIDTH]),
+                int(cstats[ci, cv2.CC_STAT_TOP] + cstats[ci, cv2.CC_STAT_HEIGHT]))
         c = _census.mop_comp(cen, **_census.shape_stats(cm)) if cen else None
         if c is not None:
             c.update(_census.where(cm, cen.get("_dedge"), cen.get("_ink")))
@@ -359,7 +362,7 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
         if price and not free and sc.worth_of(cm) < price:
             if c is not None:
                 c["out"] = "price"
-            sc.commit(cm)                  # 포기 — 잔여에서 지워 다음 덩어리로
+            sc.commit(cm, box=cbox)                  # 포기 — 잔여에서 지워 다음 덩어리로
             continue
         ys, xs = np.nonzero(cm)
         pw = np.stack([xs, ys], axis=1).astype(np.float64)
@@ -375,7 +378,7 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
         if best is None:
             if c is not None:
                 c["out"] = "no_seed"
-            sc.commit(cm)
+            sc.commit(cm, box=cbox)
             continue
         gain, q = _descend(sc, best[1], color, passes=3,
                            skew=best[1].skew != 0.0)
@@ -386,14 +389,14 @@ def mop_up(plan: LayerPlan, sc: _Scorer, cat: Catalog, color, left: int,
         if gain < 3.0:
             if c is not None:
                 c["out"], c["gain"] = "low_gain", round(float(gain), 2)
-            sc.commit(cm)                  # 이 덩어리는 포기 (무한루프 방지)
+            sc.commit(cm, box=cbox)                  # 이 덩어리는 포기 (무한루프 방지)
             continue
         gain, q = _grow_step(sc, gain, q)
         _, mfin, fbox = sc._score_impl(q)
         if mfin is None:
             if c is not None:
                 c["out"] = "no_raster"
-            sc.commit(cm)
+            sc.commit(cm, box=cbox)
             continue
         sc.commit_box(mfin, fbox)
         plan.layers.append(q)

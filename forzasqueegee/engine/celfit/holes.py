@@ -242,6 +242,26 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
             if not _growable(cat, lay, ink_long):
                 continue
             cur = _poly_px(cat, lay, upp, w, h)   # 후보 셋이 함께 쓴다
+            # 지금 도형의 래스터는 **한 번만** 뜬다 — 후보마다 제 상자에서 다시
+            # 뜨던 것을 제 상자에서 한 번 뜨고 후보 상자로 옮겨 자른다. 격자
+            # 정수 평행이동에서 `poly_mask`는 같은 픽셀을 내므로(고정소수
+            # 꼭짓점이 그대로 밀린다) 결과가 같다 (무작위 폴리곤 4,000벌 대조)
+            cbox = poly_bbox(cur, w, h, ss, pad=2)
+            om_full = (poly_mask(cur, (cbox[3] - cbox[1], cbox[2] - cbox[0]),
+                                 cbox[0] / ss, cbox[1] / ss, ss)
+                       if cbox is not None else None)
+
+            def _om(x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+                out = np.zeros((y1 - y0, x1 - x0), bool)
+                if om_full is None:
+                    return out
+                ix0, iy0 = max(x0, cbox[0]), max(y0, cbox[1])
+                ix1, iy1 = min(x1, cbox[2]), min(y1, cbox[3])
+                if ix0 < ix1 and iy0 < iy1:
+                    out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = om_full[
+                        iy0 - cbox[1]:iy1 - cbox[1], ix0 - cbox[0]:ix1 - cbox[0]]
+                return out
+
             best = None
             # 획은 **긴 축 하나만** — 짧은 축은 곧 선 굵기다
             axes = ((1, 1), (1, 0), (0, 1))
@@ -298,7 +318,7 @@ def grow_covers(plan: LayerPlan, cel: CelArt, cat: Catalog,
                             max(sym_box[2], x1), max(sym_box[3], y1))
                     shape = (y1 - y0, x1 - x0)
                     nm = poly_mask(polys, shape, x0 / ss, y0 / ss, ss)
-                    om = poly_mask(cur, shape, x0 / ss, y0 / ss, ss)
+                    om = _om(x0, y0, x1, y1)
                     g = nm & ~om
                     if not g.any():
                         continue

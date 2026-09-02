@@ -56,6 +56,56 @@ def _nb_codes(img: np.ndarray) -> np.ndarray:
     return c
 
 
+# ── 희소 세선화 ────────────────────────────────────────────────────────
+# 선 마스크는 성기다 — 작업 해상도 판에서 선 픽셀은 전체의 3% 언저리다. 종전
+# 구현은 반복마다 ROI **전체**를 여덟 방향으로 굴리고 더했다 (부분 반복 하나에
+# 전장 훑기 60번). 큰 성분(선망 전체가 한 성분이다)에서는 그 하나가 판 시간의
+# 15%였다 (실측 11번 판: 세선화 35초 / 245초). 여기서는 **살아 있는 픽셀만**
+# 들고 다닌다 — 이웃 여덟을 그 픽셀들에서만 모으고(평탄 색인 + 오프셋), 판정은
+# 256가지 이웃 배치의 표(`_ZS_LUT`)가 한다. 규칙·순서·부분 반복의 스냅숏 의미가
+# 종전과 같아 **결과 픽셀이 바이트 단위로 같다** (표준 판 대조로 확인).
+#
+# 마스크는 먼저 제 bbox로 자른다 — 세선화는 국소 연산이고 바깥은 어차피 0이라
+# 결과가 같다. 뚱뚱 덩어리 후보처럼 큰 ROI 안의 작은 조각을 묻는 자리가 그
+# 덕을 본다.
+#
+# 이웃 순서 (p2..p9)는 종전 구현의 `np.roll` 조합 그대로다 — (dy, dx):
+#   p2 (+1, 0) · p3 (+1,−1) · p4 (0,−1) · p5 (−1,−1)
+#   p6 (−1, 0) · p7 (−1,+1) · p8 (0,+1) · p9 (+1,+1)
+_ZS_OFF = ((1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1))
+
+
+def _zs_lut() -> tuple[np.ndarray, np.ndarray]:
+    """Zhang-Suen 두 부분 반복의 삭제 표 — 이웃 배치(비트 i = p_{i+2}) → 지우나."""
+    out = []
+    for step in (0, 1):
+        t = np.zeros(256, bool)
+        for code in range(256):
+            p = [(code >> i) & 1 for i in range(8)]       # p2..p9
+            B = sum(p)
+            seq = p + [p[0]]
+            A = sum(1 for i in range(8) if seq[i] == 0 and seq[i + 1] == 1)
+            p2, p3, p4, p5, p6, p7, p8, p9 = p
+            if step == 0:
+                c1 = (p2 * p4 * p6 == 0) and (p4 * p6 * p8 == 0)
+            else:
+                c1 = (p2 * p4 * p8 == 0) and (p2 * p6 * p8 == 0)
+            t[code] = 2 <= B <= 6 and A == 1 and c1
+        out.append(t)
+    return out[0], out[1]
+
+
+_ZS_LUT = _zs_lut()
+
+
+def _gather_codes(flat: np.ndarray, idx: np.ndarray, offs: tuple) -> np.ndarray:
+    """살아 있는 픽셀들의 8-이웃 배치 코드 (비트 i = 오프셋 i의 픽셀)."""
+    code = np.zeros(len(idx), np.uint8)
+    for i, off in enumerate(offs):
+        code |= (flat[idx + off] << i).astype(np.uint8)
+    return code
+
+
 def _unit_width(skel: np.ndarray) -> np.ndarray:
     """Zhang-Suen이 남긴 **계단 잉여 픽셀**을 걷어 진짜 단위폭으로 만든다.
 
@@ -68,53 +118,63 @@ def _unit_width(skel: np.ndarray) -> np.ndarray:
     삭제 기준은 "이웃이 한 덩어리"뿐이라 위상이 안 변한다 — 이웃끼리 이미
     서로 붙어 있으니 그 픽셀을 빼도 이어진 것은 이어진 채다. 끝점(이웃 1개)은
     획이 짧아지므로 남긴다. 래스터 순서 순차 삭제 = 결정적.
+
+    희소 구현이다 (위 문단) — 후보는 살아 있는 픽셀에서만 뽑고, 순차 삭제의
+    재확인은 종전과 같은 순서·같은 규칙이다.
     """
     img = np.pad(skel, 1).astype(np.uint8)
-    while True:
-        code = _nb_codes(img)
-        cand = np.argwhere((img == 1) & (_NCOMP[code] == 1) & (_NNB[code] >= 2))
+    W = img.shape[1]
+    flat = img.ravel()
+    alive = np.flatnonzero(flat)                  # 래스터 순서
+    offs = tuple(dy * W + dx for dy, dx in _NB_OFF)
+    while alive.size:
+        code = _gather_codes(flat, alive, offs)
+        keep = (_NCOMP[code] == 1) & (_NNB[code] >= 2)
+        cand = alive[keep]
         removed = False
-        for y, x in cand:
-            if not img[y, x]:
-                continue
+        for i in cand.tolist():
             c = 0
-            for i, (dy, dx) in enumerate(_NB_OFF):   # 삭제 반영 재확인
-                c |= int(img[y + dy, x + dx]) << i
+            for k, off in enumerate(offs):        # 삭제 반영 재확인
+                c |= int(flat[i + off]) << k
             if _NCOMP[c] == 1 and _NNB[c] >= 2:
-                img[y, x] = 0
+                flat[i] = 0
                 removed = True
         if not removed:
             break
+        alive = alive[flat[alive] != 0]
     return img[1:-1, 1:-1].astype(bool)
 
 
 def _thin(mask: np.ndarray) -> np.ndarray:
-    """Zhang-Suen 세선화 + 계단 잉여 제거 (bool, 소영역 ROI 전용)."""
-    img = np.pad(mask, 1).astype(np.uint8)
-    while True:
+    """Zhang-Suen 세선화 + 계단 잉여 제거 (bool, 소영역 ROI 전용).
+
+    희소 구현 — 위 `_ZS_OFF` 문단. 결과는 종전 밀집 구현과 픽셀 단위로 같다.
+    """
+    out = np.zeros(mask.shape, bool)
+    ys, xs = np.nonzero(mask)
+    if ys.size == 0:
+        return out
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    img = np.pad(mask[y0:y1, x0:x1], 1).astype(np.uint8)
+    W = img.shape[1]
+    flat = img.ravel()
+    alive = np.flatnonzero(flat)
+    offs = tuple(dy * W + dx for dy, dx in _ZS_OFF)
+    lut0, lut1 = _ZS_LUT
+    while alive.size:
         changed = False
-        for step in (0, 1):
-            p = img
-            p2 = np.roll(p, -1, 0); p3 = np.roll(np.roll(p, -1, 0), 1, 1)
-            p4 = np.roll(p, 1, 1);  p5 = np.roll(np.roll(p, 1, 0), 1, 1)
-            p6 = np.roll(p, 1, 0);  p7 = np.roll(np.roll(p, 1, 0), -1, 1)
-            p8 = np.roll(p, -1, 1); p9 = np.roll(np.roll(p, -1, 0), -1, 1)
-            nb = [p2, p3, p4, p5, p6, p7, p8, p9]
-            B = sum(x.astype(np.int8) for x in nb)
-            seq = nb + [p2]
-            A = sum(((seq[i] == 0) & (seq[i + 1] == 1)).astype(np.int8)
-                    for i in range(8))
-            if step == 0:
-                c1 = (p2 * p4 * p6 == 0) & (p4 * p6 * p8 == 0)
-            else:
-                c1 = (p2 * p4 * p8 == 0) & (p2 * p6 * p8 == 0)
-            rm = (p == 1) & (B >= 2) & (B <= 6) & (A == 1) & c1
+        for lut in (lut0, lut1):
+            # 부분 반복의 판정은 **스냅숏**에서 — 모으고 나서 지운다
+            rm = lut[_gather_codes(flat, alive, offs)]
             if rm.any():
-                img[rm] = 0
+                flat[alive[rm]] = 0
+                alive = alive[~rm]
                 changed = True
         if not changed:
             break
-    return _unit_width(img[1:-1, 1:-1].astype(bool))
+    out[y0:y1, x0:x1] = _unit_width(img[1:-1, 1:-1].astype(bool))
+    return out
 
 
 def _paths(skel: np.ndarray) -> list[tuple[np.ndarray, int, int]]:

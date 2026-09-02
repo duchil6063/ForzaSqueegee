@@ -56,35 +56,55 @@ def placed_line(cat: Catalog, lay: Layer, upp: float, w: int, h: int):
     return line_of(descriptors(cat).get(lay.shape), lay, upp, w, h)
 
 
+# **자세 기억** — 중심선을 세우는 앞 절반(크기·전단·회전)과 배부름은 `x`·`y`를
+# 안 본다. 하강은 그 축들을 붙들고 x·y를 흔드는 걸음이 태반이라(`geometry.
+# _pose_pts`와 같은 사정) 같은 자세가 잇달아 온다. 평행이동 **전**의 점과
+# 배부름 비만 기억하고 그 뒤는 그대로 돈다 — 순수한 메모이제이션이다.
+_LINE_CACHE: dict = {}
+_BULGE_CACHE: dict = {}
+_CACHE_MAX = 1 << 14
+
+
 def line_of(d, lay: Layer, upp: float, w: int, h: int):
     """서술자를 **이미 찾아 둔** 자리용 (`placed_line`의 기하 절반).
 
     좌표하강 안에서는 도형이 안 바뀌고 변환만 움직인다. 그런데
     `descriptors(cat)`는 부를 때마다 카탈로그의 도달 도형을 훑어 키를 짓는다 —
     하강 스텝마다 부르면 한 장이 분 단위로 늘어진다 (실측). 찾기는 한 번,
-    기하는 스텝마다.
+    기하는 스텝마다 (평행이동 전까지는 자세마다 한 번 — `_LINE_CACHE`).
     """
     if d is None:
         return None
     if not d.stroke_ok or len(d.center) < 3:
         return _bar_line(d, lay, upp, w, h)
-    th = np.radians(lay.rot)
-    c, s = np.cos(th), np.sin(th)
-    p = d.center * np.array([lay.sx, lay.sy], np.float64)
-    if lay.skew:                           # 전단 — 회전 **전** (`geometry._poly_px`)
-        p = p + np.stack([p[:, 1] * lay.skew, np.zeros(len(p))], axis=1)
-    p = p @ np.array([[c, s], [-s, c]], np.float64)
-    p += np.array([lay.x, lay.y], np.float64)
+    # 키는 서술자의 **id**다 (서술자는 얼린 데이터클래스라 해시가 안 된다) —
+    # 값에 서술자를 함께 물어 두어 id가 재활용될 길을 막는다
+    key = (id(d), lay.sx, lay.sy, lay.rot, lay.skew)
+    got = _LINE_CACHE.get(key)
+    if got is None or got[0] is not d:
+        th = np.radians(lay.rot)
+        c, s = np.cos(th), np.sin(th)
+        p = d.center * np.array([lay.sx, lay.sy], np.float64)
+        if lay.skew:                       # 전단 — 회전 **전** (`geometry._poly_px`)
+            p = p + np.stack([p[:, 1] * lay.skew, np.zeros(len(p))], axis=1)
+        p = p @ np.array([[c, s], [-s, c]], np.float64)
+        # 쓰이는 것은 양끝과 접선 표본 넷뿐이다 — 그 넷만 기억하고 옮긴다
+        # (성분별 식이라 전체를 옮겨 고르는 것과 같은 값이다)
+        k = max(1, len(p) // 8)
+        p = p[[0, k, -1 - k, -1]] if len(p) >= 3 else p
+        if len(_LINE_CACHE) >= _CACHE_MAX:
+            _LINE_CACHE.clear()
+        _LINE_CACHE[key] = got = (d, p)
+    p = got[1] + np.array([lay.x, lay.y], np.float64)
     px = np.stack([p[:, 0] / upp + w / 2.0, h / 2.0 - p[:, 1] / upp], axis=1)
     if len(px) < 3:
         return None
-    k = max(1, len(px) // 8)
-    t0 = px[k] - px[0]
-    t1 = px[-1] - px[-1 - k]
+    t0 = px[1] - px[0]
+    t1 = px[3] - px[2]
     n0, n1 = float(np.hypot(*t0)), float(np.hypot(*t1))
     if n0 < 1e-9 or n1 < 1e-9:
         return None
-    return px[0], px[-1], t0 / n0, t1 / n1
+    return px[0], px[3], t0 / n0, t1 / n1
 
 
 def _bar_line(d, lay: Layer, upp: float, w: int, h: int):
@@ -245,12 +265,21 @@ def bulge_of(desc, lay: Layer) -> float:
     """
     if desc is None or not desc.stroke_ok or len(desc.center) < 5:
         return 1.0
+    key = (id(desc), lay.sx, lay.sy, lay.skew)
+    got = _BULGE_CACHE.get(key)
+    if got is not None and got[0] is desc:
+        return got[1]
     w, _mid, length = placed_widths(desc.center, desc.halfw, lay.sx, lay.sy,
                                     lay.skew)
     if length <= 1e-9 or len(w) < 5:
-        return 1.0
-    med = float(np.median(w))
-    return float(w.max()) / med if med > 1e-9 else 1.0
+        val = 1.0
+    else:
+        med = float(np.median(w))
+        val = float(w.max()) / med if med > 1e-9 else 1.0
+    if len(_BULGE_CACHE) >= _CACHE_MAX:
+        _BULGE_CACHE.clear()
+    _BULGE_CACHE[key] = (desc, val)
+    return val
 
 
 def steer(cat: Catalog, sc, path_g: np.ndarray, wpx: float, w: int, h: int,

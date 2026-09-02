@@ -64,13 +64,15 @@ def _pose_pts(cat: Catalog, lay: Layer) -> tuple[np.ndarray, ...]:
 def _poly_px(cat: Catalog, lay: Layer, upp: float, w: int, h: int,
              ox: int = 0, oy: int = 0) -> list[np.ndarray]:
     """레이어 → 이미지 px 폴리곤 (render._draw_layer와 같은 식, ROI 오프셋)."""
-    off = np.array([lay.x, lay.y], np.float32)
+    # 열마다 따로 쓴다 — `np.stack`이 이 함수 비용의 3분의 1이었다 (판당
+    # 백만 번). 성분별 식은 종전과 같다 (float32 이동 → /upp → 중심 → 오프셋)
+    fx, fy = np.float32(lay.x), np.float32(lay.y)
     polys = []
     for pts in _pose_pts(cat, lay):
-        pts = pts + off
-        px = pts[:, 0] / upp + w / 2 - ox
-        py = h / 2 - pts[:, 1] / upp - oy
-        polys.append(np.stack([px, py], axis=1))
+        out = np.empty(pts.shape, np.float32)
+        out[:, 0] = (pts[:, 0] + fx) / upp + w / 2 - ox
+        out[:, 1] = h / 2 - (pts[:, 1] + fy) / upp - oy
+        polys.append(out)
     return polys
 
 
