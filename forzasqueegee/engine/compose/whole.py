@@ -111,6 +111,28 @@ class SurfaceJob:
     budget: int
     area: float                                   # 쓸 수 있는 넓이 (면 유닛²)
     why: str = ""
+    # **시각 위계** (§3) — PRIMARY / SECONDARY / SUPPORT / MICRO.
+    # 면 이름이 아니라 **예상 무게**가 정한다 (`assign_tiers`).
+    tier: str = "MICRO"
+    mass: float = 0.0                             # 예상 무게 몫 (거울 짝 접은 값)
+
+
+# **이음새를 건너 이어진다** (§17) — 두 면의 그림이 한 그림이라는 관계.
+# 여기서는 그 관계를 **세우기만** 한다. 실제로 건너 그리는 손은 이미 있는
+# `compose.seams.carry`이고, 이 자리는 "어느 짝이 그럴 자격이 있나"의 답이다.
+CONTINUE_ACROSS_SEAM = "continue_across_seam"
+
+
+@dataclass
+class SeamLink:
+    """이어질 수 있는 면 짝 하나 — 방향은 **무게가 큰 쪽에서 작은 쪽으로**."""
+
+    src: str
+    dst: str
+    axis: str                                     # src에서 넘치는 축 (u|v)
+    edge: float                                   # 이음선 (src 유닛)
+    confidence: float = 0.0                       # 이음새 토막 신뢰의 중앙값
+    why: str = ""
 
 
 @dataclass
@@ -118,6 +140,11 @@ class WholeCarPlan:
     jobs: dict[str, SurfaceJob] = field(default_factory=dict)
     variants: dict[str, Variant] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # 접은 단위(거울 짝 한 벌) → 등급·무게 몫. 주역이 어디인지의 답이다.
+    hierarchy: dict[str, str] = field(default_factory=dict)
+    faults: tuple = ()                            # 어긴 위계 규칙 (§3)
+    # §17 — 이어질 수 있는 면 짝 (`CONTINUE_ACROSS_SEAM`)
+    links: list[SeamLink] = field(default_factory=list)
 
 
 # ── 면 기하 ─────────────────────────────────────────────────────────
@@ -486,10 +513,106 @@ def allocate(roles: dict, vs: dict, *, caps: dict | None = None,
             if v >= VARIANT_MIN.get(roles[n][0], 1)}
 
 
+def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None) -> None:
+    """면마다 **시각 위계**를 매긴다 (§3) — 제자리 수정, 레이어는 안 건드린다.
+
+    등급을 면 이름으로 고정하지 않는다: 윗면이 주역인 판도 옆면이 주역인 판도
+    있다. 정하는 것은 **예상 무게 몫**뿐이고, 자와 문턱은 평가기와 한 벌이다
+    (`wholeeval.tiers`) — 배치 뒤 실측으로 다시 매기면 같은 함수가 답한다.
+
+    예상 무게는 `넓이 × 품질(예산)`이다. 넓이는 그 면이 차에서 얼마나 보이나의
+    대리값이고, 품질은 그 변주의 시각 값 중 예산이 실제로 담아낸 몫이다
+    (`Variant.quality`). 실측 무게(`ruler.visual_weight` = Σ 칠한 넓이 × 대비)의
+    **대리**지 같은 값이 아니다 — 라스터를 안 뜨는 자리라 그렇고, 판이 다 선
+    뒤의 판정은 언제나 실측 쪽이 한다.
+
+    `taken_mass`는 이미 주역이 앉은 면(옆면·윗면)의 예상 무게다 — 그 면들이
+    빠진 채로 등급을 매기면 남은 면끼리 주역을 나눠 갖는 꼴이 된다.
+    """
+    from . import wholeeval as WE
+
+    mass = dict(taken_mass or {})
+    for name, job in wc.jobs.items():
+        v = wc.variants.get(job.kind)
+        q = v.quality(job.budget) if v is not None else 0.0
+        mass[name] = mass.get(name, 0.0) + job.area * q
+    sh = WE.shares(mass)
+    if sh is None:
+        return
+    tier = WE.tiers(sh)
+    wc.hierarchy = dict(tier)
+    wc.faults = WE.tier_faults(sh)
+    for name, job in wc.jobs.items():
+        unit = WE.MIRROR.get(name, name)
+        job.tier = tier.get(unit, "MICRO")
+        job.mass = float(sh.get(unit, 0.0))
+
+
+# 등급 사이의 **내리막**만 잇는다 — 무게가 작은 면에서 큰 면으로 그림이
+# 흘러 들어오면 주역이 어디인지가 흐려진다 (§3의 위계).
+_TIER_RANK = {"PRIMARY": 0, "SECONDARY": 1, "SUPPORT": 2, "MICRO": 3}
+
+
+def seam_links(wc: WholeCarPlan, atlas, taken: set) -> list[SeamLink]:
+    """이어질 수 있는 면 짝 (§17) — 관계만 세운다, 그리지는 않는다.
+
+    자격은 넷이다.
+
+    * 두 면이 **둘 다 일을 맡고 있다** (도안이 앉은 면이거나 변주를 받은 면).
+    * `atlas`에 그 이음새가 서 있다 (`compose.atlas.Seam`).
+    * 이음새 토막의 신뢰가 `seams.CONF_MIN` 위다 — 두 마스크가 그 자리에서
+      서로 다른 것을 쥔 짝은 이어 붙이면 자리가 틀어진다.
+    * 방향이 **내리막**이다 (주역 → 조연 → 받침).
+
+    실제로 건너 그리는 것은 `compose.seams.carry`다 — 이 목록은 그 자에게
+    "어느 짝을 물어볼 가치가 있나"를 주는 자리고, 못 잇기로 판정되면 거기서
+    끊긴다 (`seams` 문서의 못 이으면 끊는다).
+    """
+    from . import seams as _seams
+
+    out: list[SeamLink] = []
+    if atlas is None:
+        return out
+    live = set(wc.jobs) | set(taken)
+    seen: set = set()
+    for src in sorted(live):
+        for seam in atlas.seams.get(src, ()):
+            if (src, seam.dst) in seen:
+                continue                          # 같은 짝의 둘째 이음새
+            seen.add((src, seam.dst))
+            if seam.dst not in live:
+                continue
+            a = wc.hierarchy.get(_unit(src), "MICRO")
+            b = wc.hierarchy.get(_unit(seam.dst), "MICRO")
+            if _TIER_RANK.get(a, 3) > _TIER_RANK.get(b, 3):
+                continue                          # 오르막 — 위계가 흐려진다
+            segs = seam.fold.segments
+            conf = (float(np.median([sg.confidence for sg in segs]))
+                    if segs else 1.0)
+            if conf < _seams.CONF_MIN:
+                continue
+            out.append(SeamLink(src=src, dst=seam.dst, axis=seam.fold.axis,
+                                edge=float(seam.fold.edge), confidence=conf,
+                                why=msg("{a} → {b} 이음새 신뢰 {c:.2f}",
+                                        a=src, b=seam.dst, c=conf)))
+    return out
+
+
+def _unit(name: str) -> str:
+    """면 이름 → 접은 단위 이름 (거울 짝은 한 벌, `wholeeval.MIRROR`)."""
+    from .wholeeval import MIRROR
+
+    return MIRROR.get(name, name)
+
+
 def plan_car(plan: LayerPlan, lk: Look, it, cat: Catalog, maps: dict, *,
              taken: set, caps: dict | None = None,
-             margin: float = MARGIN_MIN) -> WholeCarPlan:
-    """차 한 대의 구성 — 역할 → 변주 → 예산."""
+             margin: float = MARGIN_MIN,
+             taken_mass: dict | None = None) -> WholeCarPlan:
+    """차 한 대의 구성 — 역할 → 변주 → 예산 → 위계 (§3).
+
+    `taken_mass`는 이미 주역이 앉은 면의 예상 무게다 (`assign_tiers`).
+    """
     wc = WholeCarPlan()
     roles = assign_roles(maps, taken)
     if not roles:
@@ -511,4 +634,5 @@ def plan_car(plan: LayerPlan, lk: Look, it, cat: Catalog, maps: dict, *,
         kind, area = roles[name]
         wc.jobs[name] = SurfaceJob(name=name, role=kind, kind=kind, budget=n,
                                    area=area, why=wc.variants[kind].why)
+    assign_tiers(wc, taken_mass)
     return wc

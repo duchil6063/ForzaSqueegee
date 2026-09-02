@@ -76,6 +76,15 @@ class Candidate:
     breaks: int = 0           # 선폭 이상 끊긴 자리 수
     seam_est: float = 0.0     # 그 끊김을 메우는 데 들 도형 수 (길이로 잰 추정)
     err: float = 0.0          # 기하 오차 (이상 띠와의 대칭차 / 띠 넓이)
+    # **틈과 넘침** — 계측이지 게이트가 아니다 (`linemetrics`와 같은 규약).
+    # `err`는 둘의 합이라 "덜 그렸다"와 "넘쳐 그렸다"가 상쇄되는데, 이음
+    # 품질이 묻는 것은 앞쪽 하나다: 뾰족한 끝이 마주쳐 벌어진 렌즈꼴 틈은
+    # 끊김 자(`breaks`)가 못 본다 — 그 자는 틈 길이가 선폭 이상일 때만 센다.
+    # 실측(X0 11장): 빈틈 중앙 0.32 · p90 0.55 (이상 띠가 정수 두께의
+    # 폴리라인이라 곱게 그은 획도 0.3 언저리다 — 절대값이 아니라 판 사이
+    # 대조로 읽는 자다).
+    gap: float = 0.0          # 이상 띠 중 **잉크가 안 닿은** 몫
+    over: float = 0.0         # 제 잉크 중 이상 띠 **밖으로 나간** 몫
     gain: float = 0.0         # 채점판 순이득 합 (참고)
 
     @property
@@ -91,7 +100,8 @@ class Candidate:
         return {"kind": self.kind, "n": self.n, "cover": round(self.cover, 4),
                 "stray": round(self.stray, 4), "breaks": self.breaks,
                 "seam_est": round(self.seam_est, 2),
-                "err": round(self.err, 4), "n_skew": self.n_skew}
+                "err": round(self.err, 4), "gap": round(self.gap, 4),
+                "over": round(self.over, 4), "n_skew": self.n_skew}
 
 
 # ── 평가 — 양자화된 최종 라스터에서 잰다 ──────────────────────────────
@@ -129,6 +139,7 @@ def evaluate(cand: Candidate, cat: Catalog, upp: float, w: int, h: int,
     """
     if not cand.layers and (cand.kind != "skip" or ink_so_far is None):
         cand.cover, cand.stray, cand.breaks, cand.err = 0.0, 0.0, 1, 1.0
+        cand.gap, cand.over = 1.0, 0.0
         cand.seam_est = _SEAM_PER_BREAK
         return cand
     pad = int(max(4.0, 2.0 * wpx)) + 3
@@ -145,6 +156,7 @@ def evaluate(cand: Candidate, cat: Catalog, upp: float, w: int, h: int,
             y1 = min(h, max(y1, int(np.ceil(p[:, 1].max())) + 2))
     if x0 >= x1 or y0 >= y1:
         cand.cover, cand.stray, cand.breaks, cand.err = 0.0, 1.0, 1, 1.0
+        cand.gap, cand.over = 1.0, 1.0
         cand.seam_est = _SEAM_PER_BREAK
         return cand
     box = (x0, y0, x1, y1)
@@ -154,6 +166,7 @@ def evaluate(cand: Candidate, cat: Catalog, upp: float, w: int, h: int,
     n_ink = float(ink.sum())
     if n_ink <= 0 and cand.kind != "skip":
         cand.cover, cand.stray, cand.breaks, cand.err = 0.0, 1.0, 1, 1.0
+        cand.gap, cand.over = 1.0, 1.0
         cand.seam_est = _SEAM_PER_BREAK
         return cand
     # 덮임 — 경로 표본이 잉크에 **닿는가** (1px 팽창 = 렌더에서 맞닿음)
@@ -193,8 +206,13 @@ def evaluate(cand: Candidate, cat: Catalog, upp: float, w: int, h: int,
     pts = np.stack([px, py], axis=1).round().astype(np.int32)
     cv2.polylines(ideal, [pts], False, 1, max(1, int(round(max(wpx, min_w)))))
     idl = ideal.astype(bool)
-    cand.err = (float((ink ^ idl).sum()) / max(1.0, float(idl.sum()))
-                if n_ink > 0 else 0.0)
+    n_idl = max(1.0, float(idl.sum()))
+    cand.err = (float((ink ^ idl).sum()) / n_idl if n_ink > 0 else 0.0)
+    # **틈과 넘침을 갈라 둔다** (`Candidate.gap`·`over` 문서). 틈은 **도안
+    # 전체의 잉크**로 본다 (`seen`): 교차하는 다른 획이 이미 그 자리를 그었으면
+    # 렌더에서 이어져 보이고, 그 규약이 덮임 자와 같다.
+    cand.gap = float((idl & ~seen).sum()) / n_idl
+    cand.over = (float((ink & ~idl).sum()) / n_ink if n_ink > 0 else 0.0)
     return cand
 
 

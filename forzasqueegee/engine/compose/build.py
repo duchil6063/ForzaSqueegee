@@ -289,7 +289,13 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         wcp = wholecar.plan_car(
             plan, lk, main_intent, cat, maps,
             taken={mp.surface for mp in hand},
-            caps={n: (m.cap or 1000) for n, m in maps.items()})
+            caps={n: (m.cap or 1000) for n, m in maps.items()},
+            # 주역이 이미 앉은 면 — 도안을 통째로 받으므로 품질이 1이고
+            # 예상 무게가 곧 그 면의 넓이다 (`whole.assign_tiers`)
+            taken_mass={mp.surface: wholecar.surface_area(maps[mp.surface])
+                        for mp in hand
+                        if maps.get(mp.surface) is not None
+                        and not maps[mp.surface].uncertain})
         art_paths: dict[tuple[str, int], Path] = {}
         for name, job in sorted(wcp.jobs.items()):
             var = wcp.variants[job.kind]
@@ -567,6 +573,12 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         atlas = build_atlas(maps, rigs, media=pinned) if deco else None
     except Exception:                              # 지도가 모자란 차 — 이 판은 안 잇는다
         atlas = None
+
+    # §17 **이음새를 건너 이어질 수 있는 짝** — 관계만 세운다 (`whole.seam_links`).
+    # 지도가 여기서야 서므로 구성(`plan_car`)보다 뒤다. 그리는 손은 아래
+    # `_carry_macro`·`compose.seams.carry`가 이미 쥐고 있다.
+    if wcp is not None and atlas is not None:
+        wcp.links = wholecar.seam_links(wcp, atlas, {mp.surface for mp in hand})
 
     carried: dict = {}
     rocker_carry: dict = {}
