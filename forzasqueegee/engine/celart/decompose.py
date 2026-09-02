@@ -131,7 +131,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
     stop_here()
     labels = g.merge(lam, max_regions, log)
     if _RAG_AUDIT:                        # 계보 감사 (`rag.lineage`) — 판정 무관
-        lin = g.lineage(lam, ws_atoms=n_ws)
+        lin = g.lineage(ws_atoms=n_ws)
         am = g.labels
         ok = sel & (am >= 0)
         na = max(int(am.max()) + 1, 1)
@@ -151,7 +151,7 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
             nb = lin.get(str(rec.get("best_nbr")))
             rec["nbr_pal"] = nb["pal"] if nb else -1
         trace["lineage"] = lin
-        trace["lam"] = float(lam)
+        trace["lam"] = float(g.lam)
         trace["atoms_ws"] = int(n_ws)
     trace.update(g.stats)
     trace["dense"] = feat is not None

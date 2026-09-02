@@ -241,6 +241,7 @@ class RegionGraph:
         self.version = np.zeros(max(n, 1), np.int64)
         self.merges = 0
         self.stats: dict = {}
+        self.lam = 0.0                     # 병합이 실제로 쓴 λ (`merge`가 채운다)
         # 감사 전용 — 상한 강제 단에서 **비용이 양수인데도 산** 간선 (§27).
         # 켜지 않으면 늘 비어 있다
         self.forced_log: list = []
@@ -437,7 +438,7 @@ class RegionGraph:
         비용이 낮은 것부터 산다 (무늬 보호 조각은 뒤로).
         """
         live = int(self.alive.sum())
-        lam = float(lam) * _LAM_MUL
+        lam = self.lam = float(lam) * _LAM_MUL
         live, gained = self._run(lam, live, 1, protect=False, sign_only=True)
         forced = 0
         if live > max_regions:
@@ -456,7 +457,7 @@ class RegionGraph:
                       "merge_gain": gained, "merge_forced": forced}
         return out
 
-    def lineage(self, lam: float, ws_atoms: int = -1) -> dict:
+    def lineage(self, lam: float | None = None, ws_atoms: int = -1) -> dict:
         """감사 전용 — 살아남은 영역마다 **원자·기하·못 산 최선 이웃**.
 
         `merge` 뒤에 부른다. 여기서 재는 것은 전부 그래프가 이미 들고 있는
@@ -466,7 +467,11 @@ class RegionGraph:
 
         `ws_atoms`를 주면 원자 출신을 가른다 (그 수 미만 = watershed,
         이상 = 그리드 재분할 — `atoms.oversegment`가 뒤에 번호를 잇는다).
+
+        λ는 안 주면 **병합이 실제로 쓴 값**이다 (`_LAM_MUL`이 곱해진 뒤) —
+        판정이 본 자와 계보가 적는 자가 갈리면 안 된다.
         """
+        lam = self.lam if lam is None else lam
         kids: dict[int, list] = {}
         for a in range(self.n0):
             if self.area[a] <= 0:
