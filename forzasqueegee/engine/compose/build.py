@@ -97,6 +97,10 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     베이스 도색·꾸밈 그룹·관통 띠·지붕 블랙아웃이 사람이 앉힌 상자를 기준으로
     그대로 선다. `main_plan`은 손 배치에서도 **주역**이다 — 베이스 도색이 이
     도안의 팔레트에서 나온다 (부르는 쪽이 가장 크게 앉은 도안을 넘긴다).
+    배치마다 **역할**이 붙어 온다 (`ManualPlace.role` — `compose.cast`): 옆면
+    설계의 뿌리는 그림(주역·보조)의 상자이고, 로고·글자·그대로는 두르지 않는다.
+    차 전체 구성도 같이 돈다 — 사람이 올린 덩어리가 앉은 면은 변주를 안 받고,
+    그 덩어리의 무게는 고정 질량으로 배분에 든다.
 
     **면을 넘긴 몫은 그 자리에서 잘린다** — 이웃 면으로 안 잇는다 (사용자 지시
     2026-08-27). 감아 돌리고 싶으면 편집기에서 도안을 이음선으로 가르고
@@ -287,7 +291,10 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 여기서 도안 하나에서 변주를 뽑아 역할을 주고, 예산은 한계효용이 나눈다.
     main_intent = None
     wcp = None
-    if whole and deco and not manual:
+    # 손 배치(편집기) 판도 같은 길이다 — 사람이 올린 덩어리가 앉은 면은 `taken`
+    # 이라 변주를 안 받고(보조 그림·로고를 크롭으로 덮어씌우지 않는다), 그
+    # 덩어리들의 무게는 **고정 질량**으로 배분에 든다 (역할표 1단계).
+    if whole and deco:
         main_intent = read_intent(plan, lk, cat)
         _tm_key = str(Path(main_plan).resolve())
         _tm_ink: dict[str, float] = {}
@@ -303,6 +310,19 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             g = float(mp.scale) * group_unit
             return g * g * w
 
+        # 면마다 **합**이다 — 한 면에 덩어리가 여럿이면(주역 + 로고 둘) 무게도
+        # 장수도 더해진다. 자동 경로는 면당 하나라 옛 답 그대로다.
+        _sure = {mp.surface for mp in hand
+                 if maps.get(mp.surface) is not None
+                 and not maps[mp.surface].uncertain}
+        taken_mass: dict[str, float] = {}
+        taken_n: dict[str, int] = {}
+        for mp in hand:
+            taken_n[mp.surface] = taken_n.get(mp.surface, 0) + len(
+                (plan if mp.key() == _tm_key else LayerPlan.load(mp.plan)).layers)
+            if mp.surface in _sure:
+                taken_mass[mp.surface] = taken_mass.get(mp.surface, 0.0) + _taken_mass(mp)
+
         wcp = wholecar.plan_car(
             plan, lk, main_intent, cat, maps,
             taken={mp.surface for mp in hand},
@@ -313,26 +333,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # (`whole.ink_weight`). 옛 길은 여기 **면 넓이**를 넣었는데, 넓지만
             # 그림이 다 안 채우는 윗면이 옆면과 같은 주역으로 읽혔다 (실측
             # 예상 0.368 ↔ 실측 0.231).
-            taken_mass={mp.surface: _taken_mass(mp)
-                        for mp in hand
-                        if maps.get(mp.surface) is not None
-                        and not maps[mp.surface].uncertain},
+            taken_mass=taken_mass,
             # **위계를 아는 배분** (§4) — 앞 판에서 잰 "이 배분이 안 건드리는
-            # 것"의 무게에 주역 도안을 더한 것. 없으면 옛 배분 그대로다
-            # (바이트 동일).
+            # 것"의 무게에 사람이(또는 자동이) 앉힌 덩어리를 더한 것. 없으면 옛
+            # 배분 그대로다 (바이트 동일).
             base_mass=(None if mass_hint is None else
                        {n: float(v) for n, v in mass_hint.items()
                         if maps.get(n) is not None
                         and not maps[n].uncertain}
-                       | {mp.surface: float(mass_hint.get(mp.surface, 0.0))
-                          + _taken_mass(mp)
-                          for mp in hand
-                          if maps.get(mp.surface) is not None
-                          and not maps[mp.surface].uncertain}),
-            base_counts=(None if mass_hint is None else
-                         {mp.surface: len((plan if mp.key() == _tm_key
-                                           else LayerPlan.load(mp.plan)).layers)
-                          for mp in hand}))
+                       | {s: float(mass_hint.get(s, 0.0)) + m
+                          for s, m in taken_mass.items()}),
+            base_counts=(None if mass_hint is None else dict(taken_n)))
         art_paths: dict[tuple[str, int, float], Path] = {}
         for name, job in sorted(wcp.jobs.items()):
             var = wcp.variants[job.kind]
@@ -359,7 +370,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 notes.append(msg("{surface}: {kind} 변주를 못 앉힌다 (면 지도가 없다)",
                                  surface=name, kind=job.kind))
                 continue
-            hand.append(mp)
+            hand.append(replace(mp, role="variant"))
             notes.append(msg("{surface}: {kind} {n:,}장 — {why}",
                              surface=name, kind=job.kind, n=job.budget,
                              why=job.why))
@@ -431,7 +442,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         u = ds * group_unit                      # 캔버스 1유닛 = 면 u유닛
         fcu, fcv = (p0 + p1) / 2, (vlo + vhi) / 2
         band = vhi - vlo
-        pbox = hand_box[deco_src]
+        # 설계가 두르는 상자는 **그림**(주역·보조)의 것이다 — 로고·글자·그대로는
+        # 재료이지 뿌리가 아니라, 그것들까지 두르면 베드가 로고 자리로 늘어난다.
+        # 그림이 하나도 없는 면(로고만 올린 면)은 전부를 두른다.
+        _anc = [m for m in by_surface[deco_src] if m.anchors] or by_surface[deco_src]
+        pbox = None
+        for m in _anc:
+            b = manual_box(hand_look[m.key()][1], m, group_unit)
+            pbox = b if pbox is None else _union(pbox, b)
         # **안 그려질 자리를 미리 거른다** — 꾸밈은 캔버스 좌표로 앉으므로 면
         # 도색 마스크를 모른다. 휠아치 구멍·벨트라인 위에 떨어진 모티프는 게임이
         # 통째로 안 그려 장수만 먹는다 (미리보기 실측: 26장 중 여섯).
@@ -449,7 +467,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 그 배치 변환으로 도안 뜻(실루엣·머리·축)을 프레임 좌표에 얹고, 그
         # 위에서 후보를 지어 점수로 고른다 (`design.compose_design`). 도안은
         # 어느 후보에서도 움직이지 않는다.
-        root_mp = max(by_surface[deco_src],
+        root_mp = max(_anc,
                       key=lambda m: (lambda b: (b[2] - b[0]) * (b[3] - b[1]))(
                           manual_box(hand_look[m.key()][1], m, group_unit)))
         root_plan, root_lk = hand_look[root_mp.key()]
@@ -999,6 +1017,15 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     _unique_group_counts(items, out_dir, notes)
 
     cfg = {"apply": apply, "car": car, "placements": items}
+    # 역할표 — 어느 덩어리가 무엇으로 읽혔나 (`compose.cast`). 계측 도구가 읽는
+    # 자리다; 자동 경로(전부 `hero`)에는 안 적는다 — 옛 구성 파일 그대로다.
+    if manual:
+        cfg["cast"] = [
+            {"surface": mp.surface, "plan": _rel(hand_path[mp.key()], out_dir),
+             "role": mp.role, "no_mirror": bool(mp.no_mirror),
+             "pinned": bool(mp.pinned),
+             "layers": hand_group[hand_ix[id(mp)]][1]}
+            for mp in hand if mp.role != "variant"]
     if design is not None:
         # 설계 기록 — 어느 계열·팔레트·흐름이 이겼고 점수가 어땠나. 사람이
         # 결과를 보고 "왜 이렇게 짰나"를 되짚는 자리이고, 검증 도구가 읽는다.

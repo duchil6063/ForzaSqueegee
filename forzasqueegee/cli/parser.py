@@ -329,6 +329,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help=msg("family 명령의 구성 계열 — minimal · graphic_bed · "
                                "diagonal_flow · motorsport · splash (안 주면 자동: "
                                "후보를 다 지어 점수로 고른다)"))
+    p_fx.add_argument("--role", nargs="*", default=None, metavar=msg("번호=역할"),
+                      help=msg("decorate: 실린 덩어리의 역할을 사람이 정한다 — "
+                               "`<번호>=<hero|support|logo|text|pinned|auto>` "
+                               "(번호는 `state`의 designs 차례, auto면 추정으로 되돌린다)"))
     p_fx.add_argument("-o", "--out", default=None,
                       help=msg("export·export-group이 쓸 자리"))
 

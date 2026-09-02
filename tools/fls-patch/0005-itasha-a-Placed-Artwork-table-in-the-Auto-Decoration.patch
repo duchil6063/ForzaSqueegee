@@ -1,0 +1,182 @@
+From 58df7f3e7bdadac9f79a60ef4cd8abc2be950eb4 Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Thu, 3 Sep 2026 00:08:38 +0900
+Subject: [PATCH 5/5] itasha: a Placed Artwork table in the Auto Decoration
+ dialog - a role per group
+
+Every group on the car is material for the decoration now (ForzaSqueegee
+engine/compose/cast.py). The dialog lists the recipe's designs - panel,
+artwork, layers - with a role combo per row: Auto (the engine's guess),
+Hero, Supporting, Logo, Lettering, As is. The chosen roles go to the engine
+as `--role <n>=<role>` ahead of the other options.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/gui/app/main_window_itasha.cpp | 96 +++++++++++++++++++++++++++++-
+ src/gui/i18n.cpp                   | 18 ++++++
+ 2 files changed, 112 insertions(+), 2 deletions(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 62c85dd..e68bc7e 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -39,6 +39,7 @@
+ #include <QFormLayout>
+ #include <QGroupBox>
+ #include <QHBoxLayout>
++#include <QHeaderView>
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
+@@ -46,6 +47,7 @@
+ #include <QLineEdit>
+ #include <QPushButton>
+ #include <QSpinBox>
++#include <QTableWidget>
+ #include <QVBoxLayout>
+ 
+ #include <iterator>
+@@ -104,6 +106,22 @@ const char *const kTextPlacements[] = {"auto", "side", "rear", "hood", "roof",
+ const char *const kTextPriorities[] = {"normal", "high", "low"};
+ const char *const kTextTri[] = {"auto", "on", "off"};
+ 
++// What each group placed on the car is to the decoration (engine/compose/
++// cast.py). The engine guesses from layer count, colours, skin and glyphs;
++// the dialog shows the guess and lets the person overrule it per group.
++struct ArtworkRole {
++    const char *name;
++    const char *text;
++};
++
++const ArtworkRole kArtworkRoles[] = {
++    {"hero", "Hero"},           // anchors the side composition
++    {"support", "Supporting"},  // stays where it is; that panel gets no crop
++    {"logo", "Logo"},           // never mirrored
++    {"text", "Lettering"},      // never mirrored
++    {"pinned", "As is"},        // the decoration leaves it alone
++};
++
+ // The last text the user typed comes back the next time the dialog opens -
+ // a name is typed once and tweaked many times.
+ constexpr auto kItashaTextKey = "itasha/text";
+@@ -435,6 +453,71 @@ void MainWindow::showItashaDecorationDialog() {
+         box->setCurrentIndex(at < 0 ? 0 : at);
+     };
+ 
++    // ---- Placed artwork ----
++    // One row per group the engine found on the car (the recipe's designs, in
++    // its order - the same order `--role <n>=` is read in). The combo starts on
++    // the engine's guess unless the person fixed the role before.
++    const QJsonArray designs = state.value(QStringLiteral("designs")).toArray();
++    QVector<QComboBox *> roleBoxes;
++    if (!designs.isEmpty()) {
++        auto *castGroup = new QGroupBox(i18n::t("Placed Artwork"), &dialog);
++        auto *castLayout = new QVBoxLayout(castGroup);
++        auto *castIntro = new QLabel(i18n::t(
++            "Every group placed on the car is material for the decoration. "
++            "Hero anchors the side composition; Supporting stays where you put "
++            "it and that panel gets no crop; Logo and Lettering are never "
++            "mirrored; As is is left untouched. Fix the role where the guess "
++            "is wrong."), castGroup);
++        castIntro->setWordWrap(true);
++        castLayout->addWidget(castIntro);
++        const auto roleText = [](const QString &role) {
++            for (const ArtworkRole &r : kArtworkRoles) {
++                if (role == QLatin1String(r.name)) {
++                    return i18n::t(r.text);
++                }
++            }
++            return role;
++        };
++        auto *table = new QTableWidget(designs.size(), 4, castGroup);
++        table->setHorizontalHeaderLabels(
++            {i18n::t("Panel"), i18n::t("Artwork"), i18n::t("Layers"), i18n::t("Role")});
++        table->verticalHeader()->setVisible(false);
++        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
++        table->setSelectionMode(QAbstractItemView::NoSelection);
++        table->horizontalHeader()->setStretchLastSection(true);
++        for (int i = 0; i < designs.size(); ++i) {
++            const QJsonObject d = designs.at(i).toObject();
++            const QString why = d.value(QStringLiteral("role_why")).toString();
++            table->setItem(i, 0, new QTableWidgetItem(
++                d.value(QStringLiteral("surface")).toString()));
++            auto *art = new QTableWidgetItem(d.value(QStringLiteral("label")).toString());
++            art->setToolTip(why);
++            table->setItem(i, 1, art);
++            auto *layers = new QTableWidgetItem(
++                QString::number(d.value(QStringLiteral("layers")).toInt()));
++            layers->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
++            table->setItem(i, 2, layers);
++            auto *box = new QComboBox(table);
++            box->addItem(i18n::t("Auto (%1)").arg(
++                             roleText(d.value(QStringLiteral("role_auto")).toString())),
++                         QStringLiteral("auto"));
++            for (const ArtworkRole &r : kArtworkRoles) {
++                box->addItem(i18n::t(r.text), QString::fromLatin1(r.name));
++            }
++            if (d.value(QStringLiteral("role_user")).toBool(false)) {
++                pickCombo(box, d.value(QStringLiteral("role")).toString());
++            }
++            box->setToolTip(why);
++            table->setCellWidget(i, 3, box);
++            roleBoxes.push_back(box);
++        }
++        table->resizeColumnsToContents();
++        table->setMinimumHeight(qMin(240, 30 * (designs.size() + 1) + 8));
++        table->setMaximumHeight(260);
++        castLayout->addWidget(table);
++        layout->addWidget(castGroup);
++    }
++
+     // ---- Composition ----
+     auto *compGroup = new QGroupBox(i18n::t("Composition"), &dialog);
+     auto *compForm = new QFormLayout(compGroup);
+@@ -591,8 +674,17 @@ void MainWindow::showItashaDecorationDialog() {
+     if (dialog.exec() != QDialog::Accepted) {
+         return;
+     }
+-    QStringList extra{QStringLiteral("--composition"), composition->currentData().toString(),
+-                      QStringLiteral("--family"), motif->currentData().toString()};
++    QStringList extra;
++    // Roles first: `--role` takes a list, and the next `--` option ends it.
++    if (!roleBoxes.isEmpty()) {
++        extra << QStringLiteral("--role");
++        for (int i = 0; i < roleBoxes.size(); ++i) {
++            extra << QStringLiteral("%1=%2").arg(i).arg(
++                roleBoxes.at(i)->currentData().toString());
++        }
++    }
++    extra << QStringLiteral("--composition") << composition->currentData().toString()
++          << QStringLiteral("--family") << motif->currentData().toString();
+     if (paintMode->currentData().toString() == QStringLiteral("pick")) {
+         extra << QStringLiteral("--color") << chosen.name(QColor::HexRgb);
+     } else {
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index 94f5b95..6395667 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -504,6 +504,24 @@ const Entry kTable[] = {
+      "candidate and keep the best-scoring one.",
+      "꾸밈은 사람이 놓은 그림 둘레에 짜입니다 — 그림 자체는 움직이지 않습니다. "
+      "자동이면 엔진이 후보를 전부 지어 점수가 가장 높은 것을 씁니다."},
++    {"Placed Artwork", "실린 그림"},
++    {"Every group placed on the car is material for the decoration. "
++     "Hero anchors the side composition; Supporting stays where you put "
++     "it and that panel gets no crop; Logo and Lettering are never "
++     "mirrored; As is is left untouched. Fix the role where the guess "
++     "is wrong.",
++     "차에 실린 덩어리 전부가 꾸밈의 재료입니다. 주역은 옆면 구성의 앵커이고, "
++     "보조는 놓은 자리에 그대로 두며 그 면에는 크롭을 넣지 않고, 로고·글자는 "
++     "미러하지 않으며, 그대로는 손대지 않습니다. 추정이 틀린 줄은 역할을 고치세요."},
++    {"Panel", "면"},
++    {"Artwork", "그림"},
++    {"Role", "역할"},
++    {"Auto (%1)", "자동 (%1)"},
++    {"Hero", "주역"},
++    {"Supporting", "보조"},
++    {"Logo", "로고"},
++    {"Lettering", "글자"},
++    {"As is", "그대로"},
+     {"Composition", "구성"},
+     {"Auto (score picks)", "자동 (점수가 고름)"},
+     {"Composition family:", "구성 계열:"},

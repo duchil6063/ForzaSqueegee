@@ -429,9 +429,11 @@ def compose_config(main_plan: Path, out: Path, *,
     # 그 실측을 넣어 다시 짓는다. 한 판으로는 못 하는 까닭은 실측이다 —
     # 배분 시점에는 꾸밈 그룹이 아직 없는데 옆면 무게의 63~84%가 그것이라,
     # 넓이·잉크 어느 대리값으로도 몫이 안 맞았다 (L1 0.26~0.58).
-    # `FS_WC_HIER=0`이면 한 판으로 물러난다 (바이트 동일).
+    # `FS_WC_HIER=0`이면 한 판으로 물러난다 (바이트 동일). 손 배치(편집기) 판도
+    # 같은 두 판이다 — 사람이 올린 덩어리는 배분이 **고정 질량**으로 받는다
+    # (`compose.build`의 `taken_mass`·`base_mass`).
     two_pass = (os.environ.get("FS_WC_HIER", "1").strip() != "0"
-                and deco and whole is not False and not manual)
+                and deco and whole is not False)
     # `out`이 폴더인지 파일인지는 **있는 그대로** 본다 — 확장자로 짐작하면
     # 스튜디오 작업 폴더(`<이름>.fsitasha/`)가 파일로 오인돼 구성이 부모
     # 폴더로 새고, 폴더 위에 파일을 쓰려다 'Permission denied'로 죽는다.

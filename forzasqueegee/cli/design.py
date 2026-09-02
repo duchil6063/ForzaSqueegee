@@ -207,10 +207,20 @@ def cmd_flsedit(args) -> int:
                         else args.game_text_fallback != "off"),
                     "max_layers": args.text_max_layers, "outline": args.text_outline,
                     "shadow": args.text_shadow}
+            roles = None
+            if args.role is not None:
+                roles = {}
+                for item in args.role:
+                    k, sep, v = str(item).partition("=")
+                    if not sep or not k.strip().isdigit():
+                        print(msg("오류: --role은 `<번호>=<역할>` 꼴이다 — {item!r}",
+                                  item=item))
+                        return 2
+                    roles[int(k)] = v.strip()
             said = studio.act_decorate(
                 st, composition=args.composition, motif=args.family,
                 paint=args.color, auto_paint=bool(args.auto_paint),
-                text=text_fields, drop_text=bool(args.no_text))
+                text=text_fields, drop_text=bool(args.no_text), roles=roles)
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))

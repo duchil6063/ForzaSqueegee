@@ -218,9 +218,22 @@ class ManualPlace:
     scale: float = 0.25
     rot: float = 0.0
     mirror: bool = False
+    # **역할표** (`compose.cast`) — 이 덩어리가 차에서 무엇인가. `hero`가 옆면
+    # 구성의 앵커이고, `support`는 사람이 놓은 면에 그대로 두며(그 면의 변주는
+    # 안 짓는다), `logo`·`text`는 미러하지 않고, `pinned`는 꾸밈이 안 건드린다
+    # (면 밖 자르기도 안 한다). 자동 경로의 배치는 전부 `hero`다.
+    role: str = "hero"
+    no_mirror: bool = False
+    pinned: bool = False
 
     def key(self) -> str:
         return str(Path(self.plan).resolve())
+
+    @property
+    def anchors(self) -> bool:
+        """옆면 설계의 뿌리가 될 수 있나 — 그림(주역·보조)만. 로고·글자·그대로는
+        구도의 재료이지 뿌리가 아니다."""
+        return self.role in ("hero", "support")
 
 
 def manual_box(lk: Look, mp: ManualPlace,
