@@ -63,6 +63,36 @@ _MAX_CANDS = int(os.environ.get("FS_MAX_CANDS", 6))
 # 것이 요점이다 — 자가 보수 규칙 그 자체라 둘이 어긋날 수 없다. 짧은 틈은
 # 마디가 하나라 `_SEAM_PER_BREAK`가 그대로 바닥이 된다.
 _SEAM_PER_BREAK = float(os.environ.get("FS_SEAM_PER_BREAK", 1.5))
+# **긴 곡선을 한 장으로 물어보는 자리** — DP의 잔차 문턱을 이 배수까지 열어
+# 지은 분절을 **후보로 한 벌 더** 세운다 (0개면 종전과 바이트 동일).
+#
+# 왜 배수인가. `_DP_RES`는 "분절 하나를 한 장에 담을 자격"을 **획 폭**으로
+# 잰다 — 잔차가 폭 안이면 렌더에서 획 몸통에 묻힌다. 자 자체는 옳은데,
+# **한 장이 낼 수 있는 잔차는 경로가 길수록 커진다**: 어휘 66벌의 중심선을
+# 통짜로 맞춘 최소 잔차(실측 A1 11판, 그은 획 5,225개)가
+#
+#     길이       <50   50-100  100-200  200-400   400+
+#     잔차 p50  0.46     1.13     2.08     4.01    9.87  px
+#     폭 대비   0.19     0.50     0.94     1.90    4.33
+#     `0.75×폭`을 넘는 몫  0.7%  14.8%  70.9%   97.2%  100.0%
+#
+# 이라, 200px 위의 획에서는 **어떤 (i,j) 스팬도 DP를 통과하지 못한다.** 스팬
+# 후보가 없어서가 아니다 (마디는 굽음 큰 자리부터 20개까지 세우고 DP는 그
+# 사이 모든 짝을 본다) — 문턱 하나가 긴 스팬을 통째로 막는다. 그래서 400px
+# 위 획은 통짜 한 장(`curve1`)이 **한 번도** 안 이겼고(0/68), 실제로 쓰인
+# 안은 재귀 분할·거칠게(7.6~8.4장)뿐이었다. 2장짜리(`simple`)와 그 사이가
+# 비어 있다.
+#
+# 여는 것은 **DP의 내부 문턱뿐**이고 판정은 안 연다: 늘어난 분절은 `_place_chain`
+# 이 실제로 놓고 `evaluate`가 양자화된 렌더에서 재며, 정책의 사전식 게이트
+# (덮임 0.90 · 끊김 0 · 스필)가 그대로 가린다. 기하가 나쁜 긴 한 장은 덮임에서
+# 진다 — 장수만 보고 이기지 못한다.
+_LONG_RES = tuple(float(x) for x in
+                  os.environ.get("FS_LONG_RES", "2.0,4.0").split(",")
+                  if x.strip())
+# 이만큼 장수가 허용된 획에서만 물어본다 (짧은 획은 이미 통짜가 이긴다 —
+# 50px 아래 획의 76%가 `curve1`이다). 3장 = 길이 ~81px 위.
+_LONG_MIN = int(os.environ.get("FS_LONG_MIN", 3))
 
 
 @dataclass
@@ -309,7 +339,8 @@ def _dp_nodes(path: np.ndarray, wmed: float, it=None,
 
 
 def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
-                forms: tuple, it=None, max_shapes: int = 0) -> list[int] | None:
+                forms: tuple, it=None, max_shapes: int = 0,
+                res_mul: float = 1.0) -> list[int] | None:
     """도형 수와 잔차를 함께 최소화하는 마디 분할 (작은 동적계획, 결정적).
 
     비용 = 도형 수 × `_DP_SHAPE` + Σ(정규화 잔차) + **각 아닌 자리에서 끊는
@@ -319,6 +350,10 @@ def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
 
     끊는 값이 도형 수와 **같은 저울**에 서는 것이 요점이다 — "끊을 이유가
     분명하면 여전히 끊고, 같은 값이면 각에서 끊는다"가 한 부등식이 된다.
+
+    `res_mul`은 **한 장에 담을 자격만** 그만큼 연다 (`_LONG_RES`) — 비용에
+    들어가는 `r / wlim`은 안 건드린다. 그래서 문턱이 열려도 잔차가 큰 스팬은
+    여전히 그만큼 비싸고, 값이 될 때만 길게 간다. 1.0이면 종전 그대로다.
     """
     _, U = forms
     if U is None or len(path) < 4:
@@ -336,6 +371,7 @@ def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
     prev = [-1] * K
     cost[0] = 0.0
     wlim = _DP_RES * max(wmed, 1.0) * sc.upp     # px 폭 → 캔버스 유닛
+    gate = wlim * max(1.0, float(res_mul))       # 자격만 여는 문턱
     for j in range(1, K):
         for i in range(j):
             if cost[i] == INF:
@@ -344,7 +380,7 @@ def dp_segments(path: np.ndarray, wmed: float, sc: _Scorer,
             if len(seg) < 3:
                 continue
             r = _seg_residual(U, seg, sc, n_form)
-            if not np.isfinite(r) or r > wlim:
+            if not np.isfinite(r) or r > gate:
                 continue
             c = cost[i] + _DP_SHAPE + r / max(wlim, 1e-9)
             if i > 0:                      # 시작점은 끊는 자리가 아니다
@@ -451,14 +487,33 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
                 return out                       # 사전식 최적 — 더 볼 것이 없다
 
         # ② DP 분절 — 도형 수와 잔차를 함께 최소화한 마디
-        idx = dp_segments(path, wmed, sc, forms, it, max_shapes)
-        if idx is not None and len(idx) - 1 <= max_shapes:
-            out.append(run("dp%d" % (len(idx) - 1),
-                           lambda sp: _place_chain(sp, sc, dt, path, idx, wmed,
-                                                   color, sid, forms, wcap,
-                                                   pol.name == "line", wprof,
-                                                   it=it,
-                                                   skew_ok=pol.skew_stroke)))
+        n_long = 0
+        seen_idx: set = set()
+
+        def _dp(kind: str, mul: float) -> None:
+            jdx = dp_segments(path, wmed, sc, forms, it, max_shapes,
+                              res_mul=mul)
+            if jdx is None or len(jdx) - 1 > max_shapes:
+                return
+            key = tuple(jdx)
+            if key in seen_idx:
+                return                     # 같은 분절 — 두 번 재 볼 것이 없다
+            seen_idx.add(key)
+            out.append(run("%s%d" % (kind, len(jdx) - 1),
+                           lambda sp, j=list(jdx): _place_chain(
+                               sp, sc, dt, path, j, wmed, color, sid, forms,
+                               wcap, pol.name == "line", wprof, it=it,
+                               skew_ok=pol.skew_stroke)))
+
+        _dp("dp", 1.0)
+        # ②-b **긴 스팬 안** — 같은 DP를 잔차 문턱만 열어 한 벌 더 짓는다
+        #     (`_LONG_RES`). 긴 획에서만 물어본다: 짧은 획은 통짜 한 장이
+        #     이미 이기고 있어 여기서 얻을 것이 없다.
+        if _LONG_RES and max_shapes >= _LONG_MIN:
+            before = len(out)
+            for mul in _LONG_RES:
+                _dp("long", mul)
+            n_long = len(out) - before
         # ③ 현행 재귀 분할 — 곡선이 안 되면 쪼개서 다시 곡선
         out.append(run("split", lambda sp: _fit_path(
             sp, sc, dt, path, wmed, color, True, max_shapes, forms, sid,
@@ -482,7 +537,9 @@ def build(sc: _Scorer, dt: np.ndarray, path: np.ndarray, wmed: float, color,
         if band is not None:
             sc.set_band(None)
         sc.end()
-    return out[:_MAX_CANDS]
+    # 뚜껑은 **종전 안의 수**를 가둔다 — 긴 스팬 안이 뒤에 오는 단순화 안을
+    # 밀어내면 겨루기 판이 달라진다 (그것은 이 축의 값이 아니다)
+    return out[:_MAX_CANDS + n_long]
 
 
 def commit(plan: LayerPlan, sc: _Scorer, cand: Candidate) -> int:

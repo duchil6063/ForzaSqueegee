@@ -125,6 +125,9 @@ class Reconstruction:
 
         n = [s.shapes for s in self.strokes if s.shapes]
         drawn = len(n)
+        # **한 장이 맡는 호길이** — 긴 스팬 축의 일급 지표다 (장수/획은 획
+        # 길이가 갈리면 못 견준다). 획마다 재고 획끼리 평균한다.
+        apl = [float(s.ev.length) / s.shapes for s in self.strokes if s.shapes]
         return {
             "policy": pol.name,
             "roles": tally(self.strokes, lambda s: s.role),
@@ -134,6 +137,10 @@ class Reconstruction:
             "strokes_drawn": drawn,
             "stroke_shapes": int(sum(n)),
             "shapes_per_stroke": round(float(np.mean(n)), 3) if n else 0.0,
+            "arc_per_shape": round(float(np.mean(apl)), 2) if apl else 0.0,
+            "stroke_len_sum": round(float(sum(s.ev.length
+                                              for s in self.strokes
+                                              if s.shapes)), 1),
             "one_shape_ratio": round(float(np.mean([v == 1 for v in n])), 4) if n else 0.0,
             "two_or_less_ratio": round(float(np.mean([v <= 2 for v in n])), 4) if n else 0.0,
             "seam_shapes": int(sum(s.seams for s in self.strokes)),

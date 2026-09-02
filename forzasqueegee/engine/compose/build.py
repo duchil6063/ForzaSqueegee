@@ -331,14 +331,18 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                          {mp.surface: len((plan if mp.key() == _tm_key
                                            else LayerPlan.load(mp.plan)).layers)
                           for mp in hand}))
-        art_paths: dict[tuple[str, int], Path] = {}
+        art_paths: dict[tuple[str, int, float], Path] = {}
         for name, job in sorted(wcp.jobs.items()):
             var = wcp.variants[job.kind]
-            key = (job.kind, job.budget)
+            # 옅게 한 변주는 **다른 파일**이다 — 같은 장수라도 색이 다르다
+            # (`whole.SurfaceJob.fade`). 키에 안 넣으면 먼저 쓴 면의 색을
+            # 뒤 면이 그대로 물려받는다
+            key = (job.kind, job.budget, round(job.fade, 3))
             vpath = art_paths.get(key)
             if vpath is None:
-                vpath = out_dir / f"art-{job.kind}-{job.budget}.json"
-                var.budgeted(job.budget).save(vpath)
+                suf = "" if job.fade <= 0.0 else "-f%02d" % round(job.fade * 100)
+                vpath = out_dir / f"art-{job.kind}-{job.budget}{suf}.json"
+                var.budgeted(job.budget, job.fade).save(vpath)
                 art_paths[key] = vpath
             # 배치는 **자른 상자**를 면에 맞춘다 — 상자에 걸친 큰 색면이
             # 캔버스를 원본만큼 넓히므로 잉크 범위로 맞추면 얼굴이 작아진다.
