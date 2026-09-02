@@ -61,18 +61,21 @@ QS = (5, 10, 25, 50, 75, 90, 95)
 # 작가 17인 단위로 먼저 접은 값이다 (§32: 한 사람이 같은 문법을 다섯 올려도
 # 표가 다섯이 되지 않게). **목표값이 아니라 범위다.**
 #
-# 사람 판 27벌 · 작가 17인 (`liveries=27`: 무게가 0인 도색 전용 판 하나는 뺀다).
+# 사람 판 26벌 · 작가 16인 (2026-09-02: 무게가 0인 도색 전용 판 하나와 **본인
+# 판 하나**(옆면 하나만 있는 시험 판 — 만든이 태그가 프로필 id)를 뺐다. 그 판이
+# 빠지면서 아래 끝이 올라갔다: units p5 2.6→3.75 · top1 p95 0.95→0.83 ·
+# ent p5 0.15→0.30 · ps p5 0.04→0.16).
 HUMAN_PRIOR: dict[str, tuple] = {
-    "units": (2.6, 3.6, 5, 5.5, 6, 7, 7.2),
-    "decorated": (1.8, 2.6, 4, 5, 6, 7, 7),
-    "top1": (0.5143, 0.537, 0.5832, 0.6282, 0.7289, 0.8496, 0.9521),
-    "top2": (0.7971, 0.8046, 0.8329, 0.8952, 0.9621, 0.9909, 0.9938),
-    "top3": (0.9082, 0.9195, 0.9461, 0.9724, 0.9957, 0.9997, 1),
-    "rem": (0, 0.0003, 0.0043, 0.0276, 0.0539, 0.0805, 0.0918),
-    "hhi": (0.3933, 0.3953, 0.4351, 0.4824, 0.5995, 0.753, 0.9088),
-    "ent": (0.1511, 0.2807, 0.4071, 0.5535, 0.5937, 0.6489, 0.6741),
-    "ps": (0.0385, 0.1353, 0.2571, 0.4111, 0.5316, 0.571, 0.6361),
-    "ss": (0.0304, 0.0384, 0.2766, 0.4499, 0.6709, 1.133, 1.26),
+    "units": (3.75, 4.5, 5, 5.75, 6.25, 7, 7.25),
+    "decorated": (2.75, 3, 4, 5, 6, 7, 7),
+    "top1": (0.5112, 0.5353, 0.5818, 0.6256, 0.7241, 0.7852, 0.827),
+    "top2": (0.7964, 0.8038, 0.8315, 0.8861, 0.9396, 0.9876, 0.9905),
+    "top3": (0.9077, 0.9179, 0.9434, 0.9708, 0.9918, 0.9994, 0.9997),
+    "rem": (0.0003, 0.0006, 0.0082, 0.0292, 0.0566, 0.0821, 0.0923),
+    "hhi": (0.3932, 0.3951, 0.4338, 0.482, 0.5662, 0.6503, 0.7197),
+    "ent": (0.3037, 0.364, 0.4982, 0.5558, 0.6031, 0.6521, 0.6756),
+    "ps": (0.1571, 0.2024, 0.2816, 0.4312, 0.5348, 0.5713, 0.6519),
+    "ss": (0.0384, 0.0751, 0.2929, 0.488, 0.7075, 1.134, 1.29),
 }
 
 # 특징마다의 무게 — 위계를 정하는 것이 무겁다. `units`·`decorated`는 "몇 면을
@@ -101,6 +104,90 @@ GROUPS = {
     "surface_use": ("units", "decorated"),
     "concentration": ("top1", "top2", "top3", "rem", "hhi", "ent", "ps", "ss"),
 }
+
+# ── 재료 (2026-09-02 계획 §0) — 셋째 무리, **재면 묻고 안 재면 안 묻는다** ──
+#
+# 사람 판 30벌(작가 17인)과의 간극은 위계가 아니라 **재료 수**였다: 사람 옆면은
+# 큰 색면 15장·6색을 바닥에 깔고 그 위에 주역 한 덩어리(레이어 상자의 절반),
+# 그 위에 로고·글자 6단어를 얹는다. 우리는 색면 1~3장·주역 작게·산포였다.
+# 자는 `work/lab/whole/ruler.material_stats`(면 하나) → 여기서 **옆면 좌우를
+# 평균으로 접어** 특징 한 벌로 만든다. 발전기는 이 무리를 아직 안 본다 —
+# `evaluate(material=None)`이면 무리가 서지 않아 옛 점수 그대로다.
+MATERIAL_FEATURES = ("big_n", "big_cols", "hero_share", "objects", "words",
+                     "glyph_h", "skew", "mask", "alpha_lt", "colors")
+
+# 사람 corpus의 백분위 표 — `work/lab/whole/prior.py`가 뽑아 붙인다 (p5~p95).
+# **목표값이 아니라 범위다.** 없는 특징은 안 묻는다. 옆면 좌우 평균, 작가
+# 15~16인 단위로 접은 값 (2026-09-02, 사람 판 26벌).
+#
+# `colors`는 작가 하나(Tohru, 옆면 2,400색)가 p95를 800으로 끌어 올린다 —
+# p90 242까지가 실제 범위고 우리 795는 그 밖이다.
+MATERIAL_PRIOR: dict[str, tuple] = {
+    "big_n": (5.1, 6.4, 9.25, 12.25, 15.5, 20.8, 22.3),
+    "big_cols": (1.35, 1.7, 3, 4.75, 6, 7.6, 8.3),
+    "hero_share": (0.2652, 0.2892, 0.3615, 0.4436, 0.5247, 0.6446, 0.6977),
+    "objects": (0, 0, 0.375, 1.5, 2.25, 3.45, 3.975),
+    "words": (0, 0.2, 1, 2, 3.875, 18.2, 26.1),
+    "glyph_h": (0, 0.8192, 2.816, 7.04, 12.32, 21.63, 31.09),
+    "skew": (0.0275, 0.0328, 0.1069, 0.2606, 0.4507, 0.6031, 0.7747),
+    "mask": (0, 0, 0, 0.0164, 0.0389, 0.0875, 0.1397),
+    "alpha_lt": (0, 0.0017, 0.0069, 0.0129, 0.0783, 0.1167, 0.2819),
+    "colors": (15.25, 24.5, 37.25, 93.75, 175.4, 242.2, 799.9),
+}
+
+MATERIAL_W = {"big_n": 1.0, "big_cols": 0.8, "hero_share": 1.0, "objects": 0.6,
+              "words": 0.8, "glyph_h": 0.4, "skew": 0.5, "mask": 0.4,
+              "alpha_lt": 0.4, "colors": 0.8}
+
+# 꼬리가 긴 특징은 **로그 자**로 문는다 — 색 수는 작가 하나가 2,400색이라 선형
+# 자로는 그 작가를 뺀 사전에서 벌점이 3을 넘어 무리 점수를 혼자 정한다 (실측:
+# 사람 판의 colors 평균 벌점 3.21 · alpha_lt 1.91). 개수·몫 자체는 사전에 그대로
+# 두고 잴 때만 log1p를 씌운다. 벌점 상한도 둔다 — 특징 하나가 무리를 못 삼키게.
+MATERIAL_LOG = frozenset(("colors", "words", "glyph_h", "big_n", "objects",
+                          "alpha_lt", "mask"))
+MATERIAL_PEN_CAP = 2.0
+
+
+def material_features(sec: dict) -> dict:
+    """면별 재료 통계 → 옆면 특징 한 벌 (좌우는 평균으로 접는다).
+
+    `sec`는 면 이름 → `ruler.surface_stats`(또는 `material_stats`)의 dict다.
+    옆면이 하나도 없으면 빈 dict — 그러면 이 무리는 안 선다.
+    """
+    sides = [sec[k] for k in ("side_left", "side_right")
+             if k in sec and sec[k]]
+    out: dict[str, float] = {}
+    for k in MATERIAL_FEATURES:
+        vals = [float(s[k]) for s in sides if k in s and s[k] is not None]
+        if vals:
+            out[k] = sum(vals) / len(vals)
+    return out
+
+
+def material_penalties(mat: dict, prior: dict | None = None) -> dict:
+    pr = prior if prior is not None else MATERIAL_PRIOR
+    out = {}
+    for k in MATERIAL_FEATURES:
+        if k not in mat or not pr.get(k):
+            continue
+        v, q = float(mat[k]), tuple(float(x) for x in pr[k])
+        if k in MATERIAL_LOG:
+            # 몫(0~1)은 100배 해서 개수처럼 — log1p(0.01)은 선형과 같아 뜻이 없다
+            s = 100.0 if q[-1] <= 1.0 else 1.0
+            v = math.log1p(s * max(v, 0.0))
+            q = tuple(math.log1p(s * max(x, 0.0)) for x in q)
+        out[k] = min(penalty(v, q), MATERIAL_PEN_CAP)
+    return out
+
+
+def material_score(mat: dict, prior: dict | None = None) -> float | None:
+    """재료 무리 점수 0~1 — 잰 특징이 하나도 없으면 None (무리가 안 선다)."""
+    pen = material_penalties(mat, prior)
+    if not pen:
+        return None
+    wsum = sum(MATERIAL_W.get(k, 0.5) for k in pen)
+    return float(math.exp(-sum(MATERIAL_W.get(k, 0.5) * v
+                               for k, v in pen.items()) / max(wsum, 1e-9)))
 
 
 # ── 무게 몫 → 위계 특징 ──────────────────────────────────────────────
@@ -337,6 +424,8 @@ class CarScore:
     feats: dict = field(default_factory=dict)
     pen: dict = field(default_factory=dict)
     tier: dict = field(default_factory=dict)
+    material: dict = field(default_factory=dict)   # 재료 특징 (잰 판만)
+    mpen: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -358,8 +447,13 @@ class CarScore:
 
 def evaluate(weights: dict, counts: dict, *, caps: dict | None = None,
              readings: dict | None = None, prior: dict | None = None,
-             extra: tuple = ()) -> CarScore:
-    """세 층을 한 번에 — `weights`는 면별 시각 무게, `counts`는 면별 장수."""
+             extra: tuple = (), material: dict | None = None,
+             material_prior: dict | None = None) -> CarScore:
+    """세 층을 한 번에 — `weights`는 면별 시각 무게, `counts`는 면별 장수.
+
+    `material`은 `material_features`가 낸 옆면 재료 특징이다. 주면 ③에
+    "material" 무리가 하나 더 서고(나쁜 무리가 점수), 안 주면 종전과 같다.
+    """
     sc = CarScore()
     sc.violations = validate(counts, caps or {}, extra=extra)
     sc.fidelity_fails = fidelity(readings or {})
@@ -372,7 +466,13 @@ def evaluate(weights: dict, counts: dict, *, caps: dict | None = None,
     sc.feats = ft
     sc.pen = penalties(ft, prior)
     sc.group = group_scores(ft, prior)
-    sc.hierarchy = hierarchy_score(ft, prior)
+    if material:
+        ms = material_score(material, material_prior)
+        if ms is not None:
+            sc.material = dict(material)
+            sc.mpen = material_penalties(material, material_prior)
+            sc.group["material"] = ms
+    sc.hierarchy = float(min(sc.group.values())) if sc.group else 0.0
     sc.tier = tiers(sh)
     sc.faults = tier_faults(sh)
     sc.valid = sc.ok
