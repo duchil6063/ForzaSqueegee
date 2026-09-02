@@ -129,14 +129,22 @@ def _cand_value(sc: _Scorer, q: Layer, price: float, free: bool) -> tuple:
     상태라 각자 국소 최적이지만, 서로 다른 안을 견줄 때 값만 보면 "많이 덮되
     배경으로 새는" 안이 이긴다. 실루엣 밖으로 샌 자국은 아무도 안 덮는다.
 
-    단위는 λ가 이미 서 있는 그 가정 위에 있다 — 값 맵의 중앙값이 1이라
-    "값 픽셀"과 "픽셀"이 같은 눈금이다 (`importance.place_weight`).
+    **벌점도 값으로 잰다** (`account(val=True)`). 값 맵은 중앙값만 1이고
+    감마가 2·상한이 16이라(`importance.place_weight`), 선 옆·무늬 위에서는
+    픽셀당 값이 5~16이다. 거기서 `worth`만 값으로 재고 벌점을 px로 재면 그
+    배수만큼 침범이 싸 보인다 — 하필 침범이 잦은 자리에서. 실측(표준 11판):
+    영역 53개가 이 자리에서 **먼저 그린 면을 통째로 덮는 안**을 1위로 뽑고
+    (그 안의 순수 점수는 −444 ~ −14,860이다) `_MIN_GAIN`에 걸려 되돌아왔다.
+    돌아온 자리가 후보가 아니라 **봉우리**라 잔여가 안 줄고, 다음 봉우리에서
+    같은 안이 또 1위가 됐다 — 그 53개는 채움을 **한 장도 못 사고** 끝나
+    막대·마무리 270장을 물었다 (한 영역은 37바퀴를 돌았다). 단위를 맞추면
+    53개 중 52개에서 1위가 바뀌고 그 새 1위가 게이트를 통과한다.
     """
     _, m, box = sc._score_impl(q)
     if m is None:
         return (-1e18, 0.0, None, None, {})
     worth = sc.worth(m, box)
-    acc = sc.account(m, box)
+    acc = sc.account(m, box, val=True)
     bx0, by0, bx1, by1 = box
     after = sc.residual.copy()
     after[by0:by1, bx0:bx1] &= ~m

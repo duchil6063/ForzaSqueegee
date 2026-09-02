@@ -552,7 +552,8 @@ class _Scorer:
         return float(self.val[by0:by1, bx0:bx1][hit].sum())
 
     def account(self, m: np.ndarray | None,
-                box: tuple[int, int, int, int] | None) -> dict:
+                box: tuple[int, int, int, int] | None,
+                val: bool = False) -> dict:
         """이 도형이 덮는 자리의 **갈래별 회계** (px) — §8 후보 비교의 재료.
 
         점수(`_score_impl`)는 이것들을 한 수로 접어 버려 "어디에 놓을지"만
@@ -567,14 +568,24 @@ class _Scorer:
             pen    위 갈래에 각자의 벌점을 곱한 합
 
         어휘가 전부 불투명이라(`_check_vocab`) 셈은 정수 카운트다.
+
+        `val=True`면 갈래를 **값 맵으로 재어** 돌려준다 — `worth`와 같은 자다.
+        값 가중 `worth`에서 px 벌점을 빼는 자리(`layered._cand_value`)가 있는데,
+        값 맵은 **중앙값만** 1이고 감마가 2·상한이 16이라(`importance.place_weight`)
+        선 옆·무늬 위에서는 픽셀당 값이 5~16이다. 그 자리에서 벌점만 px로 재면
+        침범이 그 배수만큼 **덜 물린다** — 하필 침범이 잦은 자리에서.
         """
         if m is None or box is None:
             return {"new": 0.0, "forb": 0.0, "bg": 0.0, "outb": 0.0,
                     "waste": 0.0, "free": 0.0, "pen": 0.0}
         bx0, by0, bx1, by1 = box
 
+        wv = self.val[by0:by1, bx0:bx1] if (val and self.val is not None) else None
+
         def cnt(sel: np.ndarray) -> float:
-            return float(np.count_nonzero(m & sel[by0:by1, bx0:bx1]))
+            hit = m & sel[by0:by1, bx0:bx1]
+            return float(wv[hit].sum()) if wv is not None \
+                else float(np.count_nonzero(hit))
 
         forb = cnt(self.forbid)
         bg = cnt(self.bg)
