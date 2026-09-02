@@ -106,6 +106,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
 
     끄면 **도안만** 올린다 — 꾸밈 그룹(로커·산포)·관통 밴드·
     지붕 블랙아웃·모티프가 전부 빠지고, 그것만 있던 면은 구성에서 사라진다.
+    도안도 **통째로** 올린다 — 면 밖 레이어 빼기(`_hand_spread`)는 켠 판에서만
+    한다 (편집기에서 자리를 옮길 도안을 처음 자리로 잘라 두면 구멍이 난다).
     베이스 도색은 별개 레버다 (`paint`): 도안만 올리더라도 차 색은 정해야 한다.
 
     ## 차 전체 구성 (`whole`)
@@ -396,8 +398,10 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         p = out_dir / f"decal-{i}.json"
         hand_look[key][0].save(p)
         hand_path[key] = p
+    # 면 밖 레이어 빼기는 **꾸밈을 켠 판에서만** — 도안만 올리는 판은 통째로
+    # (사용자 지시 2026-09-02: 편집기에서 옮길 자리를 미리 자르면 안 된다).
     _hand_spread(hand, hand_look, hand_path, hand_group, maps, rigs, cat,
-                 out_dir, notes, group_unit=group_unit)
+                 out_dir, notes, group_unit=group_unit, trim=deco)
     written = list(hand_path.values()) \
         + sorted({p for p, _n in hand_group.values() if p not in hand_path.values()},
                  key=str)
@@ -551,8 +555,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
 
     # ---- 예산 사다리 — 넘치면 꾸밈부터 버린다 (도안이 주역이다) ----
     # 기준은 **가장 무거운 옆면**이다 (한 면에 여러 장을 올릴 수 있다). 장수는
-    # 면에 실제로 올라갈 값이다 — 어느 면에도 안 그려질 레이어는 이미 빠졌다
-    # (`_hand_spread`).
+    # 면에 실제로 올라갈 값이다 — 꾸밈을 켠 판이면 어느 면에도 안 그려질
+    # 레이어는 이미 빠졌다 (`_hand_spread`; 끈 판은 통째라 `_check`가 잡는다).
     cap = min([m.cap or 3000 for n in ROLE_MAIN
                if (m := maps.get(n)) is not None] or [3000])
     n_person = max([sum(hand_group[hand_ix[id(m)]][1]

@@ -31,8 +31,14 @@ def _hand_group_job(mp: ManualPlace, hand_ix: dict, hand_group: dict,
 
 def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
                  hand_group: dict, maps: dict, rigs: dict, cat: Catalog,
-                 out_dir: Path, notes: list[str], *, group_unit: float) -> None:
+                 out_dir: Path, notes: list[str], *, group_unit: float,
+                 trim: bool = True) -> None:
     """손 배치를 **면에 맞게 나눈다** — 어디서도 안 그려질 레이어를 뺀다.
+
+    `trim`이 꺼지면 1을 건너뛴다 — 도안을 **통째로** 올린다 (사용자 지시
+    2026-09-02: 자르는 것은 자동 꾸밈을 켠 판에서만. 편집기에서 도안만 올리는
+    사람은 올린 뒤 자리를 옮기므로, 처음 자리로 잘라 두면 옮긴 자리에서 구멍이
+    난다). `build`가 `deco`를 그대로 넘긴다.
 
     둘을 한자리에서 한다:
 
@@ -74,7 +80,7 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
     for mp in hand:
         hp, _hlk = hand_look[mp.key()]
         got = keep_by_plan.setdefault(mp.key(), set())
-        dm = drawable(mp.surface, maps, rigs)
+        dm = drawable(mp.surface, maps, rigs) if trim else None
         if dm is None:
             got.update(range(len(hp.layers)))
             continue
