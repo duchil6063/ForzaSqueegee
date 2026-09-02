@@ -91,7 +91,8 @@ class MakeWindow(_MakeOps, _PlanOps, _ApplyOps, _FlsOps, _SideWindows, QWidget):
         self.r_line.toggled.connect(self._sync_go)
         # **페인터는 레이어 수를 넣어야 생성이 열린다.** 0 = 아직 안 넣은 상태이고
         # 그때는 특수 문구가 보인다 — 기본값을 3,000으로 두면 36~57분짜리가
-        # 사람이 고른 적 없는 수로 돌아 버린다
+        # 사람이 고른 적 없는 수로 돌아 버린다. 셀·선화에서 0은 "그림이 정한다"
+        # 이고 수를 넣으면 상한이다 (`_MakeOps._shapes`)
         self.shapes = QSpinBox()
         self.shapes.setRange(0, MAX_SHAPES)
         self.shapes.setValue(0)

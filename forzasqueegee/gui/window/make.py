@@ -36,10 +36,18 @@ class _MakeOps:
         self._sync_go()
 
     def _ready(self) -> bool:
-        """생성이 열리는 조건 — 셀은 이미지만, 페인터는 레이어 수까지."""
+        """생성이 열리는 조건 — 셀·선화는 이미지만, 페인터는 레이어 수까지."""
         if not self.image:
             return False
         return not self.r_painter.isChecked() or self.shapes.value() >= 1
+
+    def _shapes(self) -> int:
+        """엔진에 넘길 레이어 상한. 셀·선화의 0은 "그림이 정한다"(하드캡 3,000)이고,
+        수를 넣으면 그 수가 상한이다 — 노선이 그보다 많이 쓰려 하면 값이 낮은
+        장부터 뺀다 (`route_cel`·`route_line`의 `budget`). 이타샤 옆면처럼 꾸밈·
+        글자 몫을 남겨야 할 때 쓰는 손잡이다."""
+        v = self.shapes.value()
+        return v if (self._route() == "painter" or v >= 1) else MAX_SHAPES
 
     def _route(self) -> str:
         if self.r_cel.isChecked():
@@ -50,13 +58,18 @@ class _MakeOps:
         busy = self.job_kind is not None      # 스레드를 만들기 전부터 잠근다
         self.go.setEnabled(not busy and self._ready())
         route = self._route()
-        # 페인터만 장수를 사람이 넣는다. 셀은 장수 칸이 아예 없다 —
-        # 가격이 정하므로 넣을 수가 없다
-        self.shapes.setVisible(route == "painter")
-        self.hint.setText(tr(f"gui.route.{route}.hint") if route != "painter"
-                          else tr("gui.route.painter.need_shapes")
-                          if self.shapes.value() < 1
-                          else tr("gui.route.painter.hint"))
+        # 페인터는 장수를 **넣어야** 돈다. 셀·선화는 가격이 장수를 정하므로 비워
+        # 두는 것이 기본이고, 넣으면 상한이 된다 (`_shapes`)
+        self.shapes.setSpecialValueText(
+            tr("gui.shapes.empty") if route == "painter" else tr("gui.shapes.auto"))
+        if route == "painter":
+            hint = (tr("gui.route.painter.need_shapes") if self.shapes.value() < 1
+                    else tr("gui.route.painter.hint"))
+        elif self.shapes.value() >= 1:
+            hint = tr("gui.route.cap.hint", n=f"{self.shapes.value():,}")
+        else:
+            hint = tr(f"gui.route.{route}.hint")
+        self.hint.setText(hint)
         for b in (self.b_export, self.b_overlay, self.b_inject):
             b.setEnabled(not busy and self.plan is not None)
         # 편집기 둘은 **도안 없이도 연다** — 창 안에서 고르면 된다
@@ -90,7 +103,7 @@ class _MakeOps:
         self.clock.start()
 
         route = self._route()
-        shapes = self.shapes.value() if route == "painter" else MAX_SHAPES
+        shapes = self._shapes()
         self.job = _Job(self.image, self.out, route, shapes,
                         cut_bg=self.bgcut.isChecked())
         self.thread = QThread(self)

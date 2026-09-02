@@ -115,6 +115,8 @@
   "gui.route.painter.hint": "Same logic as KFPS (kloudys-forza-painter-suite) — GPU raw build plus checkpoint finalize. Minutes for 3,000 layers. Scored on the A_02 48-gon and the in-game input-step grid.",
   "gui.route.painter.need_shapes": "Painter needs a layer count before it can make a plan (1~3,000).",
   "gui.shapes.empty": "enter layer count",
+  "gui.shapes.auto": "picture decides (up to 3,000)",
+  "gui.route.cap.hint": "Layer cap {n} — if the picture wants more, the lowest-value layers go first. For an itasha side that also needs decoration and name text, 2,000~2,500 leaves room.",
   "gui.shapes.suffix": " layers",
   "gui.show_log": "Show progress log",
   "gui.src": "Source",
