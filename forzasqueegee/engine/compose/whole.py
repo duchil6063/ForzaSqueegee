@@ -46,6 +46,7 @@ controller가 아니다.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -103,18 +104,47 @@ class Variant:
     # **시각 무게** 레이어별 — 평가기의 `ruler.visual_weight`와 같은 정의다
     # (칠한 넓이 × 대비). `value`(무엇을 먼저 버리나)와 다른 물음이다.
     weight: np.ndarray = field(repr=False, default_factory=lambda: np.zeros(0))
+    # **칠한 넓이** 레이어별 — 옅게 하기(`fade`)의 밑감이다. 색을 제 평균색으로
+    # 전부 끌어당기면 무게가 `넓이 × 바닥(0.05)`만 남으므로(`flat`), 그 사이는
+    # 두 누계의 선형 혼합으로 얻는다 (`mass` — 배분이 이 자를 수천 번 묻는다).
+    area: np.ndarray = field(repr=False, default_factory=lambda: np.zeros(0))
+
+    @property
+    def flat(self) -> np.ndarray:
+        """대비를 다 뺐을 때의 레이어별 무게 (`fade=1`의 끝점)."""
+        return self.area * _CONTRAST_FLOOR
     # 잉크 상자 (배율 1의 캔버스 유닛) — 배치가 면에 맞출 크기다
     ink: tuple[float, float, float, float] = (-1.0, -1.0, 1.0, 1.0)
 
-    def budgeted(self, n: int) -> LayerPlan:
-        """장수 `n`으로 줄인 사본 — **값이 큰 것부터** 남기고 순서는 지킨다."""
-        if n >= len(self.plan.layers):
-            return self.plan
-        keep = sorted(int(i) for i in np.argsort(-self.value, kind="stable")[:n])
+    def budgeted(self, n: int, fade: float = 0.0) -> LayerPlan:
+        """장수 `n`으로 줄인 사본 — **값이 큰 것부터** 남기고 순서는 지킨다.
+
+        `fade`는 **옅게 하기**다 (§21의 받침 문법): 남긴 색을 이 변주의
+        넓이가중 평균색 쪽으로 그만큼 끌어당긴다. 1이면 단색이 된다. 자리와
+        크기는 그대로라 **넓이는 안 줄고 대비만 준다** — 시각 무게를 낮추는
+        둘째 손잡이이고, 첫째(`SurfaceJob.fill`)와 달리 잉크가 차지하는 면적을
+        안 깎는다.
+        """
+        keep = (list(range(len(self.plan.layers)))
+                if n >= len(self.plan.layers)
+                else sorted(int(i) for i in
+                            np.argsort(-self.value, kind="stable")[:n]))
+        if fade <= 0.0:
+            if n >= len(self.plan.layers):
+                return self.plan
+            return LayerPlan(source_image=self.plan.source_image,
+                             image_size=self.plan.image_size,
+                             units_per_px=self.plan.units_per_px,
+                             layers=[replace(self.plan.layers[i]) for i in keep])
+        lays = [self.plan.layers[i] for i in keep]
+        ar = (self.area[np.asarray(keep, int)] if len(self.area)
+              else np.ones(len(lays)))
+        cols = _faded([l.color for l in lays], ar, fade)
         return LayerPlan(source_image=self.plan.source_image,
                          image_size=self.plan.image_size,
                          units_per_px=self.plan.units_per_px,
-                         layers=[replace(self.plan.layers[i]) for i in keep])
+                         layers=[replace(l, color=c)
+                                 for l, c in zip(lays, cols)])
 
     def quality(self, n: int) -> float:
         """장수 `n`일 때의 품질 — 남긴 레이어가 덮는 **시각 값**의 몫 (0~1).
@@ -135,31 +165,40 @@ class Variant:
             return np.arange(len(self.value))
         return np.argsort(-self.value, kind="stable")[:max(0, int(n))]
 
-    def _cum(self) -> np.ndarray:
+    def _cum(self, key: str = "_cumw", src: str = "weight") -> np.ndarray:
         """예산 순서(값 큰 것부터)로 쌓은 무게 누계 — `mass`가 매번 정렬하지
         않게 한 번만 짓는다 (배분이 이 자를 수천 번 묻는다)."""
-        c = self.__dict__.get("_cumw")
-        if c is None or len(c) != len(self.weight) + 1:
-            if not len(self.weight):
+        w = getattr(self, src)
+        c = self.__dict__.get(key)
+        if c is None or len(c) != len(w) + 1:
+            if not len(w):
                 c = np.zeros(1)
             else:
                 order = np.argsort(-self.value, kind="stable")
-                c = np.concatenate(([0.0], np.cumsum(self.weight[order])))
-            self.__dict__["_cumw"] = c
+                c = np.concatenate(([0.0], np.cumsum(np.asarray(w)[order])))
+            self.__dict__[key] = c
         return c
 
-    def mass(self, n: int) -> float:
+    def mass(self, n: int, fade: float = 0.0) -> float:
         """예산 `n`이 남긴 레이어의 **시각 무게 합** (배율 1의 캔버스 유닛²).
 
         `quality`와 갈라 두는 까닭은 실측이다: 품질은 예산이 조금만 붙어도
         1에 붙어 버려 (리어 poster 416장에서 0.70, 유리 portrait 696장에서
         0.97) 무게 대리로 쓰면 **면 넓이 그 자체**가 된다. 무게는 안 그렇다 —
         얇은 획 700장과 넓은 색면 400장의 무게는 두 배 넘게 갈린다.
+
+        `fade`는 **옅게 하기**다 (`budgeted`) — 대비가 그만큼 빠지므로 무게도
+        그만큼 준다. 무게가 `넓이 × 대비`의 합이고 옅게 하기가 대비를 선형으로
+        깎으므로, 두 끝점(`weight`·`flat`)의 선형 혼합이 정확한 값이다.
         """
         if not len(self.weight):
             return 0.0
-        c = self._cum()
-        return float(c[max(0, min(int(n), len(c) - 1))])
+        i = max(0, min(int(n), len(self.weight)))
+        v = float(self._cum()[i])
+        if fade <= 0.0 or not len(self.flat):
+            return v
+        f = float(min(max(fade, 0.0), 1.0))
+        return (1.0 - f) * v + f * float(self._cum("_cumf", "flat")[i])
 
 
 @dataclass
@@ -180,6 +219,23 @@ class SurfaceJob:
     # 장수를 깎지 않고 시각 무게만 낮추는 손잡이다 (§7): 무게는 이 값의
     # 제곱에 붙는다 (넓이 자라서). 1.0이면 종전과 같다.
     fill: float = 1.0
+    # **옅게 하기** — 받침 면의 무게를 크기 대신 **대비**로 낮추는 둘째
+    # 손잡이 (`Variant.budgeted`의 `fade`). 0이면 종전과 같다.
+    #
+    # 왜 둘째 손잡이가 필요한가. 크기(`fill`)만으로 무게를 맞추면 받침 면의
+    # 그림이 **빽빽한 축소판**이 된다. 사람 판은 그렇지 않다 (실측, 그 판의
+    # 옆면 잉크 상자를 1로 놓고 잰 중앙값 — 사람 29벌 ↔ W3H3 33판):
+    #
+    #     면       무게 몫        잉크 상자/옆면    장당 넓이      면 안 대비
+    #     리어    .022 ↔ .022     .283 ↔ .094      1216 ↔   42   0.128 ↔ 0.270
+    #     프론트  .020 ↔ .012     .514 ↔ .074      6832 ↔   63   0.151 ↔ 0.235
+    #     유리    .033 ↔ .035     .096 ↔ .051       100 ↔   25   0.374 ↔ 0.351
+    #
+    # 무게 몫은 이미 맞았다 (§ W3H3의 성공). 갈리는 것은 **같은 무게를 무엇으로
+    # 만들었나**다: 사람은 크고 옅은 표시를 넓게 펴고, 우리는 작고 진한 표시를
+    # 좁게 모은다. 대비를 깎으면 무게가 선형으로 주는데 넓이는 안 준다 —
+    # 크기 손잡이(무게 ∝ 크기²)와 방향이 다른 축이다.
+    fade: float = 0.0
 
 
 # **이음새를 건너 이어진다** (§17) — 두 면의 그림이 한 그림이라는 관계.
@@ -438,6 +494,42 @@ def _value(plan: LayerPlan, cat: Catalog, boxes: np.ndarray,
 # 어림하고(`fit_scale`) 그 배율에서 칠해질 넓이 × 대비를 더한다.
 
 
+_CONTRAST_FLOOR = 0.05        # 단색 면이 무게 0이 되는 것을 막는 바닥
+
+
+def _areas_of(layers, cat: Catalog | None = None) -> np.ndarray:
+    """레이어마다 **칠한 넓이** (배율 1의 캔버스 유닛²) — `ruler.areas`와 같은 식."""
+    n = len(layers)
+    out = np.empty(n, np.float64)
+    for i, l in enumerate(layers):
+        a = 4.0
+        if cat is not None:
+            try:
+                a = float(cat[l.shape].area)
+            except KeyError:
+                pass
+        out[i] = a * abs(float(l.sx) * float(l.sy)) * 64.0 * 64.0
+    return out
+
+
+def _faded(colors, area: np.ndarray, fade: float) -> list:
+    """색을 **넓이가중 평균색 쪽으로** `fade`만큼 끌어당긴 사본 (sRGB 바이트).
+
+    이동은 Lab에서 한다 — 무게 자(`ink_weight`)가 재는 대비도 Lab 거리라
+    "옅게 한 만큼 무게가 준다"가 정확히 성립한다 (`Variant.mass`의 선형 혼합).
+    """
+    from ..celart.ramps import _lab_to_rgb
+
+    f = float(min(max(fade, 0.0), 1.0))
+    if f <= 0.0 or not len(colors):
+        return [tuple(int(v) for v in c) for c in colors]
+    lab = _lab(list(colors))
+    w = np.maximum(np.asarray(area, np.float64), 1e-9)
+    mean = np.average(lab, axis=0, weights=w)
+    return [tuple(int(v) for v in c)
+            for c in _lab_to_rgb(mean + (1.0 - f) * (lab - mean))]
+
+
 def ink_weight(layers, cat: Catalog) -> np.ndarray:
     """레이어마다 **칠한 넓이 × 대비** (배율 1의 캔버스 유닛²).
 
@@ -445,20 +537,12 @@ def ink_weight(layers, cat: Catalog) -> np.ndarray:
     발전기와 평가기가 서로 다른 그림을 본다. 대비는 넓이가중 평균색과의 Lab
     거리이고, 바닥 0.05는 단색 면이 무게 0이 되는 것을 막는다.
     """
-    n = len(layers)
-    if not n:
+    if not len(layers):
         return np.zeros(0)
-    ar = np.empty(n, np.float64)
-    for i, l in enumerate(layers):
-        a = 4.0
-        try:
-            a = float(cat[l.shape].area)
-        except KeyError:
-            pass
-        ar[i] = a * abs(float(l.sx) * float(l.sy)) * 64.0 * 64.0
+    ar = _areas_of(layers, cat)
     lab = _lab([l.color for l in layers])
     wmean = np.average(lab, axis=0, weights=np.maximum(ar, 1e-9))
-    contrast = np.linalg.norm(lab - wmean, axis=1) / 100.0 + 0.05
+    contrast = np.linalg.norm(lab - wmean, axis=1) / 100.0 + _CONTRAST_FLOOR
     return ar * contrast
 
 
@@ -484,7 +568,8 @@ def fit_scale(smap, ink: tuple, *, group_unit: float = 1.0) -> float:
     return min((rect[2] - rect[0]) / w, (rect[3] - rect[1]) / h) * _FIT_FILL
 
 
-def expected_mass(smap, var: "Variant", n: int, *, fill: float = 1.0) -> float:
+def expected_mass(smap, var: "Variant", n: int, *, fill: float = 1.0,
+                  fade: float = 0.0) -> float:
     """면 `smap`에 변주 `var`를 `n`장 · 투영 몫 `fill`로 앉혔을 때의 예상 무게.
 
     배율의 제곱이 곱해진다 — 넓이 자이기 때문이다. 그래서 `fill`을 절반으로
@@ -496,7 +581,7 @@ def expected_mass(smap, var: "Variant", n: int, *, fill: float = 1.0) -> float:
     예상할 수 없어서 `base_mass`(앞 판의 실측)로 받는다.
     """
     g = fit_scale(smap, var.ink) * max(0.0, float(fill))
-    return float(g * g * var.mass(n))
+    return float(g * g * var.mass(n, fade))
 
 
 # 얼굴 자리를 찾는 자 — 디테일 밀도의 **무게중심**이다.
@@ -572,7 +657,8 @@ def variants(plan: LayerPlan, lk: Look, it, cat: Catalog,
         out[kind] = Variant(kind=kind, plan=q, why=why,
                             box=(-hw, -hh, hw, hh), ink=ib,
                             value=_value(q, cat, b, _shift(focus, box)),
-                            weight=ink_weight(q.layers, cat))
+                            weight=ink_weight(q.layers, cat),
+                            area=_areas_of(q.layers, cat))
 
     def _around(scale: float) -> tuple:
         """주목 자리를 중심으로 반지름의 `scale`배 상자 (잉크 상자에 물린다)."""
@@ -687,6 +773,37 @@ HIER_K = 6.0
 # 투영 몫 눈금 (§7) — 장수를 안 깎고 무게만 낮추는 손잡이. 사람 판의 리어·
 # 유리 그림이 면을 꽉 채우지 않는 것과 같은 자리다. 아래로만 간다.
 FILL_STEPS = (1.0, 0.85, 0.72, 0.6, 0.5, 0.42)
+# **옅게 하기 눈금** (`SurfaceJob.fade`) — 받침 면의 무게를 크기 대신 대비로
+# 낮추는 축. 0.55에서 멈추는 것은 사람 실측이 그 언저리이기 때문이다: 사람의
+# 리어·프론트 면 안 대비가 0.128·0.151이고 우리가 0.270·0.235라, 대비를 절반쯤
+# 깎으면 그 자리에 선다. 더 깎으면 단색 판이라 그림이 아니다.
+FADE_STEPS = tuple(float(x) for x in
+                   os.environ.get("FS_FADE_STEPS",
+                                  "0,0.15,0.3,0.45,0.55").split(",") if x)
+# 옅게 해도 되는 등급 — **받침 아래만** (§27: 주역·조연의 충실도는 안 건드린다).
+# 등급은 배분 도중의 무게 몫으로 그 자리에서 매긴다 (`wholeeval.tiers` — 배치
+# 뒤에 다시 매기는 그 함수 그대로다).
+FADE_TIERS = frozenset(
+    x for x in os.environ.get("FS_FADE_TIERS", "SUPPORT,MICRO").split(",") if x)
+# 옅게 해도 되는 **역할** — 등급만으로는 부족하다. 사람 판의 면 안 대비를
+# 역할로 갈라 보면 둘이 완전히 갈린다 (그 판의 옆면을 1로 놓고 잰 중앙값):
+#
+#     역할                사람   우리(W3H3)
+#     poster (리어)       0.128     0.270    ← 사람이 훨씬 옅다
+#     emblem (프론트)     0.151     0.235    ← 사람이 훨씬 옅다
+#     portrait (유리)     0.374     0.351    ← 이미 사람 쪽이 **더 진하다**
+#     bust (뒷유리)       0.344     0.331    ← 마찬가지
+#
+# 그래서 인물 크롭(portrait·bust)을 옅게 하면 **사람에게서 멀어진다**. 실측
+# (SUP1, 등급으로만 걸러 유리까지 옅게 한 판): 유리의 잉크 상자/옆면이
+# .051 → .073(사람 .096)이고 덮임이 .589 → .814(사람 .958)로 좋아지는데,
+# 면 안 대비가 .351 → **.202**로 사람(.374)에게서 7배 멀어진다 — 도어 유리의
+# 얼굴이 그만큼 바래는 거래다. 넓이 셋을 얻자고 얼굴을 바래게 하지 않는다.
+#
+# 전신을 줄인 판(poster·emblem)만 옅게 한다. 거기서는 방향이 맞다
+# (리어 .270 → .251 · 프론트 .235 → .203, 둘 다 사람 쪽).
+FADE_ROLES = frozenset(
+    x for x in os.environ.get("FS_FADE_ROLES", "poster,emblem").split(",") if x)
 
 
 def _feat_penalty(mass: dict, counts: dict, prior: dict | None = None) -> float:
@@ -758,8 +875,9 @@ def allocate(roles: dict, vs: dict, *, caps: dict | None = None,
 def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
                   margin: float = MARGIN_MIN, maps: dict,
                   base_mass: dict, base_counts: dict | None = None,
-                  prior: dict | None = None) -> dict[str, tuple[int, float]]:
-    """면 → (장수, 투영 몫). 위계를 아는 배분 (§4·§5·§7).
+                  prior: dict | None = None
+                  ) -> dict[str, tuple[int, float, float]]:
+    """면 → (장수, 투영 몫, 옅게 하기). 위계를 아는 배분 (§4·§5·§7).
 
     `base_mass`는 **이 배분이 안 건드리는 것**의 시각 무게다 (주역 도안 · 꾸밈
     그룹 · 면 도형). 앞 판의 실측에서 온다 — 배분 시점에는 꾸밈이 아직 없어서
@@ -770,9 +888,20 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
     세 판으로 돈다.
 
     1. **장수** — 옛 한계효용에 위계 배수를 곱해 탐욕적으로 준다.
-    2. **투영 몫** — 장수를 고정한 채 무게가 넘치는 면을 한 눈금씩 줄인다.
+    2. **무게 낮추기** — 장수를 고정한 채 무게가 넘치는 면을 한 눈금씩 줄인다.
        레이어는 그대로 두고 시각 무게만 낮추는 자리다 (§7). 벌점이 더 안
-       줄면 멈춘다.
+       줄면 멈춘다. 손잡이가 **둘**이고 방향이 다르다:
+
+           투영 몫(`fill`)   그림을 작게 앉힌다 — 무게 ∝ 크기², 넓이가 준다
+           옅게 하기(`fade`) 대비를 뺀다      — 무게 ∝ 대비, 넓이는 그대로
+
+       크기만 쓰면 받침 면이 **빽빽한 축소판**이 된다 (`SurfaceJob.fade`의
+       실측표: 사람의 받침 면은 잉크가 옆면의 .283~.514를 덮고 장당 넓이가
+       1,216~6,832인데, W3H3는 .074~.094에 42~63이었다 — 무게 몫은 이미
+       같은데 문법이 다르다). 그래서 **받침 아래 등급에서는 옅게 하기를 먼저
+       묻는다**: 같은 벌점을 지우면서 넓이를 안 깎는 쪽이 문법에 맞다.
+       등급은 그 자리의 무게 몫으로 매긴다 (`wholeeval.tiers` — 배치 뒤에
+       다시 매기는 그 함수 그대로다).
     3. **장수 되돌리기** — 줄어든 크기에서 값을 못 하는 장을 **위에서부터**
        덜어낸다. 이득이 `면 넓이 몫 × Δ품질`인데 그 넓이가 이제 `fill²`만큼
        작아졌으므로, 안 보일 장은 문턱(`margin`)에 걸린다. 이 판이 없으면
@@ -800,14 +929,15 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
         v, sm = vs.get(roles[nm][0]), maps.get(nm)
         gs[nm] = fit_scale(sm, v.ink) if (v is not None and sm is not None) else 0.0
 
-    def _mass(cur: dict, cf: dict) -> dict:
+    def _mass(cur: dict, cf: dict, fd: dict | None = None) -> dict:
         m = dict(base_mass)
         for nm, b in cur.items():
             v = vs.get(roles[nm][0])
             if v is None or not gs.get(nm) or b <= 0:
                 continue
             g = gs[nm] * cf[nm]
-            m[nm] = m.get(nm, 0.0) + g * g * v.mass(b)
+            m[nm] = m.get(nm, 0.0) + g * g * v.mass(
+                b, 0.0 if fd is None else fd.get(nm, 0.0))
         return m
 
     from . import wholeeval as WE
@@ -855,28 +985,67 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
     if not live:
         return {}
 
-    # ② 투영 몫 — 무게만 깎는다
+    # ② 무게 낮추기 — 크기(`fill`)와 옅게 하기(`fade`) 두 손잡이
+    fade = {n: 0.0 for n in live}
+
+    def _tier_now() -> dict:
+        """이 자리의 등급 — 평가기와 같은 함수다 (`wholeeval.tiers`)."""
+        sh = WE.shares(_mass(live, fill, fade))
+        return WE.tiers(sh) if sh else {}
+
+    def _step(seq: tuple, cur: float) -> float | None:
+        i = seq.index(cur) if cur in seq else 0
+        return seq[i + 1] if i + 1 < len(seq) else None
+
     while True:
-        pen0 = _feat_penalty(_mass(live, fill), _counts(live), prior)
+        pen0 = _feat_penalty(_mass(live, fill, fade), _counts(live), prior)
         if pen0 <= 1e-9:
             break
+        tier = _tier_now()
+        # **옅게 하기가 먼저다** — 받침 아래 등급에서만. 크기 한 눈금이
+        # 지우는 벌점이 언제나 더 크므로(무게 ∝ 크기²) "많이 지우는 쪽"으로
+        # 고르면 대비 축은 한 번도 안 뽑힌다. 그래서 크기와 겨루게 하지 않고
+        # **먼저 물어본다**: 대비로 지울 수 있는 만큼 지우고, 그래도 남으면
+        # 그때 크기를 깎는다. 어느 쪽이든 벌점이 더 안 줄면 그 자리에서 멈추므로
+        # 필요 이상으로 옅어지지 않는다.
         best, drop = None, 1e-9
-        for name in sorted(live):
-            i = FILL_STEPS.index(fill[name]) if fill[name] in FILL_STEPS else 0
-            if i + 1 >= len(FILL_STEPS):
-                continue
-            trial = dict(fill)
-            trial[name] = FILL_STEPS[i + 1]
-            d = pen0 - _feat_penalty(_mass(live, trial), _counts(live), prior)
-            if d > drop + 1e-12:
-                best, drop = name, d
+        for axis in ("fade", "fill"):
+            for name in sorted(live):
+                if axis == "fade":
+                    if roles[name][0] not in FADE_ROLES:
+                        continue           # 인물 크롭은 안 바래게 한다
+                    if tier.get(WE.MIRROR.get(name, name),
+                                "MICRO") not in FADE_TIERS:
+                        continue
+                    nxt = _step(FADE_STEPS, fade[name])
+                    if nxt is None:
+                        continue
+                    trial = dict(fade)
+                    trial[name] = nxt
+                    m = _mass(live, fill, trial)
+                else:
+                    nxt = _step(FILL_STEPS, fill[name])
+                    if nxt is None:
+                        continue
+                    trial = dict(fill)
+                    trial[name] = nxt
+                    m = _mass(live, trial, fade)
+                d = pen0 - _feat_penalty(m, _counts(live), prior)
+                if d > drop + 1e-12:
+                    best, drop = (axis, name), d
+            if best is not None:
+                break                      # 대비로 지워지면 크기는 안 묻는다
         if best is None:
             break
-        fill[best] = FILL_STEPS[FILL_STEPS.index(fill[best]) + 1]
+        axis, name = best
+        if axis == "fade":
+            fade[name] = _step(FADE_STEPS, fade[name])
+        else:
+            fill[name] = _step(FILL_STEPS, fill[name])
 
     # ③ 장수 되돌리기 — 값을 못 하게 된 장을 위에서부터 덜어낸다
     while any(fill[n] < 1.0 for n in live):
-        pen0 = _feat_penalty(_mass(live, fill), _counts(live), prior)
+        pen0 = _feat_penalty(_mass(live, fill, fade), _counts(live), prior)
         best, loss = None, margin
         for name in sorted(live):
             kind, area = roles[name]
@@ -888,14 +1057,15 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
                 v.quality(live[name]) - v.quality(live[name] - STEP))
             trial = dict(live)
             trial[name] -= STEP
-            dp = _feat_penalty(_mass(trial, fill), _counts(trial), prior) - pen0
+            dp = _feat_penalty(_mass(trial, fill, fade), _counts(trial),
+                               prior) - pen0
             g *= math.exp(HIER_K * dp)        # 덜어내서 나빠지면 손해가 커진다
             if g < loss - 1e-12:
                 best, loss = name, g
         if best is None:
             break
         live[best] -= STEP
-    return {n: (b, fill[n]) for n, b in live.items()}
+    return {n: (b, fill[n], fade[n]) for n, b in live.items()}
 
 
 def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None,
@@ -924,7 +1094,7 @@ def assign_tiers(wc: WholeCarPlan, taken_mass: dict | None = None,
         if maps is not None and v is not None and sm is not None:
             # 위계를 아는 길 — 배분이 쓴 것과 **같은** 무게 자다
             mass[name] = mass.get(name, 0.0) + expected_mass(
-                sm, v, job.budget, fill=job.fill)
+                sm, v, job.budget, fill=job.fill, fade=job.fade)
             continue
         q = v.quality(job.budget) if v is not None else 0.0
         mass[name] = mass.get(name, 0.0) + job.area * q
@@ -1033,15 +1203,17 @@ def plan_car(plan: LayerPlan, lk: Look, it, cat: Catalog, maps: dict, *,
                             maps=maps, base_mass=base_mass,
                             base_counts=base_counts)
     else:
-        got = {n: (b, 1.0) for n, b in
+        got = {n: (b, 1.0, 0.0) for n, b in
                allocate(roles, wc.variants, caps=caps, margin=margin).items()}
-    for name, (n, fl) in sorted(got.items()):
+    for name, (n, fl, fd) in sorted(got.items()):
         kind, area = roles[name]
         why = wc.variants[kind].why
         if fl < 1.0:
             why += msg(" · 면의 {k:.0%} 크기로 (위계)", k=fl)
+        if fd > 0.0:
+            why += msg(" · 대비를 {k:.0%} 뺐다 (받침)", k=fd)
         wc.jobs[name] = SurfaceJob(name=name, role=kind, kind=kind, budget=n,
-                                   area=area, why=why, fill=fl)
+                                   area=area, why=why, fill=fl, fade=fd)
     if base_mass is not None:
         assign_tiers(wc, base_mass, maps)
     else:
