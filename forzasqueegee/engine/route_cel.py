@@ -505,6 +505,22 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     stats["hole_specks"] = count_hole_clusters(plan, cel, cat)   # 1px+ 참고치
     stats["price"] = round(lam, 1)
     _hlog(msg("미세 조정 후"))
+    # §19~§22 **팔레트 접기** — 색만 묶는다 (장수·기하는 위에서 다 끝났다).
+    # 획 색이 제 발자국 평균이고 면 색이 소유 px 평균이라, 다 그린 판에는
+    # 분해 팔레트(32색)의 스무 배가 넘는 색이 있다 (실측 중앙 791색). 사람
+    # 판은 옆면 하나가 96색이고 상위 8색이 69%를 덮는다 — 그 차이는 색을
+    # 아껴 쓰는 것이 아니라 **같은 역할에 같은 색을 다시 쓰는** 것이다.
+    #
+    # 기본은 **획 색만** 접는다 — 획 색은 원화에서 잰 값이 아니라 제 발자국
+    # 아래 픽셀의 평균이라 지켜야 할 정본이 없고, 면 색은 그 영역의 측정값이라
+    # 옮기면 그대로 재현 오차다 (`ramps` 머리말의 표: 획만 접으면 854→517색에
+    # `imp_error_seen` 0.104 → 0.106 · 틀린 픽셀 913 → 913으로 무동작이고,
+    # 면까지 접으면 280색에 그 자가 4.5배가 된다).
+    if os.environ.get("FS_RAMP", "1").strip() != "0":
+        from .celart.ramps import fold_colors
+
+        plan, ramp_st = fold_colors(plan, cat, log=log)
+        stats["ramp"] = ramp_st
     clk.enter("write", msg("파일 쓰기"))
     plan.save(run_file(out, "plan.json"))
     # 선 재구성 자취 — line 노선과 **같은 파일 형식**이라 두 노선을 나란히
