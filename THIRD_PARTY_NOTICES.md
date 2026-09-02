@@ -214,10 +214,12 @@ GitHub 릴리스로 배포한다 (제품의 [FLS 편집기]가 그것을 받아 
 - 짓는 법 — `python tools/fls_build.py` (고정 커밋을 받아 패치를 얹고 짓는다)
 - 릴리스에 올릴 두 벌 짓기 — `python tools/fls_build.py --package`
 
-패치는 넷이다: Qt 플러그인 경로 이식성 고침, [Itasha] 메뉴 + 창 없는 면
+패치는 여섯이다: Qt 플러그인 경로 이식성 고침, [Itasha] 메뉴 + 창 없는 면
 기하 덤프(`--itasha-dump`) + 선으로 가르기, 한국어 UI(언어 설정 포함, 한국어
-기본), 그리고 [Auto Decoration...] 창(구성 계열·무늬 계열·바탕 도색·캐릭터
-이름 글자). 무엇을 왜 바꿨는지는 `tools/fls-patch/README.md`에 표로 있다.
+기본), [Auto Decoration...] 창(구성 계열·무늬 계열·바탕 도색·캐릭터 이름
+글자), 그 창의 실린 그림 표(덩어리마다 역할), 그리고 그 창의 로고·좌우 묶음
+(내장 워터마크·로고 이미지·자리, 한쪽에만 있으면 반대편에). 무엇을 왜
+바꿨는지는 `tools/fls-patch/README.md`에 표로 있다.
 바이너리 옆 고지에 실리는 같은 목록은 `tools/fls_build.py`의 `CHANGES`이고,
 그 개수가 패치와 어긋나면 꾸러미를 못 짓는다.
 

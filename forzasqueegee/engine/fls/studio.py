@@ -45,6 +45,17 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
 차 예산(`compose.whole.allocate_hier`)은 사람이 올린 덩어리를 **고정 질량**으로
 받고, 그 덩어리가 앉은 면에는 변주를 안 앉힌다.
 
+## 로고와 좌우 (3단계)
+
+로고는 두 곳에서 온다 (사용자 결정 ②): **내장 워터마크**(기본 켬, `catalog/kit`)와
+**사용자 로고 이미지**(대화상자 슬롯 0~N — 열 때 벡터화해 `<작업 폴더>/logos/`에
+캐시, `act_logos`). 편집기에 올린 덩어리 중 역할이 로고인 것은 그 자리 그대로다.
+앉히는 문법은 `compose.sponsor`다. **로고·글자는 미러하지 않는다** (사용자 결정
+③) — 좌우 대칭이 그것들을 만나면 반대편의 거울 자리에 읽는 방향 그대로 다시
+앉힌다 (`compose.reseat_place`). "한쪽에만 있으면 반대편에 대칭"(`symmetry`,
+기본 켬)은 자동 꾸밈 창이 켜질 때 한 번 돈다 (`_symmetrize`) — 그림은 거울,
+로고·글자는 다시 앉히기, 우리가 세운 사본은 `symmetry` 표시를 달아 끄면 걷는다.
+
 ## 시키지 않은 것은 안 한다
 
 **꾸밈은 부를 때만 짠다** (사용자 지시 2026-08-27 · 2026-09-01). 도안을 올리면
@@ -90,7 +101,7 @@ ADOPTED_DIR = "adopted"
 # **이 문법에 안 맞는 `FS:` 그룹은 사람 몫이다** — 편집기의 그룹 복사는 이름을
 # 그대로 두고 " (Copy)"를 붙이므로(`FS:decal-1 (Copy)`) 머리만 보면 구성기 몫과
 # 안 갈린다. 그 사본은 조리법이 모르는 그림이라 `_adopt`가 도안으로 받는다.
-MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text)(?:-[A-Za-z0-9_.]+)*$")
+MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text|logos)(?:-[A-Za-z0-9_.]+)*$")
 DECAL_CHUNK = re.compile(r"^decal-(\d+)(?:-.*)?$")
 
 
@@ -149,7 +160,12 @@ def _blank_state() -> dict:
                      "engine": "font",
                      "placement": "auto", "priority": "normal",
                      "allow_fallback_to_game_text": True, "max_layers": None,
-                     "outline": "auto", "shadow": "auto"}}
+                     "outline": "auto", "shadow": "auto"},
+            # 로고 — 내장 워터마크(기본 켬) + 사용자 로고 이미지 (`compose.LogoSpec`).
+            "logos": {"watermark": True, "images": [], "placement": "auto"},
+            # 한쪽 옆면(도어 유리)에만 있으면 반대편에 세운다 — 그림은 거울, 로고·
+            # 글자는 읽는 방향 그대로 (`_symmetrize`).
+            "symmetry": True}
 
 
 def state_path(project_path: str | Path) -> Path:
@@ -675,6 +691,7 @@ def rebuild(st: Studio, *, log=None) -> dict:
         # 있으면 그 계열로 못 박는다 (메뉴는 없다, 사람이 조리법에 적는 레버)
         family=st.state.get("family"),
         text=st.state.get("text") or None,
+        logos=st.state.get("logos") or None,
         mirror=False, preview=False, log=log)
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)
@@ -933,19 +950,27 @@ def act_text(st: Studio, fields: dict) -> str:
 def act_decorate(st: Studio, *, composition: str | None = None,
                  motif: str | None = None, paint: str | None = None,
                  auto_paint: bool = False, text: dict | None = None,
-                 drop_text: bool = False, roles: dict[int, str] | None = None) -> str:
-    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자·역할표를 한 번에 받아 켠다.
+                 drop_text: bool = False, roles: dict[int, str] | None = None,
+                 logos: dict | None = None, symmetry: bool | None = None) -> str:
+    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자·역할표·로고·좌우를 한 번에 받아 켠다.
 
     편집기의 [Auto Decoration...] 대화상자가 부른다 (`flsedit decorate`). 준 것만
     바꾼다 — `composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
     `auto_paint`면 도안에서 고르고, `text`는 스펙 열쇠들(`main`이 비면 끈다),
     `drop_text`면 글자를 뺀다. `roles`는 실린 그림 표에서 사람이 고른 역할
-    (`act_roles`). 마지막에 꾸밈을 켠다 — 이 창의 뜻이 그것이다."""
+    (`act_roles`), `logos`는 워터마크·로고 이미지·자리(`act_logos`), `symmetry`는
+    "한쪽에만 있으면 반대편에"(`act_symmetry`). 마지막에 꾸밈을 켠다 — 이 창의
+    뜻이 그것이다."""
     from .. import compose
 
     said: list[str] = []
     if roles:
         said.append(act_roles(st, roles))
+    if logos is not None:
+        said.append(act_logos(st, **logos))
+    if symmetry is not None:
+        st.state["symmetry"] = bool(symmetry)
+    said.append(act_symmetry(st, bool(st.state.get("symmetry", True))))
     if composition is not None:
         said.append(act_family(st, None if composition == "auto" else composition))
     if motif is not None:
@@ -962,6 +987,105 @@ def act_decorate(st: Studio, *, composition: str | None = None,
     st.notes = [n for n in st.notes if "[Grow Decoration]" not in n]   # 이제 켰다
     del compose
     return msg("자동 꾸밈: {what}", what=" · ".join(said) if said else msg("그대로 짠다"))
+
+
+def act_logos(st: Studio, *, watermark: bool | None = None,
+              images: list | None = None, placement: str | None = None) -> str:
+    """로고 옵션 — 내장 워터마크 · 사용자 로고 이미지(0~N) · 자리. 준 것만 바꾼다.
+
+    이미지는 **지금** 벡터화한다 (`compose.vectorize_logo` — 셀 노선, 110장 상한,
+    내용 서명 캐시 `<작업 폴더>/logos/`) — 굽기 안에서 하면 오류가 상태줄에
+    안 뜬다. 못 굽는 이미지는 빼고 말한다."""
+    from .. import compose
+
+    cur = dict(st.state.get("logos") or {"watermark": True, "images": [], "placement": "auto"})
+    if watermark is not None:
+        cur["watermark"] = bool(watermark)
+    if placement is not None:
+        cur["placement"] = placement
+    if images is not None:
+        had = {str(it.get("image")): it for it in (cur.get("images") or [])
+               if isinstance(it, dict)}
+        got: list[dict] = []
+        for img in images:
+            key = str(Path(str(img)).resolve())
+            it = had.get(key) or had.get(str(img)) or {"image": key, "plan": None}
+            if not (it.get("plan") and Path(it["plan"]).is_file()):
+                try:
+                    it["plan"] = str(compose.vectorize_logo(
+                        key, st.work / "logos", log=lambda t: st.notes.append(t)))
+                except (ValueError, OSError, RuntimeError, SystemExit) as e:
+                    st.notes.append(msg("로고를 못 굽는다 — {name}: {e}",
+                                        name=Path(key).name, e=e))
+                    continue
+            got.append({"image": key, "plan": it["plan"]})
+        cur["images"] = got
+    spec = compose.LogoSpec.from_dict(cur)          # 값 검사 (모르는 자리면 ValueError)
+    st.state["logos"] = spec.to_dict()
+    return msg("로고: 워터마크 {wm} · 이미지 {n}장 · 자리 {place}",
+               wm=msg("켬") if spec.watermark else msg("끔"), n=len(spec.images),
+               place=spec.placement)
+
+
+def act_symmetry(st: Studio, on: bool) -> str:
+    """**한쪽에만 있으면 반대편에** — 옆면·도어 유리 한 쌍에서 한쪽만 도안이 있으면
+    반대편에 세운다 (그림은 거울, 로고·글자는 자리만 거울 — `_mirror_one`).
+
+    우리가 세운 사본은 `symmetry` 표시를 단다. 끄면 그 사본만 걷는다 — 사람이 올린
+    것은 안 건드린다. 양쪽에 다 있으면(우리 사본이든 사람 것이든) 아무것도 안 한다
+    — 사람이 반대편을 지웠으면 다음 판에 다시 세운다."""
+    st.state["symmetry"] = bool(on)
+    if not on:
+        before = len(st.designs)
+        st.state["designs"] = [d for d in st.designs if not d.get("symmetry")]
+        gone = before - len(st.designs)
+        return msg("좌우: 한쪽만 둔다") + (msg(" (세웠던 사본 {n}개를 걷는다)", n=gone)
+                                        if gone else "")
+    done = _symmetrize(st)
+    return msg("좌우: 한쪽에만 있으면 반대편에") + (
+        msg(" — {what}", what=" · ".join(done)) if done else "")
+
+
+def _symmetrize(st: Studio) -> list[str]:
+    maps = _maps(st)
+    done: list[str] = []
+    for a, b in (("side_left", "side_right"), ("window_left", "window_right")):
+        on_a = [d for d in st.designs if d["surface"] == a]
+        on_b = [d for d in st.designs if d["surface"] == b]
+        if bool(on_a) == bool(on_b):
+            continue
+        src, dst = (on_a, b) if on_a else (on_b, a)
+        for d in list(src):
+            new = _mirror_one(st, d, dst, maps)
+            if new is None:
+                continue
+            new["symmetry"] = True
+            st.designs.append(new)
+            done.append(f"{d['surface']} → {dst}"
+                        + (msg(" (자리만)") if d.get("no_mirror") else ""))
+    return done
+
+
+def _mirror_one(st: Studio, d: dict, dst: str, maps: dict) -> dict | None:
+    """배치 하나의 반대편 사본 — 그림은 거울, 로고·글자는 **읽는 방향 그대로**
+    (`compose.reseat_place`). 면 지도가 없으면 None. 역할표는 그대로 물려받는다."""
+    from .. import compose
+
+    sm, dm = maps.get(d["surface"]), maps.get(dst)
+    if sm is None or dm is None:
+        st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다", surface=dst))
+        return None
+    mp = (compose.reseat_place if d.get("no_mirror") else compose.mirror_place)(
+        _manual(d), sm, dm, dst)
+    new = {"plan": d["plan"], "surface": dst, "x": mp.x, "y": mp.y,
+           "scale": mp.scale, "rot": mp.rot, "mirror": mp.mirror}
+    if d.get("origin"):
+        new["origin"] = d["origin"]
+    for k in ("role", "role_auto", "role_why", "role_user", "label",
+              "layers", "no_mirror", "pinned", "adopted"):
+        if k in d:
+            new[k] = d[k]
+    return new
 
 
 def act_family(st: Studio, family: str | None) -> str:
@@ -1063,33 +1187,18 @@ def act_mirror(st: Studio, surface: str | None,
     for d in list(srcs):
         dst = MIRROR_PAIRS[d["surface"]]
         # 로고·글자는 **절대 미러하지 않는다** (사용자 결정 2026-09-02) — 거울에
-        # 비친 글자는 읽히지 않는다. 반대편에 읽는 방향 그대로 다시 앉히는 것은
-        # 로고 키트(3단계)의 일이라 지금은 건너뛰고 말한다.
+        # 비친 글자는 읽히지 않는다. 반대편의 거울 자리에 읽는 방향 그대로 앉힌다.
+        new = _mirror_one(st, d, dst, maps)
+        if new is None:
+            continue
         if d.get("no_mirror"):
-            st.notes.append(msg("{surface}: '{name}'은(는) {role}라 미러하지 않는다",
-                                surface=d["surface"],
+            st.notes.append(msg("{surface}: '{name}'은(는) {role}라 자리만 거울로 앉힌다",
+                                surface=dst,
                                 name=d.get("label") or Path(d["plan"]).name,
                                 role=compose.CAST_LABELS.get(d.get("role"), d.get("role"))))
-            continue
-        sm, dm = maps.get(d["surface"]), maps.get(dst)
-        if sm is None or dm is None:
-            st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다",
-                                surface=dst))
-            continue
-        mp = compose.mirror_place(_manual(d), sm, dm, dst)
         st.state["designs"] = [o for o in st.designs
                                if not (o["surface"] == dst
                                        and _same_design(o, d))]
-        new = {"plan": d["plan"], "surface": dst, "x": mp.x,
-               "y": mp.y, "scale": mp.scale, "rot": mp.rot,
-               "mirror": mp.mirror}
-        if d.get("origin"):
-            new["origin"] = d["origin"]
-        # 역할표는 거울 너머로 그대로 간다 — 같은 그림은 같은 역할이다
-        for k in ("role", "role_auto", "role_why", "role_user", "label",
-                  "layers", "no_mirror", "pinned", "adopted"):
-            if k in d:
-                new[k] = d[k]
         st.designs.append(new)
         done.append(f"{d['surface']} → {dst}")
     if not done:
@@ -1215,6 +1324,8 @@ def clean_work(st: Studio) -> None:
     for p in st.work.glob("deco*.json"):
         p.unlink(missing_ok=True)
     for p in st.work.glob("shapes-*.json"):
+        p.unlink(missing_ok=True)
+    for p in st.work.glob("logos-*.json"):
         p.unlink(missing_ok=True)
     # 받은 도안 중 조리법이 더는 안 가리키는 것 — 가른 조각을 다시 갈랐거나 지운 것
     keep = {Path(d["plan"]).resolve() for d in st.designs}

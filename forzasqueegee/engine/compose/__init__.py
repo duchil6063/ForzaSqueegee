@@ -116,6 +116,8 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     textbuild   텍스트 조립 — 포즈 + 층 → 프레임 좌표 레이어 (또는 게임 글자 명세).
     textscore   텍스트 점수 — 가독성 · 가림 · 흐름 · 어수선 · 위계.
     facetext    다른 면의 글자 — 자리를 못 박았을 때 (rear · hood · roof · window).
+    logokit     로고 키트 — 내장 워터마크 · 사용자 로고 이미지의 벡터화와 상한.
+    sponsor     스폰서 문법 — 로고 무리를 옆면 로커 줄 · 리어 · 프론트 · 윈드실드에.
     design      구성 설계 — 후보 생성 + 평가 + 선택 (옆면 꾸밈 그룹의 머리).
     rigs        차 한 대의 면 지도와 옆면 뼈대 — 실측이 프리셋보다 우선한다.
     groups      구성 파일의 그룹 항목 — 플랜 파일을 쓰고 그것을 가리킨다.
@@ -170,7 +172,7 @@ from .place import (
     place_in_rect, place_xf, surface_exposure, take_layers)
 from .folds import _all_folds, _pillar_hints, seam_fold
 from .atlas import BodyLines, Seam, VehicleAtlas, build_atlas
-from .autoplace import _side_place, auto_place, mirror_place
+from .autoplace import _side_place, auto_place, mirror_place, reseat_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
     deco_anchor, flow_shapes, surface_deco_shapes)
@@ -200,6 +202,10 @@ from .textlayout import TextPose, layout_sets
 from .textbuild import TextSet, build_text_sets
 from .textscore import TEXT_WEIGHTS, text_parts
 from .facetext import face_text
+from .logokit import (
+    LOGO_LAYERS, LogoItem, LogoSpec, PLACEMENTS as LOGO_PLACEMENTS,
+    vectorize as vectorize_logo, watermark_plan)
+from . import sponsor
 from .rigs import (
     _arch_fallback, _avoid_on, _bumper_seed, _hood_seed, _place_for, carfiles_pick,
     probe_ok, side_rigs, surfaces_for)

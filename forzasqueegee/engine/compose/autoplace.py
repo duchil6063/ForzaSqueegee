@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from pathlib import Path
 
 from ...game import seam as gseam, surface as gsurf
@@ -96,3 +98,17 @@ def mirror_place(mp: ManualPlace, src: gsurf.SurfaceMap,
                        y=round(dcy + (mp.y - scy), 1),
                        scale=mp.scale, rot=round((-mp.rot) % 360.0, 1),
                        mirror=not mp.mirror)
+
+
+def reseat_place(mp: ManualPlace, src: gsurf.SurfaceMap,
+                 dst: gsurf.SurfaceMap, surface: str) -> ManualPlace:
+    """배치 하나를 반대편의 **거울 자리에 읽는 방향 그대로** 앉힌다 (로고·글자).
+
+    `mirror_place`와 자리는 같고 뒤집기만 없다 — 거울에 비친 글자는 읽히지 않으니
+    (사용자 결정 ③ 2026-09-02) 자리만 옮기고 그림은 그대로 둔다. 각은 거울
+    (`-rot`)이라 기울인 글자가 반대편에서도 같은 쪽으로 기운다
+    (`textlayout.TextPose.mirrored`와 같은 규약).
+    """
+    got = mirror_place(mp, src, dst, surface)
+    return replace(got, mirror=mp.mirror, role=mp.role, no_mirror=mp.no_mirror,
+                   pinned=mp.pinned)

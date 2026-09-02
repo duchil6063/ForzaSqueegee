@@ -76,7 +76,10 @@ def cmd_itasha(args) -> int:
                     mirror=not args.no_mirror, paint=not args.no_paint,
                     base_rgb=base, flip=args.flip, deco=not args.no_deco,
                     motif=args.motif, family=args.family,
-                    text=(tspec.to_dict() if tspec is not None else None))
+                    text=(tspec.to_dict() if tspec is not None else None),
+                    logos={"watermark": not args.no_watermark,
+                           "images": list(args.logo or []),
+                           "placement": args.logo_placement or "auto"})
             except (ValueError, OSError) as e:
                 print(msg("오류: {e}", e=e))
                 return 1

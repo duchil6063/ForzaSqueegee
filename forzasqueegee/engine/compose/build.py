@@ -38,6 +38,8 @@ from .families import FAMILIES
 from .textspec import TextSpec
 from .textbuild import mirrored_set
 from .facetext import face_text
+from .logokit import LogoItem, LogoSpec, resolve as resolve_logos, watermark_plan
+from . import sponsor
 from .rigs import (
     _bumper_seed, _hood_seed, _place_for, carfiles_pick, side_rigs, surfaces_for)
 from .groups import (
@@ -66,6 +68,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           whole: bool | None = None,
           motif: str | None = None, family: str | None = None,
           text: "TextSpec | dict | None" = None,
+          logos: "LogoSpec | dict | None" = None,
           mass_hint: dict | None = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
@@ -144,11 +147,22 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     되짓는 커스텀 도안(`engine.textglyph`)을 고운 층이 예산에 들 때만 쓴다
     (`textbudget`). 옆면 글자는 면마다 제 그룹(`text-<면>.json`)이다 — 꾸밈 그룹은
     좌우를 미러로 나눠 쓰지만 글자는 뒤집히면 안 된다.
+
+    ## 로고 (`logos`)
+
+    내장 워터마크(기본 켬)와 사용자 로고 이미지(0~N)를 **스폰서 문법**으로
+    앉힌다 (`logokit`·`sponsor` — 사용자 결정 ② 2026-09-02): 옆면 로커 위 한 줄 ·
+    리어 범퍼 가운데 + 좌우 · 프론트 범퍼 · 윈드실드 귀퉁이. 워터마크는 그중 한
+    자리(`auto`면 리어, 없으면 윈드실드, 그것도 없으면 옆면 줄 끝)다. 로고 그룹은
+    면마다 제 것(`logos-<면>.json`)이고 **미러하지 않는다** — 반대편 옆면은
+    자리만 거울이다. 꾸밈을 끈 판에는 안 선다 (로고도 꾸밈이다).
     """
     if whole is None:                             # 스윕용 스위치 (기본 켬)
         whole = os.environ.get("FS_WHOLE", "1").strip() != "0"
     text_spec = (text if isinstance(text, TextSpec) else TextSpec.from_dict(text)) \
         if text is not None else TextSpec()
+    logo_spec = (logos if isinstance(logos, LogoSpec) else LogoSpec.from_dict(logos)) \
+        if logos is not None else LogoSpec()
     mirror_side = "side_left" if flip else "side_right"
     from ...auto.itasha import PRESET             # 순환 참조를 피해 늦게 들여온다
 
@@ -424,6 +438,45 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 배치 미러가 x를 뒤집는다 — 그룹은 게임에서 한 번만 만들면 된다).
     deco_src = next((n for n in ROLE_MAIN if hand_box.get(n)), None)
     side0 = maps.get(deco_src) if deco_src else None
+
+    # ---- 로고 재료 — 사용자 로고는 도안으로 굽고(캐시), 워터마크는 키트에서 ----
+    # 워터마크 자리는 **하나**다: `auto`면 리어 범퍼, 없으면 윈드실드 귀퉁이, 그것도
+    # 없으면 옆면 줄 끝. 사람 판의 로고 무리는 24/30벌에 있다 — 없던 자리다.
+    logo_cache: dict = {}
+    logo_protos: list[sponsor.Proto] = []
+    wm_proto: sponsor.Proto | None = None
+    wm_face: str | None = None
+    logo_targets = sponsor.spec_targets(logo_spec)
+    logo_groups: dict[str, dict] = {}         # 면 → 로고 그룹 항목
+    logo_summary: dict[str, int] = {}
+    side_w = (side0.paint[2] - side0.paint[0]) if side0 is not None else None
+    if deco and logo_spec.active:
+        for it in resolve_logos(logo_spec, out_dir / "logos", cat=cat, log=log, notes=notes):
+            logo_protos.append(sponsor.load_proto(it, cat, logo_cache))
+        wmp = watermark_plan(False) if logo_spec.watermark else None
+        if wmp is not None:
+            wm_proto = sponsor.load_proto(
+                LogoItem(plan=wmp, kind="watermark", name="ForzaSqueegee"), cat, logo_cache)
+
+            def _face_ok(name: str) -> bool:
+                sm = maps.get(name)
+                return sm is not None and (not sm.uncertain or _deco_usable(sm))
+
+            order = {"auto": ("rear", "windshield", "side"), "rear": ("rear",),
+                     "front": ("front",), "windshield": ("windshield",),
+                     "rocker": ("side",)}[logo_spec.placement]
+            for cand in order:
+                if cand == "side":
+                    if side0 is not None and not side0.uncertain:
+                        wm_face = cand
+                elif _face_ok(cand):
+                    wm_face = cand
+                if wm_face:
+                    break
+            if wm_face is None:
+                notes.append(msg("워터마크를 앉힐 면이 없다 ({place})", place=logo_spec.placement))
+        elif logo_spec.watermark:
+            notes.append(msg("내장 로고 키트가 없다 — tools/make_kit.py로 굽는다"))
     deco_plan = deco_place = deco_front = front_place = None
     # 옆면이 이음새로 내보내는 두 선 — 큰 색면의 띠와 하부 투톤의 윗선 (면 유닛).
     # 잇는 자는 `compose.seams`이고, 띠는 **어디서 쟀는지**(`Band.at_u`)를 같이 든다.
@@ -570,6 +623,37 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       if design.text.tier_main == "D"
                       else msg("도형 맞춤 (층 {tier})", tier=design.text.tier_main)),
                 m=design.text.n))
+        # ---- 옆면 로고 줄 — 로커 위, 면마다 제 그룹 (미러 금지) ----
+        row = list(logo_protos) + ([wm_proto] if (wm_proto is not None and wm_face == "side")
+                                   else [])
+        if row and logo_targets["side"]:
+            side_logos = sponsor.side_row(
+                row, design.fld, design.text.poses if design.text is not None else None,
+                notes)
+            side_logos = [
+                (sponsor.pick_watermark(
+                    pl, sponsor.under_layers(design.back, pl.x, pl.y,
+                                             car_rgb or (255, 255, 255)),
+                    cat, logo_cache)
+                 if pl.proto.item.kind == "watermark" else pl)
+                for pl in side_logos]
+            if side_logos:
+                lsets = {deco_src: side_logos}
+                other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)),
+                             None)
+                if other is not None:
+                    lsets[other] = [pl.mirrored() for pl in side_logos]
+                for sname, pls in lsets.items():
+                    lpath = out_dir / f"logos-{sname}.json"
+                    logo_summary[sname] = sponsor.write_group(pls, lpath, plan, cat)
+                    written.append(lpath)
+                    logo_groups[sname] = {"plan": _rel(lpath, out_dir), "x": round(fcu, 1),
+                                          "y": round(fcv, 1), "scale": round(ds, 3),
+                                          "rot": 0.0, "mirror": False}
+                notes.append(msg("옆면 로커 줄에 로고 {k}개 — {names} ({n:,}장, 반대편은 "
+                                 "자리만 거울)", k=len(side_logos),
+                                 names=" · ".join(pl.proto.item.name for pl in side_logos),
+                                 n=logo_summary[deco_src]))
 
     # ---- 예산 사다리 — 넘치면 꾸밈부터 버린다 (도안이 주역이다) ----
     # 기준은 **가장 무거운 옆면**이다 (한 면에 여러 장을 올릴 수 있다). 장수는
@@ -584,6 +668,13 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     n_front = len(deco_front.layers) if deco_front is not None else 0
     n_text = max([len(LayerPlan.load(out_dir / g["plan"]).layers)
                   for g in text_groups.values()] or [0])
+    n_logo = max([logo_summary.get(n, 0) for n in ROLE_MAIN] or [0])
+    if use_deco and n_logo and \
+            n_person + len(deco_plan.layers) + n_front + n_text + n_logo > cap:
+        for n in ROLE_MAIN:                      # 로고 줄부터 뺀다 (꾸밈이 먼저다)
+            logo_groups.pop(n, None)
+            logo_summary.pop(n, None)
+        notes.append(msg("측면이 상한 {cap:,}을 넘는다 — 로고 줄을 뺀다", cap=cap))
     if use_deco and n_person + len(deco_plan.layers) + n_front + n_text > cap:
         use_deco = False                         # 도안만 남긴다 (`_check`가 나머지를 잡는다)
         text_groups.clear()
@@ -855,6 +946,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if mps:
             item["groups"] = [
                 _hand_group_job(m, hand_ix, hand_group, out_dir) for m in mps]
+        # 로고 줄은 도안 위 — 사람 판의 스폰서 로고는 z가 맨 위다
+        if use_deco and name in logo_groups:
+            item["groups"] = list(item.get("groups") or []) + [logo_groups[name]]
         # 전경 모티프는 **맨 위**다 — 도안 위에 얹혀 인물을 덮고 지난다
         if use_deco and front_place is not None and mps:
             item["groups"] = list(item.get("groups") or []) \
@@ -1000,6 +1094,86 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                  group_unit=group_unit, hood_u=hood_u, notes=notes,
                                  written=written)
 
+    # ---- 다른 면의 로고 — 리어 범퍼(가운데 워터마크 + 좌우) · 프론트 · 윈드실드 ----
+    if deco and (logo_protos or wm_proto is not None):
+        def _face_busy(item: dict, name: str) -> list:
+            boxes = [hand_box[name]] if hand_box.get(name) else []
+            for g in (item.get("groups") or []) + (item.get("pre_groups") or []):
+                try:
+                    bx = look(LayerPlan.load(out_dir / g["plan"]), cat).box
+                except Exception:              # noqa: BLE001 — 못 읽는 그룹은 안 피한다
+                    continue
+                s = float(g.get("scale", 1.0)) * group_unit
+                boxes.append((g["x"] + s * bx[0], g["y"] + s * bx[1],
+                              g["x"] + s * bx[2], g["y"] + s * bx[3]))
+            return boxes
+
+        _users_on = {"rear": logo_protos if logo_spec.placement in ("auto", "rear") else [],
+                     "front": (logo_protos[:3] if logo_spec.placement == "auto"
+                               else logo_protos if logo_spec.placement == "front" else []),
+                     "windshield": logo_protos if logo_spec.placement == "windshield" else []}
+        for face in ("rear", "front", "windshield"):
+            if not logo_targets[face]:
+                continue
+            users = _users_on[face]
+            center = wm_proto if wm_face == face else None
+            if not users and center is None:
+                continue
+            sm = drawable(face, maps, rigs)
+            if sm is None or (sm.uncertain and not _deco_usable(sm)):
+                continue
+            item = next((it for it in items if it["surface"] == face), None)
+            if item is None:
+                item = {"surface": face, "fit": False}
+                items.append(item)
+            busy = _face_busy(item, face)
+            used = (len(item.get("shapes") or []) + len(item.get("post_shapes") or [])
+                    + sum(len(LayerPlan.load(out_dir / g["plan"]).layers)
+                          for g in (item.get("groups") or []) + (item.get("pre_groups") or [])))
+            free = (sm.cap or 1000) - used - 8
+            floor_v = _carry_rocker(face) if face in (ROLE_REAR, "front") else None
+            if face == "windshield" and not users:
+                got = sponsor.corner(center, sm, busy, side_w=side_w, notes=notes)
+                placed = [got] if got is not None else []
+            else:
+                placed = sponsor.face_row(users, sm, busy, side_w=side_w, floor_v=floor_v,
+                                          center=center, notes=notes)
+                # 가운데 줄이 막혀 있으면(변주·글자가 아래까지 내려온 면) 워터마크는
+                # 귀퉁이로 물러난다 — 사람 판의 작은 로고도 범퍼 귀퉁이에 선다
+                if center is not None and not any(
+                        pl.proto.item.kind == "watermark" for pl in placed):
+                    got = sponsor.corner(center, sm, busy + [pl.box for pl in placed],
+                                         side_w=side_w, notes=notes)
+                    if got is not None:
+                        placed.append(got)
+            if not placed:
+                continue
+            fixed: list = []
+            for pl in placed:
+                if pl.proto.item.kind == "watermark":
+                    bg = car_rgb or (255, 255, 255)
+                    if floor_v is not None and pl.y < floor_v:
+                        bg = ROOF_DARK
+                    elif (carried.get("to") == face and design is not None
+                          and "v" in carried and side_band is not None
+                          and abs(pl.y - carried["v"]) < 0.5 * side_band.thickness):
+                        bg = design.pal.bed
+                    pl = sponsor.pick_watermark(pl, bg, cat, logo_cache)
+                fixed.append(pl)
+            n_need = sum(len(pl.proto.layers) for pl in fixed)
+            if n_need > free:
+                notes.append(msg("{surface}: 로고 {n}장이 남은 예산 {free}장을 넘는다 — 뺀다",
+                                 surface=face, n=n_need, free=max(0, free)))
+                continue
+            entry, n = sponsor.face_group(fixed, sm, out_dir / f"logos-{face}.json", plan,
+                                          cat, out_dir, group_unit)
+            item["groups"] = list(item.get("groups") or []) + [entry]
+            written.append(out_dir / f"logos-{face}.json")
+            logo_summary[face] = n
+            notes.append(msg("{surface}: 로고 {k}개 — {names} ({n:,}장)", surface=face,
+                             k=len(fixed), names=" · ".join(pl.proto.item.name for pl in fixed),
+                             n=n))
+
     # 모티프가 선 면마다 **어느 도안에서 자랐나**를 적는다 — 꾸밈이 엉뚱한 자리에
     # 섰을 때 사람이 먼저 볼 것이 이 뿌리다 (면을 잘못 짚었나, 투영이 딴 면에서
     # 왔나).
@@ -1077,6 +1251,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 돌릴 때 이름 매칭이 다른 차를 물어 미리보기와 검증이 딴 면 지도로 돈다.
     if media:
         cfg["media"] = media
+    # 로고 — 무엇을 어디에 앉혔나 (`sponsor`). 꺼진 판에는 이 칸이 없다.
+    if deco and logo_spec.active:
+        cfg["logos"] = {"watermark": bool(wm_proto is not None), "watermark_face": wm_face,
+                        "images": len(logo_protos), "placement": logo_spec.placement,
+                        "faces": dict(sorted(logo_summary.items()))}
     # 차 전체 구성이 무엇을 어디에 맡겼나 — 계측 도구가 읽는 자리다
     # (`work/lab/whole/ours.py`). 없는 판에는 이 칸이 아예 없다.
     if wcp is not None and wcp.jobs:

@@ -399,6 +399,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    deco: bool = True, whole: bool | None = None,
                    motif: str | None = None, family: str | None = None,
                    text: "dict | None" = None,
+                   logos: "dict | None" = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -446,7 +447,7 @@ def compose_config(main_plan: Path, out: Path, *,
                              mirror=mirror, paint=paint, base_rgb=base_rgb,
                              flip=flip, manual=manual,
                              deco=deco, whole=whole, motif=motif,
-                             family=family, text=text, mass_hint=hint,
+                             family=family, text=text, logos=logos, mass_hint=hint,
                              log=(lambda *_a, **_k: None) if hint is None
                              and two_pass else log)
 

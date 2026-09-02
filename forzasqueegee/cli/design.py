@@ -217,10 +217,19 @@ def cmd_flsedit(args) -> int:
                                   item=item))
                         return 2
                     roles[int(k)] = v.strip()
+            logos = None
+            if (args.logo is not None or args.no_logos or args.watermark is not None
+                    or args.logo_placement is not None):
+                logos = {"images": ([] if args.no_logos else args.logo),
+                         "watermark": (None if args.watermark is None
+                                       else args.watermark == "on"),
+                         "placement": args.logo_placement}
             said = studio.act_decorate(
                 st, composition=args.composition, motif=args.family,
                 paint=args.color, auto_paint=bool(args.auto_paint),
-                text=text_fields, drop_text=bool(args.no_text), roles=roles)
+                text=text_fields, drop_text=bool(args.no_text), roles=roles,
+                logos=logos,
+                symmetry=(None if args.symmetry is None else args.symmetry == "on"))
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))

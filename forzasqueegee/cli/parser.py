@@ -39,6 +39,17 @@ def _text_args(p: argparse.ArgumentParser) -> None:
                    choices=("auto", "on", "off"), help=msg("그림자"))
 
 
+def _logo_args(p: argparse.ArgumentParser) -> None:
+    """로고 인자 — `itasha`와 `flsedit decorate`가 같은 벌을 쓴다."""
+    p.add_argument("--logo", action="append", default=None, metavar=msg("이미지"),
+                   help=msg("사용자 로고 이미지(또는 도안) — 여러 번 줄 수 있다. 셀 노선으로 "
+                            "벡터화해(110장 상한) 스폰서 문법으로 앉힌다"))
+    p.add_argument("--logo-placement", default=None, dest="logo_placement",
+                   choices=("auto", "rear", "front", "windshield", "rocker"),
+                   help=msg("로고 자리 — auto(워터마크는 리어, 로고는 옆면 로커 줄·리어·"
+                            "프론트) · rear · front · windshield · rocker(옆면 줄만)"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """`python -m forzasqueegee`의 파서. 명령 실행은 `cli.<갈래>`가 한다."""
     parser = argparse.ArgumentParser(prog="forzasqueegee",
@@ -145,6 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
                                "(--car/--media를 주면 그 이름의 후보만 점수와 함께)"))
     p_it.add_argument("--no-paint", action="store_true",
                       help=msg("베이스 도색(자동차 도색 메뉴)을 안 칠한다"))
+    p_it.add_argument("--no-watermark", action="store_true", dest="no_watermark",
+                      help=msg("내장 ForzaSqueegee 워터마크를 뺀다 (기본은 리어 범퍼에 선다)"))
     p_it.add_argument("--no-deco", action="store_true",
                       help=msg("꾸밈을 빼고 **도안만** 올린다 (꾸밈 그룹·관통 밴드·"
                                "지붕 블랙아웃·모티프 없음). 베이스 도색은 그대로다"))
@@ -168,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
                                "(기본: 후보를 다 지어 점수로 고른다, "
                                "engine/compose/design)"))
     _text_args(p_it)
+    _logo_args(p_it)
     p_it.add_argument("--no-mirror", action="store_true",
                       help=msg("우측면을 미러하지 않는다"))
     p_it.add_argument("--flip", action="store_true",
@@ -329,6 +343,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help=msg("family 명령의 구성 계열 — minimal · graphic_bed · "
                                "diagonal_flow · motorsport · splash (안 주면 자동: "
                                "후보를 다 지어 점수로 고른다)"))
+    _logo_args(p_fx)
+    p_fx.add_argument("--no-logos", action="store_true", dest="no_logos",
+                      help=msg("decorate: 사용자 로고를 다 뺀다 (워터마크는 별개)"))
+    p_fx.add_argument("--watermark", default=None, choices=("on", "off"),
+                      help=msg("decorate: 내장 ForzaSqueegee 워터마크 (기본 on)"))
+    p_fx.add_argument("--symmetry", default=None, choices=("on", "off"),
+                      help=msg("decorate: 한쪽 옆면에만 있으면 반대편에 세운다 (기본 on) — "
+                               "그림은 거울, 로고·글자는 읽는 방향 그대로"))
     p_fx.add_argument("--role", nargs="*", default=None, metavar=msg("번호=역할"),
                       help=msg("decorate: 실린 덩어리의 역할을 사람이 정한다 — "
                                "`<번호>=<hero|support|logo|text|pinned|auto>` "
