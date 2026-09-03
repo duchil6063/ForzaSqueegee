@@ -523,7 +523,9 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     log(msg("커버리지 봉인 중…"))
     stats.update(coverage.seal_coverage(
         plan, cel, cat, log=log, budget=shapes, weight=imp,
-        progress=clk.sub("seal", msg("커버리지 봉인"))))
+        progress=clk.sub("seal", msg("커버리지 봉인")),
+        snap=(lambda name: _snap("s7" + name)) if _stg else None))
+    _snap("s7_seal")                       # 봉인 뒤·팔레트 접기 앞
     stats.update(coverage.measure(plan, cel, cat))
     stats.update(skew_report(plan.layers))          # §14 기울기 계측
     stats["hole_left"] = count_hole_clusters(plan, cel, cat, min_px=HOLE_MIN_PX,

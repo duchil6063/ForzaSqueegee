@@ -421,7 +421,7 @@ def _make_room(plan: LayerPlan, cel: CelArt, cat: Catalog,
 def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                   log=print, budget: int | None = None, ss: int = _SS,
                   rounds: int = 4, weight: np.ndarray | None = None,
-                  progress=None) -> dict:
+                  progress=None, snap=None) -> dict:
     """**마지막 봉인** — 실루엣 내부의 안 칠한 표본을 0으로 만든다.
 
     파이프라인의 맨 끝(전역 미세 조정 **뒤**)에 선다. 그 앞의 모든 단은 값을
@@ -442,8 +442,13 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
        1x 격자를 보는 한 반 픽셀짜리 잔여는 영영 안 닫히기 때문이다.
 
     봉인 뒤로는 어떤 단도 기하를 안 건드린다 — 그것이 이 단이 맨 끝인 이유다.
+
+    `snap(name)`은 단계 귀속용 스냅숏 콜백이다 (`FS_CEL_STAGES`) — 세 손이
+    각각 무엇을 바꿨는지 가르는 자리. 없으면 아무 일도 안 한다.
     """
     from .holes import fill_holes, grow_covers
+
+    snap = snap or (lambda _n: None)
 
     st = {"seal_grow": 0, "seal_layers": 0, "seal_sold": 0, "seal_dots": 0}
     hard = hard_holes(plan, cel, cat, ss)
@@ -462,6 +467,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                                        need=hard, ss=ss,
                                        harm_per_px=_SEAL_HARM, ink_long=True)
         hard = hard_holes(plan, cel, cat, ss)
+        snap("a_grow%d" % _r)
         if not hard.any():
             break
         need = need_px(hard, ss)
@@ -470,6 +476,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
             need.astype(np.uint8), connectivity=8)
         want = int(ncc - 1)
         _make_room(plan, cel, cat, budget, ss, st, want, weight)
+        snap("b_room%d" % _r)
         room = 10 ** 9 if budget is None else max(0, budget - len(plan.layers))
         if room <= 0:
             log(msg("  경고: 봉인할 자리가 없다 — 예산이 꽉 찼다"))
@@ -486,6 +493,7 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
                        holes=need, label="seal", group_r=_SEAL_GROUP_R, at=0)
         st["seal_layers"] += n
         hard = hard_holes(plan, cel, cat, ss)
+        snap("c_fill%d" % _r)
         if not hard.any() or n == 0:
             break
     # 점은 군집 하나에 한 장이라, 한 장으로 못 덮는 군집은 갈라져 남는다 —
