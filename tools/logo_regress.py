@@ -55,7 +55,8 @@ def _field(frame=(-450.0, -90.0, 450.0, 90.0), person=(-120.0, -90.0, 130.0, 90.
     char[r0:r1, c0:c1] = 1.0
     return CompositionField(grid=g, frame_box=frame, person_box=person, char=char,
                             char_rgb=np.zeros((rows, cols, 3), np.float32), detail=zero,
-                            drawable=np.ones((rows, cols), np.float32), head=zero,
+                            drawable=np.ones((rows, cols), np.float32),
+                            exposed=np.ones((rows, cols), np.float32), head=zero,
                             protected=char.copy(), support=zero, decoration=zero,
                             negative=zero, flow=(1.0, 0.0))
 

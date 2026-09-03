@@ -73,7 +73,7 @@ FAMILIES: dict[str, Family] = {
                           macro=(("split", "ribbon"), ("split", "none"), ("ribbon", "blade")),
                           # 벨트 블랙아웃 + 아치 날 + 찢긴 가장자리 + 홈 — 사람
                           # 그래픽 판의 바닥 (structure2 실측: 띠 13장·6색)
-                          stack=("belt", "arch", "edge", "gap"),
+                          stack=("belt", "arch", "edge", "gap", "streak"),
                           # 무리는 판 **가장자리**에 선다 — 판 위에 얹으면 판이
                           # 얼룩이 되고 무리도 안 읽힌다
                           grammar=(("avoids", "motif", "macro0", 0.8),)),
@@ -87,7 +87,7 @@ FAMILIES: dict[str, Family] = {
                             flows=("auto", "rear"), other_density=1.0,
                             macro=(("blade", "chevron"), ("split", "stack"), ("blade", "none")),
                             # 아치에서 솟는 날 + 사선을 따르는 핀 + 스월 가장자리
-                            stack=("arch", "pin", "edge"),
+                            stack=("arch", "pin", "edge", "streak"),
                             # 사선 둘이 서로를 **가로질러야** 흐름이 난다
                             grammar=(("counter_to", "macro1", "macro0", 1.0),)),
     # 다크 그래피티 — 검정 바탕 위에 형광 사선 날 둘이 인물을 지나고, 큰
@@ -100,8 +100,8 @@ FAMILIES: dict[str, Family] = {
                    empty_target=0.72, clutter=(0.08, 0.24), echo=True,
                    flows=("auto", "rear"), other_density=0.8, text_budget=1.4,
                    macro=(("blade", "chevron"), ("blade", "none"), ("split", "stack")),
-                   # 사선을 따르는 핀 + 스월 가장자리
-                   stack=("pin", "edge"),
+                   # 사선을 따르는 핀 + 스월 가장자리 + 인물 뒤 스트릭
+                   stack=("pin", "edge", "streak"),
                    # 사선 둘이 서로를 **가로질러야** 흐름이 난다
                    grammar=(("counter_to", "macro1", "macro0", 1.0),),
                    # 형광 액센트가 이 계열의 팔레트다 (`roles` neon)
@@ -123,7 +123,7 @@ FAMILIES: dict[str, Family] = {
                      flows=("auto",), other_density=1.25, torn=True,
                      macro=(("burst", "ribbon"), ("sweep", "blade"), ("burst", "none")),
                      # 아치 날 + 튄 물감 가장자리 (찢김·스플래시는 무늬 도형이 낸다)
-                     stack=("arch", "edge"),
+                     stack=("arch", "edge", "streak"),
                      # 전경 조각이 인물을 스치고 지난다 (장면 안의 인물)
                      grammar=(("overlaps", "front", "hero", 0.6),)),
 }

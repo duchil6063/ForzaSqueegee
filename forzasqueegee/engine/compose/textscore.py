@@ -42,6 +42,11 @@ TEXT_WEIGHTS = {
 SIZE_FULL = 0.26
 
 
+# 테두리 벌이 있을 때 가독성·어수선 항목의 바닥 — 테두리가 바탕에서 글자를 떼어 낸다
+OUTLINE_READ_FLOOR = 0.85
+OUTLINE_BUSY_FLOOR = 0.80
+
+
 
 def absent_parts() -> dict[str, float]:
     """글자 없는 후보의 항목 — `present`만 0이고 나머지는 "해친 것이 없다"(1.0).
@@ -58,10 +63,14 @@ def _lum(c) -> float:
 
 def text_parts(fld: CompositionField, cat: Catalog, poses: list[TextPose],
                text_layers: list[Layer], behind: np.ndarray,
-               front_alpha: np.ndarray | None = None) -> dict[str, float]:
+               front_alpha: np.ndarray | None = None,
+               outline: bool = False) -> dict[str, float]:
     """텍스트 항목들 (0~1). `behind`는 글자가 깔리기 **직전**의 합성(베이스+베드).
 
-    `front_alpha`(전경 모티프 래스터)가 글자를 덮는 몫도 인물이 덮는 몫에 더한다."""
+    `front_alpha`(전경 모티프 래스터)가 글자를 덮는 몫도 인물이 덮는 몫에 더한다.
+    `outline`이면 테두리 벌이 있다 — 테두리는 바탕 명도·어수선과 무관하게 글자를
+    읽히게 하는 물건이라 `text_read`·`text_busy`의 바닥을 올린다 (실측 giulia-01
+    레이싱: 띠 위 글자가 read .18·busy 0으로 져서 글자 없음이 이겼다)."""
     parts: dict[str, float] = {}
     if not poses:
         return absent_parts()
@@ -89,6 +98,9 @@ def text_parts(fld: CompositionField, cat: Catalog, poses: list[TextPose],
         gy = cv2.Sobel(bl_img.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3)
         busy = float((np.hypot(gx, gy)[m] > 0.6).mean())
         parts["text_busy"] = 1.0 if busy <= 0.015 else max(0.0, 1.0 - (busy - 0.015) / 0.08)
+    if outline:
+        parts["text_read"] = max(parts.get("text_read", 0.0), OUTLINE_READ_FLOOR)
+        parts["text_busy"] = max(parts.get("text_busy", 0.0), OUTLINE_BUSY_FLOOR)
     else:
         parts["text_read"] = 0.5
         parts["text_busy"] = 1.0
@@ -98,7 +110,13 @@ def text_parts(fld: CompositionField, cat: Catalog, poses: list[TextPose],
         cover = cover | (front_alpha > 0.5)
     occ = float(cover[m].mean()) if m.any() else 1.0
     lim = occlude_max(main.role)
-    parts["text_occlude"] = 1.0 if occ <= lim else max(0.0, 1.0 - (occ - lim) / 0.4)
+    if main.role == "behind":
+        # 인물 뒤는 상한 안에서도 가린 몫만큼 깎는다 — 같은 크기의 빈 자리가 있으면
+        # 그쪽이 이기고, 없을 때만 가려진 큰 글자가 작은 글자를 이긴다
+        parts["text_occlude"] = (max(0.0, 1.0 - 0.3 * occ / max(1e-6, lim)) if occ <= lim
+                                 else max(0.0, 0.7 - (occ - lim) / 0.4))
+    else:
+        parts["text_occlude"] = 1.0 if occ <= lim else max(0.0, 1.0 - (occ - lim) / 0.4)
     # 흐름 정렬 — 나란하거나 직교
     fa = math.atan2(fld.flow[1], fld.flow[0])
     d = math.radians(main.rot) - fa

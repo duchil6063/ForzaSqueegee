@@ -58,7 +58,7 @@ def _field(frame=(-450.0, -90.0, 450.0, 90.0), person=(-120.0, -90.0, 130.0, 90.
         draw[rr:, int((a - frame[0]) / cell):int((b - frame[0]) / cell)] = 0.0
     return CompositionField(grid=g, frame_box=frame, person_box=person, char=char,
                             char_rgb=np.zeros((rows, cols, 3), np.float32), detail=zero,
-                            drawable=draw, head=zero, protected=char.copy(), support=zero,
+                            drawable=draw, exposed=draw, head=zero, protected=char.copy(), support=zero,
                             decoration=zero, negative=zero, flow=(1.0, 0.0),
                             head_center=head, visual_center=(5.0, 0.0))
 
@@ -107,7 +107,7 @@ def main() -> int:
     specs = macro_plan(fld, ("ribbon", "blade"), 0.75, rocker=True)
     pieces = stack.plan(fld, fam.name, fam.stack, specs, 0.75, colors=colors, rocker=True)
     kinds = [p.kind for p in pieces]
-    check(kinds == ["belt", "arch", "edge", "edge", "gap"], f"조각 {kinds}")
+    check(kinds == ["belt", "arch", "edge", "edge", "gap", "streak", "streak"], f"조각 {kinds}")
     groups = stack.build(pieces, frame, colors, cat)
     layers = [l for _z, ls in groups for l in ls]
     check(all(l.label == stack.LABEL for l in layers), "라벨은 itasha_stack")
@@ -164,20 +164,20 @@ def main() -> int:
     specs = macro_plan(fld, ("burst", "ribbon"), 0.8, rocker=True)
     pieces = stack.plan(fld, fam.name, fam.stack, specs, 0.8, colors=colors, rocker=True)
     kinds = [p.kind for p in pieces]
-    check(kinds == ["arch", "edge", "edge"], f"조각 {kinds}")
+    check(kinds == ["arch", "edge", "edge", "streak", "streak"], f"조각 {kinds}")
     host = next(s for s in specs if s.kind == "ribbon")
     check(all(abs(((p.ang - host.ang) % 180.0)) < 1e-6 and p.role == host.role and p.z > host.z
               for p in pieces if p.kind == "edge"), "가장자리는 얕은 짝(ribbon)을 숙주로 — 그 색·각·위")
     specs_n = macro_plan(fld, ("burst", "none"), 0.8, rocker=True)
     pn = stack.plan(fld, fam.name, fam.stack, specs_n, 0.8, colors=colors, rocker=True)
-    check([p.kind for p in pn] == ["arch"], "숙주가 없으면 가장자리를 안 붙인다")
+    check([p.kind for p in pn] == ["arch", "streak", "streak"], "숙주가 없으면 가장자리를 안 붙인다 (스트릭은 블록 각을 따른다)")
 
     print("[split 블록 — graphic_bed / split+ribbon]")
     fam = FAMILIES["graphic_bed"]
     specs = macro_plan(fld, ("split", "ribbon"), 0.75, rocker=True)
     pieces = stack.plan(fld, fam.name, fam.stack, specs, 0.75, colors=colors, rocker=True)
     kinds = [p.kind for p in pieces]
-    check(kinds == ["belt", "arch", "edge", "edge", "gap"], f"조각 {kinds} (핀·가장자리는 짝 ribbon, 홈은 split 선을 따라)")
+    check(kinds == ["belt", "arch", "edge", "edge", "gap", "streak", "streak"], f"조각 {kinds} (핀·가장자리는 짝 ribbon, 홈은 split 선을 따라)")
     gap = next(p for p in pieces if p.kind == "gap")
     sp = specs[0]
     check(abs(gap.ang - sp.ang) < 1e-6 and gap.cut == 0.0, "split의 홈은 가른 선과 나란하고 전단이 없다")

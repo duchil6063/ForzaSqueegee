@@ -56,7 +56,18 @@ from .macro import STEEP_KINDS, MacroSpec, _band, _cap_width, _dir, _rect, _run
 LABEL = "itasha_stack"
 
 
-PIECES = ("belt", "arch", "pin", "edge", "gap")
+PIECES = ("belt", "arch", "pin", "edge", "gap", "streak")
+
+
+# 스트릭 — 인물 뒤에서 흐름 쪽으로 **길게 나가는 가는 선** (개수 · 두께 · 간격 · 각 상한 ·
+# 인물 시각 중심에서의 세로 치우침, 밴드·인물 높이 몫). 실루엣 키라인(울퉁불퉁한
+# 흰 테)을 대신한다 — 사람 판의 색면은 인물 뒤로 한 방향으로 뻗는다 (사용자 지시
+# 2026-09-03: "차라리 없는 게 낫다, 라인 같은 걸로 뒤에 길게").
+STREAK_N = 2
+STREAK_T = 0.03
+STREAK_GAP = 0.10
+STREAK_ANG = 12.0
+STREAK_DY = -0.05
 
 
 # 벨트 띠의 두께 (밴드 높이 몫, level이 그 사이를 걷는다). 사람 큰 색면 두께의
@@ -258,6 +269,20 @@ def plan(fld, family: str, pieces: tuple[str, ...], specs: tuple[MacroSpec, ...]
                                       at=(host.at[0] + nx * off * s, host.at[1] + ny * off * s),
                                       ang=host.ang, width=t, cut=host.cut,
                                       role="primary", z=4.0))
+        elif kind == "streak":
+            ang = host.ang if host is not None else max(-STREAK_ANG, min(STREAK_ANG, 0.4 * block.ang))
+            t = max(PIN_MIN, STREAK_T * band)
+            gap = STREAK_GAP * band
+            d = _dir(ang)
+            nx, ny = -d[1], d[0]
+            # 색은 주 액센트 — 판과 안 갈리면 무채 잉크
+            role = "primary" if _de(colors.get("primary", bed_rgb), bed_rgb) >= BELT_DE_MIN else "dark"
+            x0, y0 = vcx - fsign * HALF_BACK * cw, vcy + STREAK_DY * ch
+            for k in range(STREAK_N):
+                off = (k - (STREAK_N - 1) / 2) * gap
+                out.append(StackPiece(kind="streak", at=(x0 + nx * off, y0 + ny * off),
+                                      ang=ang, width=t, cut=0.30, role=role, z=4.5,
+                                      side=fsign))
         elif kind == "edge":
             shapes = EDGE_SHAPES.get(family, ())
             if not shapes:
@@ -344,7 +369,7 @@ def build(pieces: tuple[StackPiece, ...], frame: tuple[float, float, float, floa
     out: list[tuple[float, list[Layer]]] = []
     for p in pieces:
         color = colors.get(p.role, colors["bed"])
-        if p.kind in ("belt", "pin", "arch"):
+        if p.kind in ("belt", "pin", "arch", "streak"):
             ls = (_half_band(frame, p, color, cat) if p.side
                   else _band(frame, p.at, p.ang, p.width, p.cut, p.taper, color, cat, 100.0))
             out.append((p.z, _relabel(ls)))

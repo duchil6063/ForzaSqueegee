@@ -23,7 +23,7 @@ from .families import FAMILIES
 
 # 예산이 모자랄 때 버리는 순서의 기본 (`design.TRIM_ORDER`와 같다). 프리셋은
 # 제 정체가 아닌 것부터 뺀다 — 무늬·꽃은 산포가 정체라 스택을 먼저 내준다.
-_TRIM = ("itasha_echo", "itasha_deco", "itasha_keyline", "itasha_stack", "itasha_stripe")
+_TRIM = ("itasha_echo", "itasha_deco", "itasha_stack", "itasha_stripe")
 
 
 @dataclass(frozen=True)
@@ -56,8 +56,7 @@ STYLE_PRESETS: dict[str, StylePreset] = {
     "floral": StylePreset("floral", family="graphic_bed",
                           variants=("pastel", "neutral", "shadow"), base="pastel",
                           text_style="script", logo_row=0.8, motif_k=1.3, bed_level=0.5,
-                          trim=("itasha_echo", "itasha_keyline", "itasha_stack",
-                                "itasha_deco", "itasha_stripe")),
+                          trim=("itasha_echo", "itasha_stack", "itasha_deco", "itasha_stripe")),
     # 스플래시·찢김 — 덩어리 베드와 무늬 도형 가장자리
     "splash": StylePreset("splash", family="splash",
                           variants=("shadow", "neutral", "primary"),
@@ -71,8 +70,7 @@ STYLE_PRESETS: dict[str, StylePreset] = {
     "dark": StylePreset("dark", family="dark", variants=("neon", "primary"),
                         base="black", text_style="graffiti", text_scale=1.4,
                         text_priority="high", logo_row=0.8,
-                        trim=("itasha_echo", "itasha_deco", "itasha_keyline",
-                              "itasha_stripe", "itasha_stack")),
+                        trim=("itasha_echo", "itasha_deco", "itasha_stripe", "itasha_stack")),
 }
 
 

@@ -26,6 +26,7 @@ from .vocabulary import MOTIF_FAMILIES, MOTIF_SETS, edge_shapes, motif_shapes
 from .scatter import DECO_FRONT_N, DECO_FRONT_SIZE
 from .bands import ROCKER_BASE_MIN
 from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
+from .place import surface_exposure
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
     drawable, ink_outside, layers_on, manual_box, person_pose, person_scale, person_tilt,
@@ -582,6 +583,20 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                          _c=(fcu, fcv)) -> bool:
             return bool(_m.masked_at(_c[0] + _u * cx, _c[1] + _u * cy))
 
+        # **글자가 설 수 있는 자리** = 그려지는 자리 ∧ 눈에 보이는 자리. 껍질이 재는
+        # 노출(`surface_exposure`)이 낮은 띠 — 사이드실 아랫단·벨트 바로 아래 — 는
+        # 마스크 안이라도 게임이 눌러 그려 사람 눈에는 잘린 글자다 (P-A 실측).
+        # 산포·색면은 종전대로 마스크만 본다 (노출은 표시용이라는 규약 그대로).
+        dm_ex = dm0
+        if side0 is not None:
+            _ex = surface_exposure(deco_src, side0, maps, media=media)
+            if _ex is not None and _ex.shape == dm0.mask.shape:
+                dm_ex = replace(dm0, mask=dm0.mask & (_ex >= TEXT_EXPOSURE_MIN))
+
+        def _exposed_at(cx: float, cy: float, _m=dm_ex, _u=u,
+                        _c=(fcu, fcv)) -> bool:
+            return bool(_m.masked_at(_c[0] + _u * cx, _c[1] + _u * cy))
+
         frame_box = (-CANVAS_UNITS / 2, -band / u / 2,
                      CANVAS_UNITS / 2, band / u / 2)
         person_box = ((pbox[0] - fcu) / u, (pbox[1] - fcv) / u,
@@ -611,8 +626,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             root_plan, root_lk, intent, cat, car_rgb, frame_box=frame_box,
             person_box=person_box, L=L, t=t, frame_center=(fcu, fcv), u=u,
             rear_sign=(r0.rear_dir if r0 is not None else 1.0),
-            drawable_at=_drawable_at, motif=motif, halo=ocol, family=family,
-            phase=_face_phase(deco_src), text=side_text, cap=side_cap,
+            drawable_at=_drawable_at, exposed_at=_exposed_at, motif=motif, halo=ocol,
+            family=family, phase=_face_phase(deco_src), text=side_text, cap=side_cap,
             n_person=side_person, style=pre)
         notes += design.notes
         # ---- **차 한 대의 지도** — 옆면의 큰 색면이 이음새를 건너간다 ----
@@ -680,7 +695,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 글리프 실물이 차체 밴드 밖으로 나가면 들인다 (필드 격자의 포즈 상자는
         # 글리프 잉크와 어긋난다 — 미아타 사인 글자의 15%가 벨트 위였다)
         if design.text is not None and deco_place is not None:
-            design.text = _side_text_guard(design.text, design.fld, cat, dm0, u,
+            design.text = _side_text_guard(design.text, design.fld, cat, dm_ex, u,
                                            (fcu, fcv), notes)
         if design.text is not None and deco_place is not None:
             sets = {deco_src: design.text}
@@ -1517,6 +1532,11 @@ ROW_RESERVE = 0.5
 # 옆면 글자 글리프가 차체 밴드 밖으로 나가도 되는 몫 — 사실상 0 (사용자 지시
 # 2026-09-03). 1%는 마스크 계단이다.
 TEXT_OUT_MAX = 0.01
+
+
+# 글자가 서려면 이만큼은 **눈에 보여야** 한다 (`place.surface_exposure`, 0~1). 옆면
+# 실측(줄리아·실비아): 차체 밴드 한가운데 .8~.9, 사이드실 아랫단·벨트 바로 아래 .2~.5.
+TEXT_EXPOSURE_MIN = 0.5
 
 
 def _side_number(design, spec: TextSpec, cat: Catalog, out_dir: Path, plan: LayerPlan,

@@ -61,7 +61,6 @@ ROLE_POLICY: dict[str, str] = {
     "text": AVOID,
     "text_sub": AVOID,
     "face": AVOID,
-    "itasha_keyline": AVOID,
     # 끊는다 — 이어 봐야 파편이 되는 잔 것
     "itasha_deco": TERMINATE,
     "itasha_echo": TERMINATE,

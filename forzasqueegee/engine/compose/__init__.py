@@ -193,7 +193,7 @@ from .critic import Critique, critique, heatmaps
 from .graph import (
     CompositionGraph, DEFAULT_GRAMMAR, Node, RELATIONS, ROLES, Rel, derive,
     relation_score)
-from .bed import keyline_layers, slab_axis
+from .bed import slab_axis
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
 from .presets import (

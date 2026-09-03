@@ -59,9 +59,15 @@ NUMBER_H = 0.46
 OCCLUDE_MAX = 0.02
 
 
-# 인물 뒤 워드마크도 같다 — 자리는 남겨 두되(글자가 인물보다 커서 양끝이 읽히는
-# 도안이 있다) 덮이는 몫은 같은 자로 잰다.
-OCCLUDE_MAX_BEHIND = 0.02
+# 인물 뒤 워드마크가 시험하는 세로 자리 — 시각 중심, 그 아래 몸통 두 단, 조금 위 (인물 높이 몫)
+BEHIND_DY = (0.0, 0.22, 0.38, -0.18)
+
+
+# 인물 뒤 워드마크는 **살짝 가려져도 된다** — 자리가 모자랄 때 사람은 글자를 휠 밖으로
+# 빼거나 오그리는 대신 인물 뒤에 깔고 양끝을 읽는다 (사용자 지시 2026-09-03, RIN
+# SHIBUYA 문법). 점수는 가린 몫만큼 깎여(`textscore`) 빈 자리가 같은 크기로 있으면
+# 그쪽이 이긴다 — 가림은 자리가 없을 때의 물러남이지 기본이 아니다.
+OCCLUDE_MAX_BEHIND = 0.60
 
 
 def occlude_max(role: str) -> float:
@@ -141,7 +147,9 @@ def pose_fit(fld: CompositionField, p: TextPose, avoid: np.ndarray | None = None
     prot = fld.protected > 0.5
     if avoid is not None:
         prot = prot | avoid
-    return (float((fld.drawable[m] > 0.5).sum()) / want,
+    # 그려지는 자리는 **보이는 자리**까지다 (`CompositionField.exposed`) — 마스크 안이라도
+    # 면이 눌린 띠에 선 글자는 사람 눈에 잘린 글자다
+    return (float(((fld.drawable[m] > 0.5) & (fld.exposed[m] > 0.5)).sum()) / want,
             float((fld.char[m] > 0.5).mean()),
             float(prot[m].mean()))
 
@@ -304,12 +312,20 @@ def behind_pose(fld: CompositionField, text: str, aspect: float, hratio: float
         return None
     # 자리 가운데에 두되 흐름 쪽으로 조금 — 인물이 덮는 몫이 한쪽으로 몰리지 않게
     cx = px + ax[0] * (fwd - back) / 2
-    cy = py + ax[1] * (fwd - back) / 2 - 0.04 * ch
-    cy = max(fld.frame_box[1] + 0.5 * bh, min(fld.frame_box[3] - 0.5 * bh, cy))
+    cy0 = py + ax[1] * (fwd - back) / 2 - 0.04 * ch
     flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
-    p = TextPose(role="behind", text=text, x=cx, y=cy, rot=ang, height=h, aspect=aspect,
-                 hratio=hratio)
-    return _settle(fld, p, ax, flow_sign, 0.14 * band)
+    # 얼굴 높이가 안 되면 **몸통 높이로 내려** 본다 — 사람은 자리가 모자라면 이름을
+    # 인물 뒤에 깔고 몸통이 가리게 둔다, 휠 쪽으로 빼지 않는다 (사용자 지시 2026-09-03).
+    # 얼굴(보호 구역)은 여전히 못 덮는다 (`_ok`).
+    for dy in BEHIND_DY:
+        cy = cy0 + dy * ch
+        cy = max(fld.frame_box[1] + 0.5 * bh, min(fld.frame_box[3] - 0.5 * bh, cy))
+        p = TextPose(role="behind", text=text, x=cx, y=cy, rot=ang, height=h, aspect=aspect,
+                     hratio=hratio)
+        q = _settle(fld, p, ax, flow_sign, 0.14 * band)
+        if q is not None:
+            return q
+    return None
 
 
 def rocker_pose(fld: CompositionField, text: str, aspect: float, hratio: float
@@ -429,14 +445,19 @@ def layout_sets(fld: CompositionField, main: str, sub: str | None,
         p = behind_pose(fld, main, am, hm)
         if p is not None:
             mains.append(p)
-    if "rocker" in roles and "\n" not in main:
-        p = rocker_pose(fld, main, am, hm)
-        if p is not None:
-            mains.append(p)
-    if "signature" in roles:
-        p = signature_pose(fld, main, am, hm)
-        if p is not None:
-            mains.append(p)
+    # 로커 글자·사인은 **큰 자리가 없을 때의 물러남**이다 — 같이 겨루게 두면 점수가
+    # 자리 좋은 작은 글자를 고르고, 사람 눈에는 이름이 없는 판이다 (P-A 실측: 이긴
+    # 글자 51벌 중 28벌이 로커·사인이었고 "글씨가 안 보인다"가 표의 이유였다).
+    # 사람 판의 이름은 큰 워드마크 하나이고 작은 글자는 스폰서 문구다.
+    if not mains:
+        if "rocker" in roles and "\n" not in main:
+            p = rocker_pose(fld, main, am, hm)
+            if p is not None:
+                mains.append(p)
+        if "signature" in roles:
+            p = signature_pose(fld, main, am, hm)
+            if p is not None:
+                mains.append(p)
     for m in mains:
         group = [m]
         if sub:
