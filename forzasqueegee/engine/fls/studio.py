@@ -819,8 +819,11 @@ def _auto_place_one(st: Studio, d: dict) -> None:
     cat = Catalog(default_catalog_path())
     lk = compose.look(plan, cat)
     rigs = compose.side_rigs(maps, [], media=st.state.get("media"))
+    # 윗면에 올린 **보조** 그림은 후드 자리다 (사람 판의 후드 둘째 캐릭터)
     mp = compose.auto_place(d["surface"], Path(d["plan"]), lk, maps, rigs,
-                            mirror=bool(d.get("mirror")), notes=st.notes)
+                            mirror=bool(d.get("mirror")), notes=st.notes,
+                            hood=d.get("role") == "support",
+                            media=st.state.get("media"))
     if mp is None:
         st.notes.append(msg("{surface}: 자동 자리를 못 잡았다 — 프리셋으로 둔다",
                             surface=d["surface"]))

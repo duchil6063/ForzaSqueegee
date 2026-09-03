@@ -201,7 +201,7 @@ def _head_box(rgb: np.ndarray, alpha: np.ndarray, lk: Look
     dist = cv2.distanceTransform(skin.astype(np.uint8), cv2.DIST_L2, 5)
     rmax = float(dist.max())
     if rmax < 3.0:
-        return None, False, 0.0
+        return None, False, 0.0, None
     # 극대 후보 — 반지름이 최대의 3할 이상인 자리들 (얼굴은 허벅지·가슴
     # 원판보다 작을 수 있다 — 수영복 그림)
     k = max(3, int(rmax) | 1)

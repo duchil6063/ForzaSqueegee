@@ -53,6 +53,68 @@ from .snap import region_table
 # 구간(예산 포화 장에서 못 그린 영역이 늘어난다), 아래로는 강제 병합이 뛰어
 # 무늬가 색 진창이 된다. 선화는 line_mask 별도 경로라 무관.
 _MAX_REGIONS = int(os.environ.get("FS_MAX_REGIONS", 650))
+# **영역 색 상한** (사람 리버리 계획 4단계 · 색). 다 그린 판의 색은 접기 뒤에도
+# 면 색이 태반이다 (표준 11장: 채움 291색 ↔ 획 131색) — 면 색은 영역마다 제
+# 평균이라 얼굴 살색과 손 살색이 1/255씩 다르다. 사람 판은 같은 역할에 같은
+# 색을 다시 쓴다(옆면 중앙 94색·p90 242). 다 그린 뒤 면 색을 옮기면 그대로
+# 재현 오차라 기각됐으므로(`ramps` 머리말) **여기서**, 목표(cel.png)가 함께
+# 움직이는 자리에서 접는다 — 자는 원화 기준(`rmse_src`)이다.
+#
+# 128 채택 (표준 11장, 획 상한 128과 함께): 판 색 420 → 188(−55%, 채움 291 →
+# 101) · 장수 −0.8% · `rmse_src` +0.8%(6/11 판이 0.1 나빠짐) · 보이는 오차
+# 중앙 .162 → .139(02만 +30%, 꽃 톤 — 크롭으로는 안 갈린다) · 커버리지·선
+# 근접 불변. 차 자의 색 벌점 .45 → .03, 재료 무리 .722 → .729(= 사람 판).
+# 0이면 안 접는다. 반경은 어느 영역색도 그 너머로는 안 옮긴다는 상한이다.
+_REGION_K = int(os.environ.get("FS_CEL_REGION_K", 128))
+_REGION_DE = float(os.environ.get("FS_CEL_REGION_DE", 12.0))
+
+
+def _adjacent_pairs(labels: np.ndarray, sel: np.ndarray) -> np.ndarray:
+    """맞닿은 영역 id 쌍 (a < b), 4-이웃. 배경(-1)은 뺀다."""
+    out = []
+    for a, b in ((labels[:, :-1], labels[:, 1:]), (labels[:-1, :], labels[1:, :])):
+        m = (a != b) & (a >= 0) & (b >= 0)
+        if m.any():
+            lo = np.minimum(a[m], b[m]).astype(np.int64)
+            hi = np.maximum(a[m], b[m]).astype(np.int64)
+            out.append(np.unique(lo * (int(labels.max()) + 1) + hi))
+    if not out:
+        return np.zeros((0, 2), np.int64)
+    key = np.unique(np.concatenate(out))
+    n = int(labels.max()) + 1
+    return np.stack([key // n, key % n], axis=1)
+
+
+def _fold_region_colors(regions: list, labels: np.ndarray, sel: np.ndarray,
+                        k_max: int, move: float) -> tuple[list, dict]:
+    """영역 대표색을 상한 `k_max` 안으로 접는다 (`ramps.fold_palette`).
+
+    **맞닿은 두 영역이 눈에 보이게 갈려 있으면(ΔE ≥ JND) 못 묶는다** — 병합이
+    λ를 치르고 남긴 경계다. 그래서 접히는 것은 떨어져 있는 같은 역할의 색
+    (얼굴 살색 ↔ 손 살색)과 맞닿았어도 안 보이는 차이뿐이다. 넓이 가중이라
+    큰 면이 대표를 잡는다.
+    """
+    from dataclasses import replace
+
+    from .marks import _MARK_DE
+    from .ramps import fold_palette
+
+    pos = {r.rid: i for i, r in enumerate(regions)}
+    cols = [tuple(int(v) for v in r.color) for r in regions]
+    w = np.array([float(r.area) for r in regions])
+    arr = np.asarray(cols, np.uint8).reshape(-1, 1, 3)
+    lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+    pairs = _adjacent_pairs(labels, sel)
+    bad = []
+    for a, b in pairs.tolist():
+        i, j = pos.get(int(a)), pos.get(int(b))
+        if i is None or j is None:
+            continue
+        if float(np.linalg.norm(lab[i] - lab[j])) >= _MARK_DE:
+            bad.append((i, j))
+    table, st = fold_palette(cols, w, bad, k_max=k_max, move=move)
+    out = [replace(r, color=table.get(c, c)) for r, c in zip(regions, cols)]
+    return out, st
 
 
 def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
@@ -158,6 +220,15 @@ def decompose(rgba: np.ndarray, *, max_regions: int = _MAX_REGIONS,
 
     # 5) 영역 표 — 대표색은 평활 이미지의 영역 평균 (팔레트 중심보다 국소 충실)
     regions = region_table(labels, sm, sel, w, h)
+    if _REGION_K > 0 and regions:
+        regions, fst = _fold_region_colors(regions, labels, sel, _REGION_K,
+                                           _REGION_DE)
+        trace["region_fold"] = fst
+        log(msg("  영역 색 접기 {a}색 → {b}색 (상한 {k}·반경 ΔE {mv:g}) · "
+                "평균 ΔE00 {m:.2f} · 최대 {x:.2f} · 경계 잠금 {e}쌍",
+                a=fst["before"], b=fst["after"], k=_REGION_K, mv=_REGION_DE,
+                m=fst.get("mean_de00", 0.0), x=fst.get("max_de00", 0.0),
+                e=fst.get("locked", 0)))
 
     # **삼킨 선 (X7 검수).** 어두운 잔선·끈이 선 지도에서 빠지면 세 손이
     # 차례로 지운다 — 귀속 배리어(CLOSE)가 밝은 면 색으로 덧칠하고, 평활이

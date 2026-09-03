@@ -11,9 +11,10 @@ from ..catalog import Catalog, default_catalog_path
 from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
 from .look import Look, person_ink, rot_ink_box
+from ...i18n import msg
 from .place import (
-    BODY_FILL, ManualPlace, Place, dodge_parts, fit_on, person_pose, person_scale,
-    place_in_rect)
+    BODY_FILL, ROLE_EXTRA, ManualPlace, Place, dodge_parts, fit_on, person_pose,
+    person_scale, place_in_rect)
 
 
 def _side_place(rig: "SideRig", lk: Look, group_unit: float, mirror: bool,
@@ -37,7 +38,8 @@ def auto_place(name: str, plan_path: Path, lk: Look,
                maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"], *,
                group_unit: float = DEFAULT_GROUP_UNIT, mirror: bool = False,
                fill: float = 1.0, cat: Catalog | None = None,
-               notes: list[str] | None = None) -> ManualPlace | None:
+               notes: list[str] | None = None, hood: bool = False,
+               media: str | None = None) -> ManualPlace | None:
     """이 면에 이 도안을 **자동 경로가 앉힐 자리** — 편집기의 첫 자리다.
 
     옆면은 자동 구성과 **똑같은 수**를 쓴다 (눕히기 각 + 차체 밴드 예산 +
@@ -49,6 +51,11 @@ def auto_place(name: str, plan_path: Path, lk: Look,
     어깨·팔) — 넘긴 몫은 그 자리에서 잘리고 **얼굴은 벨트 아래**에 잡는다
     (`person_scale`). 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 가르고
     위쪽 반을 유리 면에 따로 올린다.
+
+    `hood`는 **윗면의 보조 그림**이다 — 사람 판의 "후드 둘째 캐릭터"(25판 중
+    22)처럼 후드 덩어리에 기울여 앉힌다(`build._hood_place`, 주역 후드 인물과
+    같은 규약). 후드가 좁거나 지도가 불확실하면 종전대로 윗면 전체에 내접한다.
+    `media`는 후드 구간의 씨앗(`rigs._hood_seed`)을 찾는 설치 차다.
 
     `fill`은 **투영 몫**이다 (1.0 = 종전) — 그림을 면의 그만큼 크기로 줄여
     앉힌다. 장수를 안 깎고 시각 무게만 낮추는 자리라 조연·받침 면이 쓴다
@@ -70,6 +77,20 @@ def auto_place(name: str, plan_path: Path, lk: Look,
         smap = maps.get(name)
         if smap is None:
             return None
+        ts = smap.drawn or smap            # 실제로 그리는 지도 — 유리를 뺀 윗면
+        if hood and name == ROLE_EXTRA and not ts.uncertain:
+            from .build import _hood_place
+            from .rigs import _hood_seed
+
+            got = _hood_place(ts, lk, group_unit, _hood_seed(media),
+                              glass=smap.drawn is not None)
+            if got is not None:
+                hx, hy, hs, hrot, hwhy = got
+                if notes is not None:
+                    notes.append(msg("{surface}: 보조 그림을 후드에 앉힌다 ({why})",
+                                     surface=name, why=hwhy))
+                return ManualPlace(plan=Path(plan_path), surface=name, x=hx, y=hy,
+                                   scale=hs, rot=hrot, mirror=mirror)
         pl = fit_on(smap, lk, anchor="bottom" if lk.kind == "tall" else "center",
                     fill=BODY_FILL * fill, bias_x=0.5, group_unit=group_unit,
                     mirror=mirror)

@@ -32,6 +32,16 @@ _ALIGN_ROUNDS = int(os.environ.get("FS_ALIGN_ROUNDS", 2))
 # 최적, 종전 기본) · `seed`: 뼈대 중앙값 그대로(보정 없음). 근거는 함수 문서.
 _INK_COLOR = os.environ.get("FS_INK_COLOR", "core").strip().lower()
 _INK_CORE_Q = float(os.environ.get("FS_INK_CORE_Q", 50.0))
+# **획 색 상한** (사람 리버리 계획 4단계 · 색). 획 색은 그룹마다 제 발자국에서
+# 잰 심 색이라 그룹 수만큼 색이 난다(표준 11장 577색). 맨 끝 접기(`celart.ramps`,
+# 반경 4.5)가 그것을 131색으로 묶지만 큰 판(02·11)은 경계 잠금에 막혀 300색이
+# 남는다. 여기서 — 채움·미세 조정·수리가 그 색을 보기 **전에** — 상한 안으로
+# 접는다. 잠금은 맨 끝 접기와 같은 자(맞닿은 획의 ΔE ≥ `ramps.EDGE_DE`)다.
+# 128 채택: 획 색 131 → 98(맨 끝 접기 뒤 94) · 장수·`rmse_src`·보이는 오차 불변
+# (11장 ±0.3%). 대가는 거의 영역 상한(`celart.decompose._REGION_K`) 몫이다.
+# 0이면 안 접는다.
+_INK_K = int(os.environ.get("FS_INK_K", 128))
+_INK_K_DE = float(os.environ.get("FS_INK_K_DE", 12.0))
 
 
 def _fit_lines(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
@@ -132,8 +142,10 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
         if lay.label == "ink" and not lay.mask and lay.stroke >= 0:
             groups.setdefault(lay.stroke, []).append(lay)
     n = 0
+    picked: list[tuple[list, tuple, int, tuple]] = []   # (그룹, 색, px, 상자)
     for lays in groups.values():
         px: list[np.ndarray] = []
+        box = [w, h, 0, 0]
         for lay in lays:
             got = _ink_of(cat, lay, upp, w, h)
             if got is None:
@@ -144,6 +156,8 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
                 continue
             px.append(src[y0:y0 + m.shape[0], x0:x0 + m.shape[1]][mb]
                       .reshape(-1, 3))
+            box = [min(box[0], x0), min(box[1], y0),
+                   max(box[2], x0 + m.shape[1]), max(box[3], y0 + m.shape[0])]
         if not px:
             continue
         col = np.concatenate(px, axis=0).astype(np.float64)
@@ -158,7 +172,18 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
             keep = dist <= np.percentile(dist, _INK_CORE_Q)
             col = col[keep] if keep.any() else col
         c = tuple(int(round(v)) for v in col.mean(axis=0))
-        if max(abs(a - b) for a, b in zip(c, lays[0].color)) <= 2:
+        picked.append((lays, c, len(col), tuple(box)))
+    if _INK_K > 0 and len(picked) > 1:
+        table, fst = _fold_ink(picked, _INK_K, _INK_K_DE)
+        picked = [(lays, table.get(c, c), k, b) for lays, c, k, b in picked]
+        log(msg("  획 색 접기 {a}색 → {b}색 (상한 {k}·반경 ΔE {mv:g}) · "
+                "평균 ΔE00 {m:.2f} · 최대 {x:.2f} · 경계 잠금 {e}쌍",
+                a=fst["before"], b=fst["after"], k=_INK_K, mv=_INK_K_DE,
+                m=fst.get("mean_de00", 0.0), x=fst.get("max_de00", 0.0),
+                e=fst.get("locked", 0)))
+    tol = 0 if _INK_K > 0 else 2           # 접은 색은 표 그대로 — ±2 잔색이 색 수로 남는다
+    for lays, c, _k, _b in picked:
+        if max(abs(a - b) for a, b in zip(c, lays[0].color)) <= tol:
             continue                       # 이미 그 색이다 — 손 안 댄다
         for lay in lays:
             lay.color = c
@@ -166,6 +191,33 @@ def recolor_strokes(plan: LayerPlan, cel: CelArt, cat: Catalog, upp: float,
     if n:
         log(msg("  획 색 보정 {n}그룹 — 발자국 아래 원화 평균색", n=n))
     return n
+
+
+def _fold_ink(picked: list, k_max: int, move: float) -> tuple[dict, dict]:
+    """획 그룹 색을 상한 안으로 접는다 (`ramps.fold_palette`).
+
+    잠금은 맨 끝 접기와 같다 — 발자국 상자가 맞닿고(여유 1px) 원화에서 보이는
+    경계(ΔE ≥ `ramps.EDGE_DE`)를 이루는 두 획은 못 묶는다. 무게는 발자국 px다.
+    """
+    from ..celart.ramps import EDGE_DE, fold_palette, _lab
+
+    cols = [c for _l, c, _k, _b in picked]
+    wts = np.array([float(k) for _l, _c, k, _b in picked])
+    boxes = np.array([b for _l, _c, _k, b in picked], np.float64)
+    lab = _lab(np.array(cols, np.float64))
+    order = np.argsort(boxes[:, 0], kind="stable")
+    bad = []
+    for oi in range(len(order)):
+        i = int(order[oi])
+        for oj in range(oi + 1, len(order)):
+            j = int(order[oj])
+            if boxes[j, 0] > boxes[i, 2] + 1.0:
+                break
+            if boxes[j, 1] > boxes[i, 3] + 1.0 or boxes[i, 1] > boxes[j, 3] + 1.0:
+                continue
+            if cols[i] != cols[j] and float(np.linalg.norm(lab[i] - lab[j])) >= EDGE_DE:
+                bad.append((i, j))
+    return fold_palette(cols, wts, bad, k_max=k_max, move=move)
 
 
 def align_to_regions(layers: list, cat: Catalog, upp: float, w: int, h: int,

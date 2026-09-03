@@ -301,7 +301,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if extra_plans:
             ep = Path(extra_plans[0])
             ek = look(LayerPlan.load(ep), cat)
-            mp = auto_place(ROLE_EXTRA, ep, ek, maps, rigs, group_unit=group_unit)
+            mp = auto_place(ROLE_EXTRA, ep, ek, maps, rigs, group_unit=group_unit,
+                            hood=True, media=pinned, notes=notes)
             if mp is not None:
                 hand.append(mp)
             else:
