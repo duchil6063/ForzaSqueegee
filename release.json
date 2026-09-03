@@ -30,12 +30,12 @@
   },
   "fls": {
     "what": "ForzaLiveryStudio 수정판 — [Itasha] 메뉴가 든 우리 빌드 (AGPL-3.0)",
-    "file": "ForzaLiveryStudio-itasha-5e890e1766ee-p10-win64.zip",
-    "size": 31053114,
-    "sha256": "8b26d577a2bc037eb726721244a2adab0470c894631e9211a7096c81bd3c66bf",
-    "source": "ForzaLiveryStudio-itasha-5e890e1766ee-p10-source.zip",
-    "source_size": 20030465,
-    "source_sha256": "838828b800b5c83000656af6f27abab94e328553feeb9801767508a4bc6da118",
+    "file": "ForzaLiveryStudio-itasha-5e890e1766ee-p12-win64.zip",
+    "size": 31054163,
+    "sha256": "abe52cff524830337c13f98ae63953b7d82253e7d2b86a3d5b7496736dea44a0",
+    "source": "ForzaLiveryStudio-itasha-5e890e1766ee-p12-source.zip",
+    "source_size": 20033888,
+    "source_sha256": "0c0089ce4eab462955f39131da5a85e1603dcd1dca6f38df4623eed5de42fdf8",
     "upstream": "https://github.com/Arstz/ForzaLiveryStudio",
     "upstream_tag": "1.2.1",
     "pin": "5e890e1766eedd884cfa0d1234e135431bb7cdde"
