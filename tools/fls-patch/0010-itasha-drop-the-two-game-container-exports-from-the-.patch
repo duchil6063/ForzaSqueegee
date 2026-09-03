@@ -1,0 +1,109 @@
+From 4dbf19eaedad6555c1ebc7282a21bb9b49a60a78 Mon Sep 17 00:00:00 2001
+From: duchil6063 <gustn9634@gmail.com>
+Date: Thu, 3 Sep 2026 20:28:05 +0900
+Subject: [PATCH 10/10] itasha: drop the two game-container exports from the
+ menu - File > Export writes them (with the preview thumbnail); Export Group
+ As keeps KFPS JSON and plan.json
+
+---
+ src/gui/app/main_window_itasha.cpp | 36 +++++++++---------------------
+ src/gui/i18n.cpp                   | 15 ++++---------
+ 2 files changed, 14 insertions(+), 37 deletions(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 274717d..2186249 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -11,9 +11,12 @@
+ // Two families of entries, and which one is live depends on the open project:
+ //
+ //   livery  place a design, auto-place, join across seams, decoration, motif,
+-//           mirror, base paint, export the game container
+-//   group   export this vinyl group as a game container, as KFPS JSON, or as
+-//           a ForzaSqueegee plan.json
++//           mirror, base paint
++//   group   export this vinyl group as KFPS JSON or as a ForzaSqueegee plan.json
++//
++// Game containers (Livery_<name>/C_livery, LayerGroup_<name>/C_group) are the
++// editor's own [File > Export] - it renders the thumbnail the game shows, so
++// the Itasha menu does not repeat them.
+ //
+ // The engine is not required to run the editor. Its command is read from
+ // QSettings ("itasha/command", a string list, plus "itasha/cwd"); when it is
+@@ -183,8 +186,8 @@ const PanelAssignment kPanels[] = {
+ // a name is typed once and tweaked many times.
+ constexpr auto kItashaTextKey = "itasha/text";
+ 
+-// Exporting a vinyl group: the same design, in the three formats the tools
+-// share.
++// Exporting a vinyl group: the same design, in the two formats the game
++// container is not (that one is [File > Export]).
+ struct GroupFormat {
+     const char *text;
+     const char *format;
+@@ -192,9 +195,6 @@ struct GroupFormat {
+ };
+ 
+ const GroupFormat kGroupFormats[] = {
+-    {"&Game Container (C_group)...", "fls",
+-     "LayerGroup_<name>/C_group + header - drop it in the game's save container "
+-     "and it shows up in the grid"},
+     {"&KFPS JSON...", "kfps",
+      "The typecode JSON the KFPS editor and its tools read"},
+     {"ForzaSqueegee &plan.json...", "plan",
+@@ -341,26 +341,10 @@ void MainWindow::setupItashaMenu() {
+                                   "their mirrored counterparts"));
+ 
+     itashaMenu_->addSeparator();
+-    QAction *exportLivery = itashaMenu_->addAction(
+-        i18n::t("&Export to Game Container..."));
+-    exportLivery->setStatusTip(i18n::t(
+-        "Write the Livery_<name>/C_livery + header the game reads"));
+-    connect(exportLivery, &QAction::triggered, this, [this]() {
+-        const QString folder = QFileDialog::getExistingDirectory(
+-            this, i18n::t("Export Livery Container"),
+-            importDialogStartDirectory(this, QStringLiteral("itashaExport")));
+-        if (folder.isEmpty()) {
+-            return;
+-        }
+-        rememberImportDirectory(folder, QStringLiteral("itashaExport"));
+-        runItashaAction(QStringLiteral("export"),
+-                        {QStringLiteral("--out"), folder});
+-    });
+-    itashaLiveryActions_.push_back(exportLivery);
+-
+     QMenu *group = itashaMenu_->addMenu(i18n::t("Export &Group As"));
+     group->setStatusTip(i18n::t(
+-        "Write this vinyl group in one of the three formats the tools share"));
++        "Write this vinyl group as KFPS JSON or a plan.json - the game container "
++        "is File > Export"));
+     for (const GroupFormat &fmt : kGroupFormats) {
+         QAction *entry = group->addAction(i18n::t(fmt.text));
+         entry->setStatusTip(i18n::t(fmt.tip));
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index d8fa9be..060fee2 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -712,18 +712,11 @@ const Entry kTable[] = {
+     {"&Pick Colour...", "직접 색 고르기(&P)..."},
+     {"Paint the car a colour you choose", "직접 고른 색으로 차를 칠합니다"},
+     {"Base Paint", "바탕 도색"},
+-    {"&Export to Game Container...", "게임 컨테이너로 내보내기(&E)..."},
+-    {"Write the Livery_<name>/C_livery + header the game reads",
+-     "게임이 읽는 Livery_<이름>/C_livery + header를 씁니다"},
+-    {"Export Livery Container", "리버리 컨테이너 내보내기"},
+     {"Export &Group As", "그룹 내보내기(&G)"},
+-    {"Write this vinyl group in one of the three formats the tools share",
+-     "이 비닐 그룹을 도구들이 함께 쓰는 세 형식 중 하나로 내보냅니다"},
+-    {"&Game Container (C_group)...", "게임 컨테이너(C_group)(&G)..."},
+-    {"LayerGroup_<name>/C_group + header - drop it in the game's save container "
+-     "and it shows up in the grid",
+-     "LayerGroup_<이름>/C_group + header — 게임 저장 컨테이너에 넣으면 "
+-     "그리드에 나타납니다"},
++    {"Write this vinyl group as KFPS JSON or a plan.json - the game container "
++     "is File > Export",
++     "이 비닐 그룹을 KFPS JSON이나 plan.json으로 씁니다 — 게임 컨테이너는 "
++     "[파일 → 내보내기]입니다"},
+     {"&KFPS JSON...", "KFPS JSON(&K)..."},
+     {"The typecode JSON the KFPS editor and its tools read",
+      "KFPS 편집기와 그 도구들이 읽는 타입코드 JSON"},

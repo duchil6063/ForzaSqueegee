@@ -1,8 +1,8 @@
 From 4ab4988b51ba6e4321bd18f939a6f3a9bc3538eb Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Thu, 3 Sep 2026 11:47:12 +0900
-Subject: [PATCH 8/9] itasha: logo vectorisation cap shown in the dialog is 300
- layers (engine LOGO_LAYERS)
+Subject: [PATCH 08/10] itasha: logo vectorisation cap shown in the dialog is
+ 300 layers (engine LOGO_LAYERS)
 
 ---
  src/gui/app/main_window_itasha.cpp | 2 +-

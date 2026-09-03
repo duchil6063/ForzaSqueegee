@@ -254,13 +254,6 @@ def cmd_flsedit(args) -> int:
             said = studio.act_mirror(st, surface, args.group)
         elif args.action == "base-paint":
             said = studio.act_base_paint(st, args.color, args.color is None)
-        elif args.action == "export":
-            # 내보내기는 **지금 프로젝트 그대로**를 쓴다 — 다시 굽지 않는다
-            # (편집기에서 손댄 것이 그 자리에서 컨테이너로 간다).
-            studio.rebuild(st, log=log)
-            print("\n".join(lines))
-            print(studio.act_export(st, args.out))
-            return 0
         elif args.action == "state":
             import json as _json
             from ..engine import compose as _compose

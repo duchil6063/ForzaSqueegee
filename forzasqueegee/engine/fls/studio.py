@@ -1318,36 +1318,21 @@ def _parse_rgb(text: str) -> tuple[int, int, int]:
         raise ValueError(msg("색은 #RRGGBB로 준다 — {text!r}", text=text)) from e
 
 
-def act_export(st: Studio, out_root: str | Path | None) -> str:
-    """게임이 읽는 리버리 컨테이너 한 벌 (`Livery_<이름>/C_livery` + `header`).
-
-    저장 컨테이너 뿌리에 그 폴더를 두면 인게임 리버리 목록에 뜬다. 베이스
-    도색까지 그 파일에 실리므로 자동차 도색 메뉴를 누를 일이 없다."""
-    cfg = find_run_file(st.work, "itasha.json")
-    if not cfg.is_file():
-        raise ValueError(msg("아직 구운 구성이 없다 — 도안을 올리고 한 번 지으세요"))
-    root = Path(out_root) if out_root else st.path.parent
-    label = st.path.with_suffix("").name
-    out, stats = bridge.itasha_folder(cfg, root, name=label)
-    return msg("리버리 컨테이너: {out}  ({layers:,}장 · 차 id {car_id})",
-               out=out, layers=stats["layers"], car_id=stats.get("car_id", 0))
-
-
 # ────────────────────────────── 비닐 그룹 프로젝트 내보내기 ──────────────────────────────
 
 
 def export_group(project_path: str | Path, fmt: str,
                  out: str | Path | None = None) -> tuple[Path, str]:
-    """**비닐 그룹 프로젝트**를 셋 중 하나로 내보낸다 (사용자 요청 2026-08-26).
+    """**비닐 그룹 프로젝트**를 둘 중 하나로 내보낸다 (사용자 요청 2026-08-26).
 
     | 갈래 | 무엇 | 어디에 쓰나 |
     |---|---|---|
-    | `fls` | `LayerGroup_<이름>/C_group` + `header` | 게임 저장 폴더에 두면 인게임 그리드에 뜬다 |
     | `kfps` | KFPS 타입코드 JSON | 내장 KFPS 편집기·KFPS 도구 |
     | `plan` | 우리 도안 `<이름>.plan.json` (+프리뷰) | 이 도구의 모든 명령 |
 
-    `fls`는 편집기 제 [File → Export]와 같은 것을 쓰지만 **자리를 묻지 않는다**
-    (프로젝트 옆이 기본) — 셋을 한 메뉴에서 고르게 하려고 여기 같이 둔다.
+    게임 컨테이너(`LayerGroup_<이름>/C_group`·`Livery_<이름>/C_livery`)는 편집기 제
+    [File → Export]가 쓴다 — 3D 프리뷰로 썸네일까지 찍으니 여기서 되풀이하지 않는다
+    (사용자 결정 2026-09-03).
     """
     p = Path(project_path).resolve()
     doc = project.read(p)
@@ -1358,11 +1343,6 @@ def export_group(project_path: str | Path, fmt: str,
     if not layers:
         raise ValueError(msg("프로젝트에 도형이 없다"))
     root = Path(out) if out else p.parent
-    if fmt == "fls":
-        got = folder.export_folder(root, label, livery_kind=False)
-        wst = folder.write_group(got, layers, name=label, creator="")
-        return got, msg("비닐 그룹 컨테이너: {out}  ({layers:,}장)",
-                        out=got, layers=wst["layers"])
     plan_dir = root if out and Path(root).suffix == "" else root / folder.safe_name(
         label, "group")
     plan_path = bridge._write_plan(layers, plan_dir)
@@ -1370,7 +1350,7 @@ def export_group(project_path: str | Path, fmt: str,
         return plan_path, msg("도안: {path}  ({layers:,}장)",
                               path=plan_path, layers=len(layers))
     if fmt != "kfps":
-        raise ValueError(msg("모르는 갈래: {fmt} (fls · kfps · plan)", fmt=fmt))
+        raise ValueError(msg("모르는 갈래: {fmt} (kfps · plan)", fmt=fmt))
     from ..kfpsjson import export_typecode
 
     data, est = export_typecode(LayerPlan.load(plan_path),

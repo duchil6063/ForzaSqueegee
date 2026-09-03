@@ -324,14 +324,14 @@ def build_parser() -> argparse.ArgumentParser:
                       choices=("load-design", "auto-place", "decoration",
                                "no-decoration", "decorate", "motif", "family", "style",
                                "mirror", "base-paint", "text", "no-text",
-                               "export", "export-group", "rebuild", "state"),
+                               "export-group", "rebuild", "state"),
                       help=msg("load-design(도안 올리기) · auto-place(자동 자리) · "
                                "decoration/no-decoration(꾸밈) · motif(계열) · "
                                "decorate(자동 꾸밈 창 — 프리셋·모티프·도색·글자를 한 번에) · "
                                "style(스타일 프리셋) · family(구성 계열) · mirror(좌우 대칭) · "
                                "base-paint(베이스 도색) · text/no-text(캐릭터 이름 글자) · "
-                               "export(리버리 컨테이너) · export-group(비닐 그룹을 "
-                               "FLS·KFPS·plan 셋 중 하나로) · rebuild · state"))
+                               "export-group(비닐 그룹을 KFPS JSON·plan.json으로 — 게임 "
+                               "컨테이너는 편집기 제 [File → Export]) · rebuild · state"))
     _text_args(p_fx)
     p_fx.add_argument("--project", required=True,
                       help=msg("편집기가 저장한 `.3so` 경로"))
@@ -347,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_fx.add_argument("--design", default=None,
                       help=msg("load-design이 올릴 도안 — *.plan.json · KFPS JSON · "
                                "`.3so`(비닐 그룹) · C_group 아무거나"))
-    p_fx.add_argument("--format", choices=("fls", "kfps", "plan"), default="plan",
+    p_fx.add_argument("--format", choices=("kfps", "plan"), default="plan",
                       help=msg("export-group의 갈래"))
     p_fx.add_argument("--color", default=None, metavar="#RRGGBB",
                       help=msg("base-paint 색 (안 주면 도안에서 고른다)"))
@@ -379,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
                                "`<번호>=<hero|support|logo|text|pinned|auto>` "
                                "(번호는 `state`의 designs 차례, auto면 추정으로 되돌린다)"))
     p_fx.add_argument("-o", "--out", default=None,
-                      help=msg("export·export-group이 쓸 자리"))
+                      help=msg("export-group이 쓸 자리"))
 
     p_ed = sub.add_parser("edit",
                           help=msg("내장 KFPS 편집기를 연다 — 도안을 브라우저 "
