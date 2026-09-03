@@ -400,6 +400,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    motif: str | None = None, family: str | None = None,
                    text: "dict | None" = None,
                    logos: "dict | None" = None,
+                   faces: "dict | None" = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -440,6 +441,11 @@ def compose_config(main_plan: Path, out: Path, *,
     # 폴더로 새고, 폴더 위에 파일을 쓰려다 'Permission denied'로 죽는다.
     as_dir = out.is_dir() or not out.suffix
 
+    # 첫 판의 말은 **모아 둔다** — 둘째 판이 서면 버리고(같은 말을 두 번 하지 않게),
+    # 변주가 없어 둘째 판이 안 서면 그대로 내보낸다 (면 배정이 크롭을 다 거둔 판은
+    # 첫 판이 곧 결과인데, 종전 코드는 그 판의 알림을 통째로 삼켰다).
+    first: list[str] = []
+
     def _build(hint):
         return compose.build(main_plan, out if as_dir else out.parent,
                              car=car, media=media,
@@ -447,12 +453,14 @@ def compose_config(main_plan: Path, out: Path, *,
                              mirror=mirror, paint=paint, base_rgb=base_rgb,
                              flip=flip, manual=manual,
                              deco=deco, whole=whole, motif=motif,
-                             family=family, text=text, logos=logos, mass_hint=hint,
-                             log=(lambda *_a, **_k: None) if hint is None
-                             and two_pass else log)
+                             family=family, text=text, logos=logos, faces=faces,
+                             mass_hint=hint,
+                             log=(lambda *a, **_k: first.append(" ".join(str(x) for x in a)))
+                             if hint is None and two_pass else log)
 
     rec = _build(None)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
+    second = False
     if two_pass and rec.config.get("whole"):
         from ...engine.catalog import Catalog, default_catalog_path
         from ...engine.compose import whole as _whole
@@ -467,6 +475,10 @@ def compose_config(main_plan: Path, out: Path, *,
             rec = _build(hint)
             cfg_path = next(p for p in rec.written
                             if p.name.endswith("itasha.json"))
+            second = True
+    if two_pass and not second:
+        for line in first:
+            log(line)
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).
     if as_dir:

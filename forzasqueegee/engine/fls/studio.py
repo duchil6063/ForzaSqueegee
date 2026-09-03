@@ -165,7 +165,11 @@ def _blank_state() -> dict:
             "logos": {"watermark": True, "images": [], "placement": "auto"},
             # 한쪽 옆면(도어 유리)에만 있으면 반대편에 세운다 — 그림은 거울, 로고·
             # 글자는 읽는 방향 그대로 (`_symmetrize`).
-            "symmetry": True}
+            "symmetry": True,
+            # 면 배정 — 유리·리어·프론트·윈드실드가 맡는 일 (`compose.FaceSpec`).
+            # `auto`는 로고·글자가 있으면 그것, 없으면 크롭으로 물러난다.
+            "faces": {"window": "auto", "rear_window": "auto", "rear": "auto",
+                      "front": "auto", "windshield": "auto"}}
 
 
 def state_path(project_path: str | Path) -> Path:
@@ -692,6 +696,7 @@ def rebuild(st: Studio, *, log=None) -> dict:
         family=st.state.get("family"),
         text=st.state.get("text") or None,
         logos=st.state.get("logos") or None,
+        faces=st.state.get("faces") or None,
         mirror=False, preview=False, log=log)
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)
@@ -951,16 +956,17 @@ def act_decorate(st: Studio, *, composition: str | None = None,
                  motif: str | None = None, paint: str | None = None,
                  auto_paint: bool = False, text: dict | None = None,
                  drop_text: bool = False, roles: dict[int, str] | None = None,
-                 logos: dict | None = None, symmetry: bool | None = None) -> str:
-    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자·역할표·로고·좌우를 한 번에 받아 켠다.
+                 logos: dict | None = None, symmetry: bool | None = None,
+                 faces: list | dict | None = None) -> str:
+    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자·역할표·로고·좌우·면 배정을 한 번에 받아 켠다.
 
     편집기의 [Auto Decoration...] 대화상자가 부른다 (`flsedit decorate`). 준 것만
     바꾼다 — `composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
     `auto_paint`면 도안에서 고르고, `text`는 스펙 열쇠들(`main`이 비면 끈다),
     `drop_text`면 글자를 뺀다. `roles`는 실린 그림 표에서 사람이 고른 역할
     (`act_roles`), `logos`는 워터마크·로고 이미지·자리(`act_logos`), `symmetry`는
-    "한쪽에만 있으면 반대편에"(`act_symmetry`). 마지막에 꾸밈을 켠다 — 이 창의
-    뜻이 그것이다."""
+    "한쪽에만 있으면 반대편에"(`act_symmetry`), `faces`는 면 배정(`act_faces`).
+    마지막에 꾸밈을 켠다 — 이 창의 뜻이 그것이다."""
     from .. import compose
 
     said: list[str] = []
@@ -968,6 +974,8 @@ def act_decorate(st: Studio, *, composition: str | None = None,
         said.append(act_roles(st, roles))
     if logos is not None:
         said.append(act_logos(st, **logos))
+    if faces is not None:
+        said.append(act_faces(st, faces))
     if symmetry is not None:
         st.state["symmetry"] = bool(symmetry)
     said.append(act_symmetry(st, bool(st.state.get("symmetry", True))))
@@ -1025,6 +1033,28 @@ def act_logos(st: Studio, *, watermark: bool | None = None,
     return msg("로고: 워터마크 {wm} · 이미지 {n}장 · 자리 {place}",
                wm=msg("켬") if spec.watermark else msg("끔"), n=len(spec.images),
                place=spec.placement)
+
+
+def act_faces(st: Studio, faces: list | dict) -> str:
+    """면 배정 — 도어 유리·뒷유리·리어·프론트·윈드실드가 맡는 일 (`compose.FaceSpec`).
+
+    `faces`는 CLI 꼴(`["window=continue", "rear=crop"]`)이거나 dict다. 준 면만
+    바꾸고 나머지는 그대로다. 값 검사는 스펙이 한다 (모르는 모드면 ValueError)."""
+    from .. import compose
+
+    cur = dict(st.state.get("faces") or {})
+    if isinstance(faces, dict):
+        got = {compose.FACE_OF.get(str(k), str(k)): str(v) for k, v in faces.items()}
+    else:
+        parsed = compose.FaceSpec.from_args(list(faces))
+        got = {} if parsed is None else {
+            f: getattr(parsed, f) for f in compose.FACE_NAMES
+            if any(compose.FACE_OF.get(str(it).partition("=")[0].strip(),
+                                       str(it).partition("=")[0].strip()) == f
+                   for it in faces)}
+    spec = compose.FaceSpec.from_dict(cur | got)
+    st.state["faces"] = spec.to_dict()
+    return msg("면 배정: {what}", what=spec.describe())
 
 
 def act_symmetry(st: Studio, on: bool) -> str:

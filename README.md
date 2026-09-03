@@ -160,8 +160,10 @@ python -m forzasqueegee itasha --plan out/내도안/내도안.plan.json --yes
 
 주요 옵션: `--no-deco`(꾸밈 빼고 도안만) · `--base #RRGGBB`(베이스 색 지정) ·
 `--flip`(좌우 반전) · `--logo 이미지`(로고 이미지, 여러 번) · `--no-watermark` ·
-`--logo-placement`(auto·rear·front·windshield·rocker) · `--dry-run`(계획만 보기) ·
-`--car`(면 지도를 가져올 차종).
+`--logo-placement`(auto·rear·front·windshield·rocker) ·
+`--face 면=모드`(도어 유리·뒷유리·리어·프론트·윈드실드가 맡는 일 — 자동이면 로고·글자가
+있을 때 그것, 없으면 크롭으로 물러난다; `window=continue`는 옆면 그림을 벨트라인 위로
+이어 그린다) · `--dry-run`(계획만 보기) · `--car`(면 지도를 가져올 차종).
 위치를 손으로 잡고 싶으면 FLS 편집기의 **[Itasha] 메뉴**를 쓰세요.
 
 ### 편집기 두 가지

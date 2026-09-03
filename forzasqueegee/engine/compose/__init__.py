@@ -180,6 +180,9 @@ from .intent import DesignIntent, read_intent
 from .cast import (
     CastEntry, FONT_PAGES, NO_MIRROR_ROLES, ROLE_LABELS as CAST_LABELS,
     ROLES as CAST_ROLES, estimate as cast_estimate)
+from .facespec import (
+    FACES as FACE_NAMES, FACE_OF, LABELS as FACE_LABELS, MODES as FACE_MODES,
+    Assignment as FaceAssignment, FaceSpec)
 from .roles import RolePalette, role_palette
 from .field import CompositionField, build_field
 from . import critic

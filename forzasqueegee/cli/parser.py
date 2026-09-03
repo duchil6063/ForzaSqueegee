@@ -50,6 +50,16 @@ def _logo_args(p: argparse.ArgumentParser) -> None:
                             "프론트) · rear · front · windshield · rocker(옆면 줄만)"))
 
 
+def _face_args(p: argparse.ArgumentParser) -> None:
+    """면 배정 인자 — `itasha`와 `flsedit decorate`가 같은 벌을 쓴다 (`compose.facespec`)."""
+    p.add_argument("--face", nargs="*", default=None, metavar=msg("면=모드"),
+                   help=msg("면이 맡는 일 — `window=auto|support|continue|crop|empty` · "
+                            "`rear_window|rear|front=auto|logos|crop|empty` · "
+                            "`windshield=auto|logos|empty`. auto는 로고·글자가 있으면 "
+                            "그것(리어 워드마크+로고 줄 · 윈드실드 글자 띠 · 유리 로고 열), "
+                            "없으면 크롭으로 물러난다 (리어·뒷유리는 비운다)"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """`python -m forzasqueegee`의 파서. 명령 실행은 `cli.<갈래>`가 한다."""
     parser = argparse.ArgumentParser(prog="forzasqueegee",
@@ -182,6 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
                                "engine/compose/design)"))
     _text_args(p_it)
     _logo_args(p_it)
+    _face_args(p_it)
     p_it.add_argument("--no-mirror", action="store_true",
                       help=msg("우측면을 미러하지 않는다"))
     p_it.add_argument("--flip", action="store_true",
@@ -344,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
                                "diagonal_flow · motorsport · splash (안 주면 자동: "
                                "후보를 다 지어 점수로 고른다)"))
     _logo_args(p_fx)
+    _face_args(p_fx)
     p_fx.add_argument("--no-logos", action="store_true", dest="no_logos",
                       help=msg("decorate: 사용자 로고를 다 뺀다 (워터마크는 별개)"))
     p_fx.add_argument("--watermark", default=None, choices=("on", "off"),

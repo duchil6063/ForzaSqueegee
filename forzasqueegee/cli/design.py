@@ -229,7 +229,8 @@ def cmd_flsedit(args) -> int:
                 paint=args.color, auto_paint=bool(args.auto_paint),
                 text=text_fields, drop_text=bool(args.no_text), roles=roles,
                 logos=logos,
-                symmetry=(None if args.symmetry is None else args.symmetry == "on"))
+                symmetry=(None if args.symmetry is None else args.symmetry == "on"),
+                faces=getattr(args, "face", None))
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))

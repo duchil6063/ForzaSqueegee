@@ -16,7 +16,7 @@ from ..model import UNITS_PER_SCALE, LayerPlan, rgb_to_hsb, rnd
 from .boxes import (
     CANVAS_UNITS, _clamp_box, _face_phase, _gap, _group_unit, _overlap, _rel,
     _union)
-from .look import Look, look, person_ink, rot_ink_box
+from .look import Look, layer_points, look, person_ink, rot_ink_box
 from .palette import (accent_color, accent_third, accent_tint, base_paint,
                       contrast_ink, material_roles)
 from .vocabulary import MOTIF_FAMILIES, MOTIF_SETS, edge_shapes, motif_shapes
@@ -25,10 +25,12 @@ from .bands import ROCKER_BASE_MIN
 from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
-    drawable, manual_box, person_pose, person_tilt, place_in_rect, place_xf)
+    drawable, layers_on, manual_box, person_pose, person_tilt, place_in_rect, place_xf,
+    take_layers)
 from .atlas import build_atlas
 from . import seams as gseams
-from .folds import _all_folds
+from .folds import _all_folds, seam_fold
+from .facespec import FACE_OF, FaceSpec
 from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
 from .intent import read_intent
@@ -37,7 +39,7 @@ from .design import Design, _macro_colors, compose_design
 from .families import FAMILIES
 from .textspec import TextSpec
 from .textbuild import mirrored_set
-from .facetext import face_text
+from .facetext import assigned_text, face_text, pinned_faces
 from .logokit import LogoItem, LogoSpec, resolve as resolve_logos, watermark_plan
 from . import sponsor
 from .rigs import (
@@ -69,6 +71,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           motif: str | None = None, family: str | None = None,
           text: "TextSpec | dict | None" = None,
           logos: "LogoSpec | dict | None" = None,
+          faces: "FaceSpec | dict | None" = None,
           mass_hint: dict | None = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
@@ -156,6 +159,16 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     자리(`auto`면 리어, 없으면 윈드실드, 그것도 없으면 옆면 줄 끝)다. 로고 그룹은
     면마다 제 것(`logos-<면>.json`)이고 **미러하지 않는다** — 반대편 옆면은
     자리만 거울이다. 꾸밈을 끈 판에는 안 선다 (로고도 꾸밈이다).
+
+    ## 면 배정 (`faces`)
+
+    도어 유리·뒷유리·리어·프론트·윈드실드가 **맡는 일** (`facespec.FaceSpec`,
+    계획 5단계). 사람 판은 그 면들에 주역 크롭을 거의 안 돌린다 — 리어는 워드마크
+    + 로고 줄 + 색면 이음, 윈드실드는 글자 띠, 도어 유리는 작은 로고 열·문구 또는
+    옆면 머리카락을 벨트라인 너머로 이어 그린 것. `auto`는 로고·글자가 있으면
+    그것을 앉히고 없으면 크롭으로 물러난다 (리어·뒷유리는 비운다). `continue`
+    (이어 그리기)는 옆면 주역의 벨트라인 위 몫을 유리에 사본으로 세운다 — 편집기의
+    [선으로 가르기]를 프로그램이 대신 부르는 꼴이라 기본이 아니다.
     """
     if whole is None:                             # 스윕용 스위치 (기본 켬)
         whole = os.environ.get("FS_WHOLE", "1").strip() != "0"
@@ -163,6 +176,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if text is not None else TextSpec()
     logo_spec = (logos if isinstance(logos, LogoSpec) else LogoSpec.from_dict(logos)) \
         if logos is not None else LogoSpec()
+    face_spec = (faces if isinstance(faces, FaceSpec) else FaceSpec.from_dict(faces)) \
+        if faces is not None else FaceSpec()
     mirror_side = "side_left" if flip else "side_right"
     from ...auto.itasha import PRESET             # 순환 참조를 피해 늦게 들여온다
 
@@ -298,6 +313,35 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                         x=hx, y=hy, scale=hs, rot=hrot))
                 notes.append(msg("후드에 인물을 기울여 앉힌다 ({why})", why=hwhy))
 
+    # ---- 로고 재료 — 사용자 로고는 도안으로 굽고(캐시), 워터마크는 키트에서 ----
+    # 면 배정보다 앞이다: 프론트·도어 유리의 `auto`가 "사용자 로고가 있나"로 갈린다.
+    logo_cache: dict = {}
+    logo_protos: list[sponsor.Proto] = []
+    wm_proto: sponsor.Proto | None = None
+    if deco and logo_spec.active:
+        for it in resolve_logos(logo_spec, out_dir / "logos", cat=cat, log=log, notes=notes):
+            logo_protos.append(sponsor.load_proto(it, cat, logo_cache))
+        wmp = watermark_plan(False) if logo_spec.watermark else None
+        if wmp is not None:
+            wm_proto = sponsor.load_proto(
+                LogoItem(plan=wmp, kind="watermark", name="ForzaSqueegee"), cat, logo_cache)
+        elif logo_spec.watermark:
+            notes.append(msg("내장 로고 키트가 없다 — tools/make_kit.py로 굽는다"))
+
+    # ---- 면 배정 — 유리·리어·프론트·윈드실드가 맡는 일 (`compose.facespec`) ----
+    # `auto`는 로고·글자가 있으면 그것(로고 줄·워드마크·글자 띠), 없으면 크롭으로
+    # 물러난다. 크롭을 안 받는 면은 차 전체 구성(`plan_car`)에 `taken`으로 든다.
+    assign = {n: face_spec.resolve(n, logos=bool(logo_protos),
+                                   text=bool(deco and text_spec.active))
+              for n in FACE_OF}
+    if deco and not face_spec.all_auto:
+        notes.append(msg("면 배정: {what}", what=face_spec.describe()))
+    # 이어 그리기(`continue`) — 옆면 주역의 벨트라인 위 몫을 도어 유리에 **사본**으로
+    # 세운다. 편집기의 [선으로 가르기]를 프로그램이 대신 부르는 꼴이다: 걸친 그림은
+    # 양쪽에 서고 면마다 제 마스크가 제 몫만 그린다 (split-at-a-line 규약).
+    if deco:
+        hand += _continuations(hand, assign, rigs, maps, cat, out_dir, group_unit, notes)
+
     # ---- 차 전체 구성 — 남은 면에 역할과 예산을 준다 (`compose.whole`) ----
     # 옛 길에서 여기 오는 면은 옆면 둘(+윗면)뿐이었고 나머지는 모티프 몇 장이
     # 전부였다. 사람 판 28벌을 같은 자로 재면 그 자리에 리어 335 · 도어 유리
@@ -339,7 +383,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
 
         wcp = wholecar.plan_car(
             plan, lk, main_intent, cat, maps,
-            taken={mp.surface for mp in hand},
+            # 사람(또는 자동)이 덩어리를 앉힌 면 + 면 배정이 크롭을 안 주는 면
+            taken={mp.surface for mp in hand} | {n for n, a in assign.items() if not a.crop},
             caps={n: (m.cap or 1000) for n, m in maps.items()},
             # 주역이 이미 앉은 면의 **예상 시각 무게** — 배치가 이미 정해져
             # 있으므로 어림이 아니라 실제 배율로 잰다: (배율×그룹유닛)² ×
@@ -439,44 +484,34 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     deco_src = next((n for n in ROLE_MAIN if hand_box.get(n)), None)
     side0 = maps.get(deco_src) if deco_src else None
 
-    # ---- 로고 재료 — 사용자 로고는 도안으로 굽고(캐시), 워터마크는 키트에서 ----
-    # 워터마크 자리는 **하나**다: `auto`면 리어 범퍼, 없으면 윈드실드 귀퉁이, 그것도
-    # 없으면 옆면 줄 끝. 사람 판의 로고 무리는 24/30벌에 있다 — 없던 자리다.
-    logo_cache: dict = {}
-    logo_protos: list[sponsor.Proto] = []
-    wm_proto: sponsor.Proto | None = None
+    # ---- 워터마크 자리 — **하나**다: `auto`면 리어 범퍼, 없으면 윈드실드 귀퉁이, 그것도
+    # 없으면 옆면 줄 끝. 사람 판의 로고 무리는 24/30벌에 있다 — 없던 자리다. 면 배정이
+    # 그 면을 비웠거나 크롭에 줬으면(`assign`) 건너뛴다.
     wm_face: str | None = None
     logo_targets = sponsor.spec_targets(logo_spec)
     logo_groups: dict[str, dict] = {}         # 면 → 로고 그룹 항목
     logo_summary: dict[str, int] = {}
     side_w = (side0.paint[2] - side0.paint[0]) if side0 is not None else None
-    if deco and logo_spec.active:
-        for it in resolve_logos(logo_spec, out_dir / "logos", cat=cat, log=log, notes=notes):
-            logo_protos.append(sponsor.load_proto(it, cat, logo_cache))
-        wmp = watermark_plan(False) if logo_spec.watermark else None
-        if wmp is not None:
-            wm_proto = sponsor.load_proto(
-                LogoItem(plan=wmp, kind="watermark", name="ForzaSqueegee"), cat, logo_cache)
+    if wm_proto is not None:
 
-            def _face_ok(name: str) -> bool:
-                sm = maps.get(name)
-                return sm is not None and (not sm.uncertain or _deco_usable(sm))
+        def _face_ok(name: str) -> bool:
+            sm = maps.get(name)
+            return (sm is not None and (not sm.uncertain or _deco_usable(sm))
+                    and assign[name].sponsor)
 
-            order = {"auto": ("rear", "windshield", "side"), "rear": ("rear",),
-                     "front": ("front",), "windshield": ("windshield",),
-                     "rocker": ("side",)}[logo_spec.placement]
-            for cand in order:
-                if cand == "side":
-                    if side0 is not None and not side0.uncertain:
-                        wm_face = cand
-                elif _face_ok(cand):
+        order = {"auto": ("rear", "windshield", "side"), "rear": ("rear",),
+                 "front": ("front",), "windshield": ("windshield",),
+                 "rocker": ("side",)}[logo_spec.placement]
+        for cand in order:
+            if cand == "side":
+                if side0 is not None and not side0.uncertain:
                     wm_face = cand
-                if wm_face:
-                    break
-            if wm_face is None:
-                notes.append(msg("워터마크를 앉힐 면이 없다 ({place})", place=logo_spec.placement))
-        elif logo_spec.watermark:
-            notes.append(msg("내장 로고 키트가 없다 — tools/make_kit.py로 굽는다"))
+            elif _face_ok(cand):
+                wm_face = cand
+            if wm_face:
+                break
+        if wm_face is None:
+            notes.append(msg("워터마크를 앉힐 면이 없다 ({place})", place=logo_spec.placement))
     deco_plan = deco_place = deco_front = front_place = None
     # 옆면이 이음새로 내보내는 두 선 — 큰 색면의 띠와 하부 투톤의 윗선 (면 유닛).
     # 잇는 자는 `compose.seams`이고, 띠는 **어디서 쟀는지**(`Band.at_u`)를 같이 든다.
@@ -1125,6 +1160,18 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         face_summary = face_text(text_spec, design, items, maps, rigs, cat, out_dir, plan,
                                  group_unit=group_unit, hood_u=hood_u, notes=notes,
                                  written=written)
+    # ---- 면 배정의 글자 — 자동 자리일 때 다른 면이 받는 몫 (사람 판: 리어 워드마크 ·
+    # 윈드실드 글자 띠 · 뒷유리 워드마크 · 도어 유리 작은 문구). 옆면 글자는 그대로다.
+    # 로고 줄보다 앞이다 — 로고가 글자 상자를 피해 앉는다 (`_face_busy`).
+    assigned_summary: dict = {}
+    if deco and text_spec.active and design is not None:
+        _pinned = set(pinned_faces(text_spec.placement))
+        want = [n for n in ("rear", "rear_window", "windshield", "window_left", "window_right")
+                if assign[n].sponsor and n not in _pinned and n not in hand_box]
+        if want:
+            assigned_summary = assigned_text(
+                text_spec, design, items, maps, rigs, cat, out_dir, plan, faces=want,
+                group_unit=group_unit, notes=notes, written=written)
 
     # ---- 다른 면의 로고 — 리어 범퍼(가운데 워터마크 + 좌우) · 프론트 · 윈드실드 ----
     if deco and (logo_protos or wm_proto is not None):
@@ -1140,12 +1187,17 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                               g["x"] + s * bx[2], g["y"] + s * bx[3]))
             return boxes
 
+        # 면 배정이 그 면을 비웠거나 크롭에 줬으면 로고 줄도 안 선다 (`assign`). 도어
+        # 유리의 작은 로고 열은 `auto`에서만 — 사람 판의 유리 로고는 옆면 무리의
+        # 되풀이라, 자리를 못 박은 판(리어·프론트·윈드실드·로커)에는 안 간다.
         _users_on = {"rear": logo_protos if logo_spec.placement in ("auto", "rear") else [],
                      "front": (logo_protos[:3] if logo_spec.placement == "auto"
                                else logo_protos if logo_spec.placement == "front" else []),
-                     "windshield": logo_protos if logo_spec.placement == "windshield" else []}
-        for face in ("rear", "front", "windshield"):
-            if not logo_targets[face]:
+                     "windshield": logo_protos if logo_spec.placement == "windshield" else [],
+                     "window_left": logo_protos[:3] if logo_spec.placement == "auto" else [],
+                     "window_right": logo_protos[:3] if logo_spec.placement == "auto" else []}
+        for face in ("rear", "front", "windshield", "window_left", "window_right"):
+            if not logo_targets.get(face, True) or not assign[face].sponsor:
                 continue
             users = _users_on[face]
             center = wm_proto if wm_face == face else None
@@ -1231,7 +1283,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
              "role": mp.role, "no_mirror": bool(mp.no_mirror),
              "pinned": bool(mp.pinned),
              "layers": hand_group[hand_ix[id(mp)]][1]}
-            for mp in hand if mp.role != "variant"]
+            for mp in hand if mp.role not in ("variant", "continue")]
     if design is not None:
         # 설계 기록 — 어느 계열·팔레트·흐름이 이겼고 점수가 어땠나. 사람이
         # 결과를 보고 "왜 이렇게 짰나"를 되짚는 자리이고, 검증 도구가 읽는다.
@@ -1283,6 +1335,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 "placement": text_spec.placement, "priority": text_spec.priority}
             if face_summary:
                 cfg["design"]["text"].update(face_summary)
+            if assigned_summary:
+                cfg["design"]["text"]["assigned"] = assigned_summary
     # 설치 차량을 못 박고 지었으면 **구성이 그걸 기억한다** — 안 적어 두면 다시
     # 돌릴 때 이름 매칭이 다른 차를 물어 미리보기와 검증이 딴 면 지도로 돈다.
     if media:
@@ -1292,6 +1346,12 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         cfg["logos"] = {"watermark": bool(wm_proto is not None), "watermark_face": wm_face,
                         "images": len(logo_protos), "placement": logo_spec.placement,
                         "faces": dict(sorted(logo_summary.items()))}
+    # 면 배정 — 사람이 정한 모드와 `auto`를 푼 결과 (`compose.facespec`). 꺼진 판에는 없다.
+    if deco:
+        cfg["faces"] = {
+            "spec": face_spec.to_dict(),
+            "got": {n: {"crop": a.crop, "sponsor": a.sponsor, "continue": a.cont,
+                        "why": a.why} for n, a in sorted(assign.items())}}
     # 차 전체 구성이 무엇을 어디에 맡겼나 — 계측 도구가 읽는 자리다
     # (`work/lab/whole/ours.py`). 없는 판에는 이 칸이 아예 없다.
     if wcp is not None and wcp.jobs:
@@ -1312,6 +1372,98 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     for n in notes:
         log(f"  · {n}")
     return Recipe(config=cfg, written=written, notes=notes, design=design)
+
+
+# 이어 그리기(면 배정 `continue`) — 벨트라인 위 몫이 이 장수 아래면 안 잇는다:
+# 머리끝 몇 장을 유리에 따로 세우면 파편으로 읽힌다.
+CONT_MIN_LAYERS = 12
+# 벨트라인 위 몫이 유리 높이의 이 몫은 올라와야 잇는다 — 그 아래는 마스크 여백에 걸린
+# 머리끝이다 (실측 줄리아 giulia-01: 7유닛/134 = 5%가 49장으로 잡혔다).
+CONT_MIN_RISE = 0.12
+# 유리 이음새의 배율이 이만큼 넘게 비등방이면 세로 배율이 어긋난다고 적는다 (그룹
+# 변환은 균등 배율뿐이라 가로 배율을 쓰고 이음선만 맞춘다).
+CONT_ANISO_NOTE = 1.15
+
+
+def _continuations(hand: list[ManualPlace], assign: dict, rigs: dict, maps: dict,
+                   cat: Catalog, out_dir: Path, group_unit: float,
+                   notes: list[str]) -> list[ManualPlace]:
+    """옆면 주역의 **벨트라인 위 몫**을 도어 유리에 세우는 배치들 (면 배정 `continue`).
+
+    사본은 제 파일(`continue-<유리>.json` — 유리에 닿는 레이어만)이라 옆면 파일은
+    종전대로 벨트라인에서 잘린 채고, 유리 쪽은 유리 마스크가 제 몫만 그린다 — 두
+    묶음이 이웃한 두 면에 올라가 이음새가 안 벌어지는 [선으로 가르기]의 꼴이다.
+
+    변환은 옆면 배치에 유리 이음새(`folds.seam_fold` — 옆면 유닛 → 유리 유닛의
+    아핀 `A·p + b`, `A = diag(su, sv)`)를 곱한 것이다. 그룹 변환은 균등 배율뿐이라
+    `A`가 비등방이면 그대로 못 낸다 — 가로 배율(`su`)을 쓰고 **이음선(벨트라인)이
+    맞게** 세로 이동을 잡는다: 이음새에서 만나는 것이 이어 그리기의 전부이고, 그
+    위의 세로 어긋남은 `sv/su`만큼이다 (실측 도어 유리 세로 늘림 1.0~3.2 중 대개
+    1.0~1.6 — `game.fold.GLASS_ANISO`).
+    """
+    out: list[ManualPlace] = []
+    for side in ROLE_MAIN:
+        wname = "window_" + side.split("_")[-1]
+        a = assign.get(wname)
+        if a is None or not a.cont:
+            continue
+        wm = maps.get(wname)
+        if wm is None or wm.uncertain:
+            notes.append(msg("{w}: 유리 지도를 못 믿어 이어 그리기를 접는다", w=wname))
+            continue
+        if any(mp.surface == wname for mp in hand):
+            notes.append(msg("{w}: 사람이 올린 덩어리가 있어 이어 그리기를 접는다", w=wname))
+            continue
+        rig = rigs.get(side)
+        f = (seam_fold(side, wname, rig)
+             if (rig is not None and rig.seam is not None) else None)
+        if f is None:
+            notes.append(msg("{w}: 옆면↔유리 이음새를 못 풀어 이어 그리기를 접는다", w=wname))
+            continue
+        su, sv = float(f.A[0, 0]), float(f.A[1, 1])
+        b0, b1 = float(f.b[0]), float(f.b[1])
+        dm = wm.drawn or wm
+        # 이음선은 **유리가 그리기 시작하는 아랫변**이다 — 그 변에 닿는 옆면 v를
+        # 이음새 자체에서 되짚는다 (`rig.geom.belt`는 옆면 자의 벨트라인이라 유리
+        # 이음새의 아랫변과 십여 유닛 어긋난다 — 실측 줄리아 27.6 ↔ 14.5).
+        pivot = (float(wm.paint[1]) - b1) / max(1e-6, sv)
+        gh = float(wm.paint[3] - wm.paint[1])
+        srcs = [mp for mp in hand if mp.surface == side and mp.anchors and not mp.pinned]
+        for i, mp in enumerate(srcs, 1):
+            k = su
+            x2 = su * mp.x + b0
+            y2 = k * mp.y + b1 + (sv - k) * pivot
+            cp = ManualPlace(plan=mp.plan, surface=wname, x=x2, y=y2, scale=mp.scale * k,
+                             rot=mp.rot, mirror=mp.mirror, role="continue")
+            hp = LayerPlan.load(mp.plan)
+            L, t = place_xf(cp, group_unit)
+            keep = layers_on(hp, cat, L, t, dm.paint, mask=None if dm.uncertain else dm.mask)
+            # 유리 안으로 얼마나 올라오나 — 머리끝 몇 유닛이 마스크 여백에 걸린 것은
+            # 잇지 않는다 (사람 판의 이어 그린 머리카락은 유리 높이의 수십 %다)
+            rise = 0.0
+            for j in keep:
+                q = layer_points(hp.layers[j], cat) @ L.T + t
+                if len(q):
+                    rise = max(rise, float(q[:, 1].max()) - float(wm.paint[1]))
+            if len(keep) < CONT_MIN_LAYERS or rise < CONT_MIN_RISE * gh:
+                notes.append(msg("{w}: 벨트라인 위 몫이 {n}장 · 유리 높이의 {r:.0%}뿐이라 안 잇는다 — {name}",
+                                 w=wname, n=len(keep), r=rise / max(1e-6, gh),
+                                 name=Path(mp.plan).name))
+                continue
+            if len(keep) > (wm.cap or 1000):
+                notes.append(msg("{w}: 벨트라인 위 몫 {n:,}장이 유리 상한 {cap:,}을 넘는다 — 안 잇는다",
+                                 w=wname, n=len(keep), cap=wm.cap or 1000))
+                continue
+            path = out_dir / (f"continue-{wname}.json" if i == 1 else f"continue-{wname}-{i}.json")
+            take_layers(hp, sorted(keep)).save(path)
+            out.append(replace(cp, plan=path, x=round(x2, 1), y=round(y2, 1),
+                               scale=round(cp.scale, 4)))
+            an = sv / max(1e-6, su)
+            notes.append(msg("{w}: {name}의 벨트라인 위 {n:,}장을 이어 그린다 (유리 배율 {k:.2f}{extra})",
+                             w=wname, name=Path(mp.plan).name, n=len(keep), k=su,
+                             extra=(msg(" · 세로 배율이 {r:.2f}배 달라 이음선만 맞췄다", r=an)
+                                    if abs(an - 1.0) > CONT_ANISO_NOTE - 1.0 else "")))
+    return out
 
 
 # 큰 색면을 이음새 너머로 **이어 그리는** 기울기 상한 (도). 이보다 가파른 색면은
