@@ -25,15 +25,15 @@ from .bands import ROCKER_BASE_MIN
 from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
-    drawable, layers_on, manual_box, person_pose, person_tilt, place_in_rect, place_xf,
-    take_layers)
+    drawable, layers_on, manual_box, person_pose, person_scale, person_tilt,
+    place_in_rect, place_xf, take_layers)
 from .atlas import build_atlas
 from . import seams as gseams
 from .folds import _all_folds, seam_fold
 from .facespec import FACE_OF, FaceSpec
 from .autoplace import auto_place
 from .surfshapes import GLASS, DecoAnchor, deco_anchor, flow_shapes, surface_deco_shapes
-from .intent import read_intent
+from .intent import read_intent, with_head
 from . import whole as wholecar
 from .design import Design, _macro_colors, compose_design
 from .families import FAMILIES
@@ -198,7 +198,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     group_unit = _group_unit(car)
 
     plan = LayerPlan.load(main_plan)
-    lk = look(plan, cat)
+    lk = with_head(look(plan, cat), plan, cat)      # 옆면 자리가 얼굴을 벨트 아래에 잡는다
     # 베이스는 **자동차 도색**이다 — 비닐이 아니라 도색 메뉴에서 칠한다
     # (레퍼런스 이타샤의 베이스가 전부 그렇다. 장수 0장 · 도료 질감 공짜).
     # 사람이 정한 색이 있으면 그것이 이기고, 없으면 도안에서 고른다.
@@ -231,15 +231,16 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     def _place_people(tilt: float) -> None:
         """인물을 **차체 밴드**에 앉힌다 — 폭은 문짝, 아래는 사이드실.
 
-        상자는 `person_budget`이 주는 레퍼런스 실측 예산이고, 벨트라인은 안
-        넘는다 — 넘긴 몫은 이웃 면으로 안 가고 그 자리에서 잘린다.
+        상자는 `person_budget`이 주는 사람 판 실측 예산이고(벨트 위로 조금
+        나간다), 얼굴은 벨트 아래다 (`person_scale`) — 넘긴 몫은 이웃 면으로
+        안 가고 그 자리에서 잘린다.
         """
         for r in rigs.values():
             r.tilt = tilt if r.name == "side_left" else -tilt
             r.mirror = bool(mirror and r.name == mirror_side)
             wb, hb = gseam.person_budget(r.body, r.geom)
             iw, ih = person_ink(lk, r.tilt, r.mirror)
-            s = min(wb / max(1e-6, iw), hb / max(1e-6, ih))   # 예산에 내접
+            s, head_why = person_scale(lk, r.tilt, r.mirror, r)   # 예산에 내접, 얼굴은 벨트 아래
             box = gseam.person_span(r.body, r.geom, (iw * s, ih * s), r.rear_dir)
             # 도어 노브·주유구가 얼굴에 안 겹치게 민다 (업계 지침) — 부품 자리를
             # 아는 차에서만 (`game.locators`). 크기는 안 건드린다.
@@ -255,6 +256,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                     frac=iw * s / max(1e-6, wb / gseam.PERSON_DOOR_FILL),
                     over=over * 100)
                 + (msg(" · 눕힘 {tilt:g}°", tilt=r.tilt) if r.tilt else "")
+                + (f" · {head_why}" if head_why else "")
                 + (f" · {dodge.split(': ', 1)[-1]}" if dodge else ""))
 
     # 윗면은 **실제로 그리는 지도**로 짠다 — 유리를 잰 차에서는 앞·뒷유리가 구멍

@@ -16,7 +16,8 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
   메탈릭)은 비닐로 낼 수 없다. 편집기는 이 값을 초기값으로 주고 사람이
   바꾼다 (`build(base_rgb=…)`).
 - 측면 = 주역 캐릭터 대형. 좌우 미러(또는 서로 다른 캐릭터).
-- 인물은 **아래로 붙인다** — 발이 사이드실. 벨트라인은 안 넘는다.
+- 인물은 **아래로 붙인다** — 발이 사이드실. 벨트라인 위로는 사람 판만큼만
+  (머리카락·어깨·팔, 넓이의 ~10%) 나가고 얼굴은 벨트 아래다.
 - **면을 넘긴 그림은 그 자리에서 잘린다** (사용자 지시 2026-08-27) — 이웃 면으로
   자동으로 안 잇는다. 감아 돌리려면 편집기에서 도안을 이음선으로 가르고
   (KFPS·FLS의 [선으로 가르기]) 한쪽을 그 면에 따로 올린다.
@@ -139,8 +140,8 @@ from .boxes import (
     CANVAS_UNITS, DEFAULT_GROUP_UNIT, _clamp_box, _face_phase, _gap, _group_unit,
     _overlap, _rel, _union)
 from .look import (
-    Look, PALE_B, PALE_S, _is_pale, layer_points, look, person_ink, rot_ink,
-    rot_ink_box)
+    Look, PALE_B, PALE_S, _is_pale, head_top_frac, layer_points, look, person_ink,
+    rot_ink, rot_ink_box, rot_points_box)
 from .palette import (
     ACCENT_B_GAP, ACCENT_DARK_MAX, ACCENT_GREY_MAX, ACCENT_HUE_GAP, ACCENT_HUE_STEP,
     ACCENT_LIGHT_MIN, ACCENT_SRC_MIN, ACCENT_S_MIN, ACCENT_WARM, BASE_BLACK,
@@ -167,16 +168,16 @@ from .place import (
     BODY_BIAS, BODY_FILL, EXPOSED_FLOOR, EXPOSED_FULL, FACE_FRAC_BUST,
     FACE_FRAC_TALL, LIE_GAIN_MIN, LIE_HEAD_REAR, LIE_MAX, LIE_TIE, ManualPlace,
     PART_PAD, Place, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, SideRig, TILT_ASPECT,
-    TILT_FULL, TILT_MAX, _refit_canvas, dodge_parts, door_span,
-    drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_tilt,
-    place_in_rect, place_xf, surface_exposure, take_layers)
+    TILT_FULL, TILT_MAX, HEAD_BELT_PAD, _refit_canvas, dodge_parts, door_span,
+    drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_scale,
+    person_tilt, place_in_rect, place_xf, surface_exposure, take_layers)
 from .folds import _all_folds, _pillar_hints, seam_fold
 from .atlas import BodyLines, Seam, VehicleAtlas, build_atlas
 from .autoplace import _side_place, auto_place, mirror_place, reseat_place
 from .surfshapes import (
     DECO_REACH, DecoAnchor, FACE_ROCKER_FRAC, FLOW_TEETH, GLASS,
     deco_anchor, flow_shapes, surface_deco_shapes)
-from .intent import DesignIntent, read_intent
+from .intent import DesignIntent, read_intent, with_head
 from .cast import (
     CastEntry, FONT_PAGES, NO_MIRROR_ROLES, ROLE_LABELS as CAST_LABELS,
     ROLES as CAST_ROLES, estimate as cast_estimate)

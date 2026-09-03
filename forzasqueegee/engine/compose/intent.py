@@ -165,30 +165,39 @@ def _pca_axis(mask: np.ndarray) -> tuple[tuple[float, float], float]:
     return major_axis(xs, ys)
 
 
+def _skin_mask(rgb: np.ndarray, sil: np.ndarray) -> np.ndarray:
+    """실루엣 안의 **살색** 픽셀 (채도 0.03~0.55 · 밝기 0.55↑ · 색상 ≤ 0.11)."""
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    hh = hsv[..., 0].astype(np.float32) / 180.0
+    ss = hsv[..., 1].astype(np.float32) / 255.0
+    vv = hsv[..., 2].astype(np.float32) / 255.0
+    skin = sil & (hh <= 0.11) & (ss < 0.55) & (ss > 0.03) & (vv > 0.55)
+    return cv2.morphologyEx(skin.astype(np.uint8), cv2.MORPH_OPEN,
+                            np.ones((3, 3), np.uint8)).astype(bool)
+
+
 def _head_box(rgb: np.ndarray, alpha: np.ndarray, lk: Look
-              ) -> tuple[tuple[int, int, int, int] | None, bool, float]:
-    """살색으로 머리 상자(px)를 찾는다. 되돌림: (상자, 확신, 얼굴 x방향).
+              ) -> tuple[tuple[int, int, int, int] | None, bool, float,
+                         tuple[int, int, int, int] | None]:
+    """살색으로 머리 상자(px)를 찾는다. 되돌림: (상자, 확신, 얼굴 x방향, 얼굴 상자).
 
     얼굴은 **가장 큰 살색 원판**이다 — 팔·목은 가늘고 얼굴은 둥글다. 살색
     덩어리 하나를 통째로 쓰면 올린 팔까지 이어져 상자가 그림 절반이 된다
     (실측: B1-03). 거리 변환의 극대 중 반지름이 큰 것들을 놓고, 그중 **위쪽**
     (머리는 위에 있다)을 고른다. 누운 그림은 위가 아니라 장축 끝이지만 그때도
     얼굴 원판이 가슴·허벅지 원판보다 작지 않아 반지름이 가른다.
+
+    머리 상자는 머리카락까지 키운 것(`HEAD_GROW_*`)이고 **얼굴 상자**는 키우기
+    전의 원판 윤곽이다 — 벨트라인 자(`with_head`)는 뒤엣것을 쓴다.
     """
     H, W = alpha.shape
     sil = alpha > 0.5
     n_sil = int(sil.sum())
     if n_sil < 32:
-        return None, False, 0.0
-    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    hh = hsv[..., 0].astype(np.float32) / 180.0
-    ss = hsv[..., 1].astype(np.float32) / 255.0
-    vv = hsv[..., 2].astype(np.float32) / 255.0
-    skin = sil & (hh <= 0.11) & (ss < 0.55) & (ss > 0.03) & (vv > 0.55)
-    skin = cv2.morphologyEx(skin.astype(np.uint8), cv2.MORPH_OPEN,
-                            np.ones((3, 3), np.uint8)).astype(bool)
+        return None, False, 0.0, None
+    skin = _skin_mask(rgb, sil)
     if skin.sum() < 0.003 * n_sil:
-        return None, False, 0.0
+        return None, False, 0.0, None
     dist = cv2.distanceTransform(skin.astype(np.uint8), cv2.DIST_L2, 5)
     rmax = float(dist.max())
     if rmax < 3.0:
@@ -216,7 +225,7 @@ def _head_box(rgb: np.ndarray, alpha: np.ndarray, lk: Look
         if sc > bs:
             best, bs = (int(x), int(y), r), sc
     if best is None:
-        return None, False, 0.0
+        return None, False, 0.0, None
     cx, cy, r = best
     # 얼굴 원판 → 얼굴 상자 (원판은 볼 안쪽이라 1.35배가 얼굴 윤곽). 살색이
     # 목·가슴까지 한 덩이인 그림은 원판이 얼굴보다 커지므로 잉크 폭으로 막는다.
@@ -238,7 +247,8 @@ def _head_box(rgb: np.ndarray, alpha: np.ndarray, lk: Look
     hy0, hy1 = max(0, y - int(HEAD_GROW_UP * h)), min(H - 1, y + h + int(0.15 * h))
     # 위쪽 6할 밖의 얼굴은 못 믿는다 (누운 그림이 아니면 머리는 위에 있다)
     confident = (math.pi * r * r) >= 0.010 * n_sil and (cy - top) / span < 0.6
-    return (hx0, hy0, hx1, hy1), confident, face_dir
+    face = (max(0, x), max(0, y), min(W - 1, x + w), min(H - 1, y + h))
+    return (hx0, hy0, hx1, hy1), confident, face_dir, face
 
 
 def _angularity(alpha: np.ndarray) -> float:
@@ -326,6 +336,58 @@ def _role_seeds(rgb: np.ndarray, alpha: np.ndarray, lk: Look) -> dict:
     return out
 
 
+def _head_units(head_px, rgb: np.ndarray, alpha: np.ndarray, upp: float,
+                origin: tuple[float, float], lk: Look
+                ) -> tuple[float, float, float, float] | None:
+    """머리 상자 px → 캔버스 유닛. 살색을 못 찾으면 실루엣 **위쪽 몫**으로 어림한다
+    (전신 22% · 버스트 42%) — 그때 윗변은 실루엣 꼭대기라 벨트라인 자가 보수적이 된다."""
+    if head_px is not None:
+        hx0, hy0, hx1, hy1 = head_px
+        return (origin[0] + hx0 * upp, origin[1] - hy1 * upp,
+                origin[0] + hx1 * upp, origin[1] - hy0 * upp)
+    sil = alpha > 0.5
+    if not sil.any():
+        return None
+    rows = np.where(sil.any(axis=1))[0]
+    frac = 0.22 if lk.kind == "tall" else 0.42
+    top = int(rows.min())
+    hy1 = top + int(frac * (rows.max() - top))
+    cols = np.where(sil[top:hy1 + 1].any(axis=0))[0]
+    if not len(cols):
+        return None
+    return (origin[0] + cols.min() * upp, origin[1] - hy1 * upp,
+            origin[0] + cols.max() * upp, origin[1] - top * upp)
+
+
+def with_head(lk: Look, plan: LayerPlan, cat: Catalog) -> Look:
+    """`Look`에 **머리 상자**를 채운 사본 (`Look.head` · `head_known`).
+
+    `read_intent`와 같은 래스터·같은 살색 자를 쓰되 그것만 읽는다 — 옆면 자리
+    (`place.person_scale`)가 얼굴을 벨트라인 아래에 잡는 데 쓴다. 이미 읽은
+    `Look`은 그대로 돌려준다.
+    """
+    if lk.head_known:
+        return lk
+    rgb, alpha, upp, origin = _raster(plan, lk, cat)
+    _head_px, confident, _face_dir, face_px = _head_box(rgb, alpha, lk)
+    if not confident:
+        # 못 믿는 원판(가슴·팔 — 버스트 크롭은 얼굴 살이 눈·머리카락에 잘게
+        # 갈려 원판이 작다)은 버린다. 대신 **살색의 맨 위**를 얼굴 윗변으로 본다 —
+        # 이마는 머리카락 아래고, 올린 손이 더 위면 손이 자가 된다 (보수적).
+        face_px = None
+        sil = alpha > 0.5
+        skin = _skin_mask(rgb, sil) if sil.any() else None
+        if skin is not None and skin.any():
+            rows = np.where(skin.any(axis=1))[0]
+            srow = np.where(sil.any(axis=1))[0]
+            top = int(rows.min())
+            h = max(1, int(0.16 * (srow.max() - srow.min())))
+            cols = np.where(skin[top:top + h + 1].any(axis=0))[0]
+            face_px = (int(cols.min()), top, int(cols.max()), top + h)
+    return replace(lk, head=_head_units(face_px, rgb, alpha, upp, origin, lk),
+                   head_known=True)
+
+
 def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
     """도안 한 장 → `DesignIntent`. 결정적이다 (같은 도안 → 같은 값)."""
     rgb, alpha, upp, origin = _raster(plan, lk, cat)
@@ -344,21 +406,8 @@ def read_intent(plan: LayerPlan, lk: Look, cat: Catalog) -> DesignIntent:
         det = det / float(np.percentile(det[sil], 97) if n_sil else det.max())
     detail = np.clip(det, 0.0, 1.0).astype(np.float32)
 
-    head_px, confident, face_dir = _head_box(rgb, alpha, lk)
-    head = None
-    if head_px is not None:
-        hx0, hy0, hx1, hy1 = head_px
-        head = (origin[0] + hx0 * upp, origin[1] - hy1 * upp,
-                origin[0] + hx1 * upp, origin[1] - hy0 * upp)
-    elif n_sil:
-        rows = np.where(sil.any(axis=1))[0]
-        frac = 0.22 if lk.kind == "tall" else 0.42
-        top = int(rows.min())
-        hy1 = top + int(frac * (rows.max() - top))
-        cols = np.where(sil[top:hy1 + 1].any(axis=0))[0]
-        if len(cols):
-            head = (origin[0] + cols.min() * upp, origin[1] - hy1 * upp,
-                    origin[0] + cols.max() * upp, origin[1] - top * upp)
+    head_px, confident, face_dir, _face = _head_box(rgb, alpha, lk)
+    head = _head_units(head_px, rgb, alpha, upp, origin, lk)
 
     # 시각 중심 — 알파 × (0.4 + 디테일) 가중, 머리 상자는 두 배
     wgt = alpha * (0.4 + detail)

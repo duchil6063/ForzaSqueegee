@@ -13,7 +13,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
-from .look import Look, layer_points, person_ink, rot_ink, rot_ink_box
+from .look import Look, head_top_frac, layer_points, person_ink, rot_ink, rot_ink_box
 
 
 # 인물이 면 높이의 몇 몫까지 차지하나. 1.0을 쓰면 머리가 유리·루프로 올라가고
@@ -21,21 +21,22 @@ from .look import Look, layer_points, person_ink, rot_ink, rot_ink_box
 BODY_FILL = 0.94
 
 
-# ---- 인물은 **차체 밴드를 가로로 채운다** (2026-08-20 레퍼런스 픽셀 실측) ----
+# ---- 인물은 **차체 밴드를 가로로 채운다** (사람 리버리 corpus 실측) ----
 # 상자는 기하로 곧장 잡는다 (커버리지 내접 상자는 휠아치를 피하려 위로 올라가
 # 인물이 뜨고 작아진다 — 실차 캡처). 자는 `game.seam.person_budget`이다: 폭 =
-# 문짝(휠아치 사이)의 0.75, 높이 = 차체 밴드의 1.10 (레퍼런스 실측 중앙값).
-# 그 예산에서 인물이 가장 커지는 각도를 `person_pose`가 푼다. 높이만 예산으로
-# 잡으면 폭이 종횡비에 딸려 와 세로 도안이 가는 세로 띠로 서고 인물의 상당
-# 부분이 유리로 올라간다 (레퍼런스가 벨트라인을 넘기는 것은 0~29%, 중앙 9%이고
-# 그것도 머리카락 끝·팔·다리다). 발은 사이드실이고 다리가 휠아치를 가로지르며
-# 잘리는 것은 허용이다.
+# 문짝(휠아치 사이)의 1.44, 높이 = 차체 밴드의 1.27 (사람 판 50장 중앙값 —
+# 상수 옆에 실측). 그 예산에서 인물이 가장 커지는 각도를 `person_pose`가 푼다.
+# 높이만 예산으로 잡으면 폭이 종횡비에 딸려 와 세로 도안이 가는 세로 띠로 서고
+# 인물의 상당 부분이 유리로 올라간다. 발은 사이드실이고 다리가 휠아치를
+# 가로지르며 잘리는 것은 허용이다.
 #
 # **벨트라인 위는 옆면이 아니라 도어 유리 면이 그린다** — 설치 마스크는 옆면에
 # 그린하우스를 흰 판으로 갖고 있지만 게임은 거기에 안 그린다 (프로브 15면 대조).
-# 그래서 인물은 벨트라인을 안 넘게 앉힌다 (`game.seam.PERSON_BAND_FILL`) —
-# 넘긴 몫은 아무 데도 안 가고 그 자리에서 잘린다. 유리까지 쓰려면 편집기에서
-# 도안을 벨트라인으로 **가르고** 위쪽 반을 유리 면에 따로 올린다.
+# 넘긴 몫은 아무 데도 안 가고 그 자리에서 잘린다. 사람 판은 그것을 알고도
+# 넓이의 11%를 벨트 위에 둔다 — 잘리는 것이 머리카락·어깨·팔이라서다. 그래서
+# 예산은 벨트를 넘되 **얼굴은 벨트 아래**에 잡는다 (`person_scale` · `Look.head`).
+# 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 **가르고** 위쪽 반을 유리 면에
+# 따로 올린다.
 # ---- 세로 도안 눕히기 (2026-08-20 레퍼런스 픽셀 실측) ----
 # 세로로 긴 전신 도안은 세우지 말고 **눕힌다**. 레퍼런스 옆면 여섯 장에서 인물
 # 장축이 수직에서 벗어난 각을 격자 오버레이로 쟀다: EVELYNE 43° · KOTONE 60° ·
@@ -98,6 +99,35 @@ def person_tilt(lk: Look) -> float:
     return round(min(1.0, t) * TILT_MAX, 1)
 
 
+# 머리 상자 윗변이 벨트 무릎 아래 이만큼(차체 밴드 높이의 몫)까지만 온다.
+# 벨트 무릎은 카울 높이의 어림이라(`game.seam.side_geom`) 여유를 조금 둔다.
+HEAD_BELT_PAD = 0.04
+
+
+def person_scale(lk: Look, tilt: float, mirror: bool, rig: "SideRig"
+                 ) -> tuple[float, str]:
+    """옆면 인물의 **배율** — 예산(`game.seam.person_budget`)에 내접하되 **얼굴은
+    벨트 아래**에 둔다. 되돌림: (배율, 머리 자가 물렸으면 그 설명).
+
+    사람 판은 인물 윗변을 벨트 위 29%까지 올리고 그 몫(넓이 11%)이 유리에서
+    잘리는 것을 감수한다 — 잘리는 것이 머리카락·어깨·팔이기 때문이다. 그래서
+    예산은 벨트를 넘되(`PERSON_BAND_FILL`), 머리 상자(`Look.head` — 살색 원판,
+    머리카락은 밖)의 윗변은 `HEAD_BELT_PAD`만큼 벨트 아래에 잡는다. 머리를 모르면
+    (`head_known`이 아니거나 못 찾음) 잉크 윗변 전체를 머리로 보아 벨트를 안 넘는다.
+    """
+    wb, hb = gseam.person_budget(rig.body, rig.geom)
+    iw, ih = person_ink(lk, tilt, mirror)
+    s = min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+    f = head_top_frac(lk, tilt, mirror)
+    if f is None:
+        f = 1.0
+    cap = rig.geom.body_height * (1.0 - HEAD_BELT_PAD) / max(1e-6, f * ih)
+    if cap >= s:
+        return s, ""
+    return cap, msg("얼굴이 벨트라인에 걸려 {pct:.0f}% 줄인다",
+                    pct=(1.0 - cap / max(1e-9, s)) * 100)
+
+
 def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     """옆면 인물의 **눕히는 각도**를 면 예산에서 푼다. 되돌림: (각도, 설명).
 
@@ -129,12 +159,7 @@ def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     """
     if lk.kind != "tall" or not rigs:
         return 0.0, ""
-    wb = hb = None
-    for r in rigs.values():
-        w, h = gseam.person_budget(r.body, r.geom)
-        wb = w if wb is None else min(wb, w)
-        hb = h if hb is None else min(hb, h)
-    if not wb or not hb:
+    if not all(gseam.person_budget(r.body, r.geom)[0] > 1e-5 for r in rigs.values()):
         return 0.0, ""
 
     # 탐색은 **부호를 넣어** 돈다 — 잉크 껍질은 좌우 대칭이 아니라 +θ와 −θ의
@@ -142,8 +167,12 @@ def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     sgn = -1.0 if LIE_HEAD_REAR else 1.0
 
     def _s(deg: float) -> float:
-        iw, ih = person_ink(lk, deg)
-        return min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+        # 예산은 두 면 중 **빡빡한 쪽** — 머리 자까지 넣어 잰다 (얼굴이 벨트에
+        # 걸리는 각은 그만큼 작아지므로 그 각을 고르지 않는다)
+        return min(person_scale(lk, deg, r.mirror, r)[0] for r in rigs.values())
+
+    wb, hb = (min(v) for v in zip(*(gseam.person_budget(r.body, r.geom)
+                                     for r in rigs.values())))
 
     up = _s(0.0)
     best, bs = 0.0, up
@@ -427,8 +456,8 @@ def dodge_parts(box: tuple[float, float, float, float], rig: "SideRig",
     기다리고 있었다: 도색 마스크에는 그 구멍이 없어서 지금까지 "안 잰다"였고,
     설치 파일 로케이터가 그 자리를 준다 (`game.locators`).
 
-    **크기는 안 건드린다** — 작게 만들면 지침 하나 지키려고 레퍼런스 문법(문짝
-    채움 0.75)을 깨는 셈이다. 미는 것도 **문짝 구간 안**이고, 그 안에서 못
+    **크기는 안 건드린다** — 작게 만들면 지침 하나 지키려고 사람 판의 문법(차체
+    밴드 채움)을 깨는 셈이다. 미는 것도 **문짝 구간 안**이고, 그 안에서 못
     비키면 그냥 둔다 (완벽히 지킬 수 없는 차가 있는 것이 정상이다).
     """
     if not rig.parts:

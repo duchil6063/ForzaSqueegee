@@ -7,24 +7,27 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...game import seam as gseam, surface as gsurf
+from ..catalog import Catalog, default_catalog_path
+from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
 from .look import Look, person_ink, rot_ink_box
 from .place import (
-    BODY_FILL, ManualPlace, Place, dodge_parts, fit_on, person_pose, place_in_rect)
+    BODY_FILL, ManualPlace, Place, dodge_parts, fit_on, person_pose, person_scale,
+    place_in_rect)
 
 
 def _side_place(rig: "SideRig", lk: Look, group_unit: float, mirror: bool,
                 notes: list[str] | None = None) -> tuple[Place, float]:
-    """옆면 하나의 인물 자리 — 차체 밴드 예산에 내접, 발은 로커. (배치, 기울기)."""
+    """옆면 하나의 인물 자리 — 차체 밴드 예산에 내접(얼굴은 벨트 아래), 발은 로커.
+    (배치, 기울기)."""
     t, _ = person_pose(lk, {rig.name: rig})
     t = t if rig.name == "side_left" else -t
-    wb, hb = gseam.person_budget(rig.body, rig.geom)
     iw, ih = person_ink(lk, t, mirror)
-    s = min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+    s, head_why = person_scale(lk, t, mirror, rig)
     box = gseam.person_span(rig.body, rig.geom, (iw * s, ih * s), rig.rear_dir)
     box, why = dodge_parts(box, rig, lk, t)
-    if why and notes is not None:
-        notes.append(why)
+    if notes is not None:
+        notes.extend(w for w in (head_why, why) if w)
     return place_in_rect(box, rig.name, lk, anchor="bottom", fill=1.0,
                          group_unit=group_unit, tilt=t, mirror=mirror,
                          paint=rig.smap.paint), t
@@ -33,7 +36,7 @@ def _side_place(rig: "SideRig", lk: Look, group_unit: float, mirror: bool,
 def auto_place(name: str, plan_path: Path, lk: Look,
                maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"], *,
                group_unit: float = DEFAULT_GROUP_UNIT, mirror: bool = False,
-               fill: float = 1.0,
+               fill: float = 1.0, cat: Catalog | None = None,
                notes: list[str] | None = None) -> ManualPlace | None:
     """이 면에 이 도안을 **자동 경로가 앉힐 자리** — 편집기의 첫 자리다.
 
@@ -42,9 +45,10 @@ def auto_place(name: str, plan_path: Path, lk: Look,
     그대로 나오고, 사람은 거기서부터 손댄다. 나머지 면은 도색 마스크 내접이다.
     못 앉히면 None.
 
-    인물은 **벨트라인을 안 넘는다** (`person_budget`) — 넘긴 몫은 그 자리에서
-    잘린다. 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 가르고 위쪽 반을
-    유리 면에 따로 올린다.
+    인물은 사람 판처럼 벨트라인 위로 조금 나간다 (`person_budget` — 머리카락·
+    어깨·팔) — 넘긴 몫은 그 자리에서 잘리고 **얼굴은 벨트 아래**에 잡는다
+    (`person_scale`). 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 가르고
+    위쪽 반을 유리 면에 따로 올린다.
 
     `fill`은 **투영 몫**이다 (1.0 = 종전) — 그림을 면의 그만큼 크기로 줄여
     앉힌다. 장수를 안 깎고 시각 무게만 낮추는 자리라 조연·받침 면이 쓴다
@@ -53,6 +57,11 @@ def auto_place(name: str, plan_path: Path, lk: Look,
     """
     rig = rigs.get(name)
     if rig is not None:
+        if not lk.head_known and Path(plan_path).is_file():
+            # 얼굴을 벨트 아래에 잡는 자 — 편집기 경로는 `look`만 들고 온다
+            from .intent import with_head
+            lk = with_head(lk, LayerPlan.load(Path(plan_path)),
+                           cat or Catalog(default_catalog_path()))
         why: list[str] = []
         pl, t = _side_place(rig, lk, group_unit, mirror, why)
         if notes is not None:

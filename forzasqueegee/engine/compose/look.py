@@ -36,6 +36,12 @@ class Look:
     # **흰 바탕이 삼키는 잉크의 몫** — 밝고 흐린(근백) 잉크의 면적 비율.
     # 베이스 흰/검을 가르는 자다 (`base_paint`).
     pale: float = 0.0
+    # **머리 상자** (캔버스 유닛, 살색 원판 — `intent._head_box`). 옆면 자리가
+    # 벨트라인 위로 올릴 수 있는 것은 머리카락·팔·다리뿐이고 얼굴은 안 된다 —
+    # 그 자가 이것이다 (`place.person_scale`). `head_known`이 거짓이면 아직 안
+    # 읽은 것이고, 읽었는데 없으면 None이다 (`intent.with_head`).
+    head: tuple[float, float, float, float] | None = None
+    head_known: bool = False
 
     @property
     def w(self) -> float:
@@ -156,10 +162,36 @@ def rot_ink_box(lk: Look, deg: float, mirror: bool = False
         lcx *= mx
         rcx, rcy = lcx * c - lcy * s, lcx * s + lcy * c
         return (rcx - w / 2, rcy - h / 2, rcx + w / 2, rcy + h / 2)
-    q = (lk.hull * np.array([mx, 1.0], np.float32)) @ np.array(
+    return rot_points_box(lk.hull, deg, mirror)
+
+
+def rot_points_box(pts: np.ndarray, deg: float, mirror: bool = False
+                   ) -> tuple[float, float, float, float]:
+    """캔버스 점들(N×2)에 표시 변환 `R(deg)·M`을 먹인 **상자** (배율 1)."""
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    mx = -1.0 if mirror else 1.0
+    q = (np.asarray(pts, np.float32) * np.array([mx, 1.0], np.float32)) @ np.array(
         [[c, s], [-s, c]], np.float32)
     return (float(q[:, 0].min()), float(q[:, 1].min()),
             float(q[:, 0].max()), float(q[:, 1].max()))
+
+
+def head_top_frac(lk: Look, deg: float, mirror: bool = False) -> float | None:
+    """돌려 앉힌 도안에서 **머리 상자 윗변**이 잉크 높이의 어디에 오나 (아래 0 ~ 위 1).
+
+    머리를 모르면 None. 옆면 자리의 벨트라인 자(`place.person_scale`)가 쓴다 —
+    머리 상자는 살색 원판이라 머리카락은 밖이고, 그래서 얼굴만 벨트 아래에 잡힌다.
+    """
+    if lk.head is None:
+        return None
+    hx0, hy0, hx1, hy1 = lk.head
+    hb = rot_points_box(np.array([[hx0, hy0], [hx1, hy0], [hx1, hy1], [hx0, hy1]],
+                                 np.float32), deg, mirror)
+    ib = rot_ink_box(lk, deg, mirror)
+    h = ib[3] - ib[1]
+    if h <= 1e-6:
+        return None
+    return min(1.0, max(0.0, (hb[3] - ib[1]) / h))
 
 
 def rot_ink(lk: Look, deg: float) -> tuple[float, float]:
