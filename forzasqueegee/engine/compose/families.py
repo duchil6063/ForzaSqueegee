@@ -41,6 +41,14 @@ class Family:
     # 계열이 **덧붙이는** 관계 문법 (`graph`) — 공통 문법 위에 더한다.
     # (관계, 노드 a, 노드 b, 가중치). 없는 노드를 가리키면 안 센다.
     grammar: tuple[tuple[str, str, str, float], ...] = ()
+    # **색면 스택** — 블록 위에 얹는 조각 (`stack.PIECES`: belt · arch · pin ·
+    # edge · gap). 후보 축이 아니라 계열의 문법이다 — 사람 판의 스택은
+    # 레이싱·그래픽·스플래시라는 계열이 정하지 도안마다 고르는 것이 아니다.
+    stack: tuple[str, ...] = ()
+    # 이 계열이 도는 **팔레트 변종** (`roles.ROLE_VARIANTS`). 비면 공통 셋
+    # (`design.VARIANTS_TRIED`)이다 — 검정 바탕의 형광 액센트처럼 계열이 곧
+    # 팔레트인 자리만 제 것을 든다.
+    variants: tuple[str, ...] = ()
 
     def rels(self) -> tuple[tuple[str, str, str, float], ...]:
         """이 계열이 지키려는 관계 전부 — 공통 문법 + 제 몫."""
@@ -63,23 +71,49 @@ FAMILIES: dict[str, Family] = {
                           empty_target=0.75, clutter=(0.10, 0.28), echo=True,
                           flows=("auto", "rear", "front"), other_density=0.8,
                           macro=(("split", "ribbon"), ("split", "none"), ("ribbon", "blade")),
+                          # 벨트 블랙아웃 + 아치 날 + 찢긴 가장자리 + 홈 — 사람
+                          # 그래픽 판의 바닥 (structure2 실측: 띠 13장·6색)
+                          stack=("belt", "arch", "edge", "gap", "streak"),
                           # 무리는 판 **가장자리**에 선다 — 판 위에 얹으면 판이
                           # 얼룩이 되고 무리도 안 읽힌다
                           grammar=(("avoids", "motif", "macro0", 0.8),)),
-    # 사선 흐름 — 대각 판 둘이 인물을 지나 흐르고 모티프가 그 결을 따른다
+    # 사선 흐름 — 대각 판 둘이 인물을 지나 흐르고 모티프가 그 결을 따른다.
+    # 프리셋 짝은 없다 (자동과 CLI 레버 `family`로만 선다) — 밝은 차의 자동 후보
+    # 다섯이 종전 그대로여야 자동 판이 기준판과 같다 (W14D→W15A 실측: 이것을 빼니
+    # 33판 중 17판이 갈리고 minimal이 9→12, 차 H 중앙 .744→.586).
     "diagonal_flow": Family("diagonal_flow", bed="wedge", bed_level=0.65, motif_n=16,
                             tier_scale=0.9, rocker=True, top_stripe=True, front_n=3,
                             empty_target=0.65, clutter=(0.12, 0.32), echo=True,
                             flows=("auto", "rear"), other_density=1.0,
                             macro=(("blade", "chevron"), ("split", "stack"), ("blade", "none")),
+                            # 아치에서 솟는 날 + 사선을 따르는 핀 + 스월 가장자리
+                            stack=("arch", "pin", "edge", "streak"),
                             # 사선 둘이 서로를 **가로질러야** 흐름이 난다
                             grammar=(("counter_to", "macro1", "macro0", 1.0),)),
+    # 다크 그래피티 — 검정 바탕 위에 형광 사선 날 둘이 인물을 지나고, 큰
+    # 워드마크가 한 요소다 (사람 판의 "검정 + 형광 액센트 + 큰 이름"). 사선
+    # 흐름 계열의 뼈대(쐐기 판·날·핀·스월 가장자리)를 검정 바탕용으로 조인 것 —
+    # 로커는 없다 (검은 차에 검은 로커는 없는 것과 같다), 모티프는 적고 크다.
+    # 자동에서는 **검은 바탕에서만** 후보다 (`design.DARK_BASE_LUM`).
+    "dark": Family("dark", bed="wedge", bed_level=0.55, motif_n=10,
+                   tier_scale=0.95, rocker=False, top_stripe=True, front_n=2,
+                   empty_target=0.72, clutter=(0.08, 0.24), echo=True,
+                   flows=("auto", "rear"), other_density=0.8, text_budget=1.4,
+                   macro=(("blade", "chevron"), ("blade", "none"), ("split", "stack")),
+                   # 사선을 따르는 핀 + 스월 가장자리 + 인물 뒤 스트릭
+                   stack=("pin", "edge", "streak"),
+                   # 사선 둘이 서로를 **가로질러야** 흐름이 난다
+                   grammar=(("counter_to", "macro1", "macro0", 1.0),),
+                   # 형광 액센트가 이 계열의 팔레트다 (`roles` neon)
+                   variants=("neon", "primary")),
     # 모터스포츠 — 로커·스트라이프 등 직선 요소, 베드는 낮은 슬래브, 모티프는 적게
     "motorsport": Family("motorsport", bed="slab", bed_level=0.55, motif_n=9,
                          tier_scale=0.8, rocker=True, top_stripe=True, front_n=1,
                          empty_target=0.80, clutter=(0.08, 0.24), echo=True,
                          flows=("rear", "front"), other_density=0.6, text_budget=0.8,
                          macro=(("stack", "corner"), ("stack", "none"), ("ribbon", "stack")),
+                         # 벨트 띠 + 핀스트라이프 + 띠 속의 홈 (레이싱 그래픽)
+                         stack=("belt", "pin", "gap"),
                          # 로커가 띠를 이어 받는다 (레이싱 그래픽의 직선 계열)
                          grammar=(("continues", "rocker", "macro0", 0.6),)),
     # 스플래시 — 덩어리 베드에 뜯긴 가장자리, 모티프가 많고 인물 위로도 얹힌다
@@ -88,6 +122,8 @@ FAMILIES: dict[str, Family] = {
                      empty_target=0.5, clutter=(0.18, 0.45), echo=True,
                      flows=("auto",), other_density=1.25, torn=True,
                      macro=(("burst", "ribbon"), ("sweep", "blade"), ("burst", "none")),
+                     # 아치 날 + 튄 물감 가장자리 (찢김·스플래시는 무늬 도형이 낸다)
+                     stack=("arch", "edge", "streak"),
                      # 전경 조각이 인물을 스치고 지난다 (장면 안의 인물)
                      grammar=(("overlaps", "front", "hero", 0.6),)),
 }
@@ -96,12 +132,19 @@ FAMILIES: dict[str, Family] = {
 FAMILY_NAMES = tuple(FAMILIES)
 
 
-def rank_families(it: DesignIntent, lk: Look, person_frac: float) -> list[str]:
+def rank_families(it: DesignIntent, lk: Look, person_frac: float,
+                  base_lum: float | None = None) -> list[str]:
     """이 도안에 맞는 계열 **후보 순서** (전부 후보다 — 점수가 최종을 정한다).
 
-    `person_frac`은 인물이 차체 밴드 폭을 얼마나 덮나 (0~1).
+    `person_frac`은 인물이 차체 밴드 폭을 얼마나 덮나 (0~1). `base_lum`은 베이스
+    도색의 명도 (0~1) — 다크 계열은 검은 바탕에서만 앞에 선다.
     """
     sc: dict[str, float] = {n: 0.0 for n in FAMILIES}
+    # 다크 그래피티는 **바탕이 검을 때**의 문법이다 — 흰 차 위 형광 사선은
+    # 그래피티가 아니라 얼룩이다 (자동에서는 `design`이 밝은 바탕에서 아예 뺀다).
+    # 바탕을 모르면(옛 호출) 중립이다.
+    if base_lum is not None:
+        sc["dark"] += 1.0 if base_lum < 0.25 else -0.8
     # 인물이 밴드를 크게 덮으면 베드가 설 자리가 없다 → minimal·motorsport
     if person_frac > 0.72:
         sc["minimal"] += 1.0
@@ -116,13 +159,15 @@ def rank_families(it: DesignIntent, lk: Look, person_frac: float) -> list[str]:
         sc["graphic_bed"] += 0.8
         sc["splash"] += 0.3
         sc["minimal"] -= 0.5
-    # 대각 포즈·누운 인물 → 사선 흐름
+    # 대각 포즈·누운 인물 → 사선 흐름 (다크도 같은 뼈대다)
     if abs(it.axis[0]) > 0.3 or it.elongation > 2.2:
         sc["diagonal_flow"] += 0.7
+        sc["dark"] += 0.7
     # 뾰족·기계적 인상 → 모터스포츠·사선, 둥글면 스플래시·베드
     if it.impression == "sharp":
         sc["motorsport"] += 0.6
         sc["diagonal_flow"] += 0.3
+        sc["dark"] += 0.3
     elif it.impression == "soft":
         sc["splash"] += 0.5
         sc["graphic_bed"] += 0.2

@@ -249,7 +249,7 @@ def text_margin_level() -> None:
                            frame_box=(-450.0, -100.0, 450.0, 100.0),
                            person_box=(-100.0, -80.0, 100.0, 80.0),
                            char=z, char_rgb=np.zeros((10, 10, 3), np.uint8), detail=z,
-                           drawable=z, head=z, protected=z, support=z, decoration=z,
+                           drawable=z, exposed=z, head=z, protected=z, support=z, decoration=z,
                            negative=z)
     mid = TextPose(role="wordmark", text="X", x=0.0, y=0.0, rot=0.0, height=50.0,
                    aspect=2.0)

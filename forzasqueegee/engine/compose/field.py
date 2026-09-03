@@ -86,6 +86,12 @@ class CompositionField:
     char_rgb: np.ndarray = field(repr=False)      # 실루엣 색 (H,W,3)
     detail: np.ndarray = field(repr=False)
     drawable: np.ndarray = field(repr=False)      # 이 자리가 실제로 그려지나
+    # 이 자리가 **눈에 보이나** — 도색 마스크 안이라도 면이 차에서 달아나는 자리
+    # (사이드실 아랫단·벨트 바로 아래의 눌린 띠)는 게임이 몇 배로 눌러 그린다
+    # (`place.surface_exposure`). 글자는 여기 못 선다 — 사람 눈에는 잘린 글자다
+    # (실측 P-A: 글자 블록 99개 중 24개가 잉크의 10% 넘게 저노출 자리였고 사람은
+    # 그것을 "차 밖으로 나갔다"고 읽었다). 산포·색면은 종전대로 `drawable`만 본다.
+    exposed: np.ndarray = field(repr=False)
     head: np.ndarray = field(repr=False)
     protected: np.ndarray = field(repr=False)
     support: np.ndarray = field(repr=False)
@@ -133,7 +139,7 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
                 frame_center: tuple[float, float], u: float,
                 frame_box: tuple[float, float, float, float],
                 person_box: tuple[float, float, float, float],
-                rear_sign: float, drawable_at=None,
+                rear_sign: float, drawable_at=None, exposed_at=None,
                 flow: tuple[float, float] | None = None) -> CompositionField:
     """도안 뜻 + 배치 변환 → 구성 필드.
 
@@ -176,6 +182,12 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
     else:
         draw = np.ones((rows, cols), np.float32)
         draw[(Y < fy0) | (Y > fy1)] = 0.0
+    if exposed_at is not None:
+        expo = np.array([[1.0 if exposed_at(float(X[r, c]), float(Y[r, c])) else 0.0
+                          for c in range(cols)] for r in range(rows)], np.float32)
+        expo = np.minimum(expo, draw)
+    else:
+        expo = draw
     # 머리 — 도안 상자를 변환해 폴리곤으로
     head = np.zeros((rows, cols), np.float32)
     head_c = None
@@ -251,7 +263,8 @@ def build_field(it: DesignIntent, L: np.ndarray, t: np.ndarray,
            & (draw > 0.5) & (sil_halo == 0)).astype(np.float32)
     return CompositionField(
         grid=g, frame_box=frame_box, person_box=person_box, char=char,
-        char_rgb=char_rgb, detail=detail, drawable=draw, head=head, protected=np.clip(prot, 0, 1),
+        char_rgb=char_rgb, detail=detail, drawable=draw, exposed=expo, head=head,
+        protected=np.clip(prot, 0, 1),
         support=supp.astype(np.float32), decoration=deco.astype(np.float32),
         negative=neg, flow=fl, axis=axis, head_center=head_c, face_dir=face_dir,
         visual_center=(vcx, vcy), texture=texture,

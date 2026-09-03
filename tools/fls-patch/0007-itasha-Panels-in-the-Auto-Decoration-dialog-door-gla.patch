@@ -1,0 +1,172 @@
+From edd7389dfec5dac02345a71697b8d4f0e4335704 Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Thu, 3 Sep 2026 09:20:56 +0900
+Subject: [PATCH 07/10] itasha: Panels in the Auto Decoration dialog - door
+ glass, rear window, rear, front and windshield assignment
+
+---
+ src/gui/app/main_window_itasha.cpp | 91 ++++++++++++++++++++++++++++++
+ src/gui/i18n.cpp                   | 34 +++++++++++
+ 2 files changed, 125 insertions(+)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 62befe5..9e2df71 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -144,6 +144,60 @@ const ArtworkRole kArtworkRoles[] = {
+     {"pinned", "As is"},        // the decoration leaves it alone
+ };
+ 
++// What each glass / bumper panel takes (engine/compose/facespec.py). Auto
++// follows the logos and the lettering - a logo row and a wordmark when there
++// are any, a crop of the hero otherwise (the rear and the rear window stay
++// empty). The rest pins that one panel.
++struct PanelMode {
++    const char *name;
++    const char *text;
++};
++
++struct PanelAssignment {
++    const char *face;           // recipe key (`faces`)
++    const char *text;           // row label
++    const PanelMode *modes;
++    int count;
++};
++
++const PanelMode kWindowModes[] = {
++    {"auto", "Auto (logo row and a phrase, else a portrait crop)"},
++    {"support", "Supporting artwork only"},
++    {"continue", "Continue the side artwork above the beltline"},
++    {"crop", "Portrait crop"},
++    {"empty", "Empty"},
++};
++const PanelMode kRearWindowModes[] = {
++    {"auto", "Auto (wordmark when there is lettering, else empty)"},
++    {"logos", "Logos and lettering"},
++    {"crop", "Bust crop"},
++    {"empty", "Empty"},
++};
++const PanelMode kRearModes[] = {
++    {"auto", "Auto (wordmark, logo row, colour planes)"},
++    {"logos", "Logos and lettering"},
++    {"crop", "Poster crop"},
++    {"empty", "Empty"},
++};
++const PanelMode kFrontModes[] = {
++    {"auto", "Auto (small logos, else an emblem crop)"},
++    {"logos", "Logos and lettering"},
++    {"crop", "Emblem crop"},
++    {"empty", "Empty"},
++};
++const PanelMode kWindshieldModes[] = {
++    {"auto", "Auto (lettering strip and a corner watermark)"},
++    {"logos", "Logos and lettering"},
++    {"empty", "Empty"},
++};
++const PanelAssignment kPanels[] = {
++    {"window", "Door glass:", kWindowModes, int(std::size(kWindowModes))},
++    {"rear_window", "Rear window:", kRearWindowModes, int(std::size(kRearWindowModes))},
++    {"rear", "Rear:", kRearModes, int(std::size(kRearModes))},
++    {"front", "Front:", kFrontModes, int(std::size(kFrontModes))},
++    {"windshield", "Windshield:", kWindshieldModes, int(std::size(kWindshieldModes))},
++};
++
+ // The last text the user typed comes back the next time the dialog opens -
+ // a name is typed once and tweaked many times.
+ constexpr auto kItashaTextKey = "itasha/text";
+@@ -772,6 +826,38 @@ void MainWindow::showItashaDecorationDialog() {
+     sideLayout->addWidget(symmetryNote);
+     layout->addWidget(sideGroup);
+ 
++    // ---- Panels ----
++    // What the glass and bumper panels take. Auto follows the logos and the
++    // lettering; the other values pin that panel. A recipe from before this
++    // dialog has no `faces` - every row starts on Auto then.
++    const QJsonObject faceState = state.value(QStringLiteral("faces")).toObject();
++    auto *panelGroup = new QGroupBox(i18n::t("Panels"), &dialog);
++    panelGroup->setToolTip(i18n::t(
++        "What the door glass, rear window, rear, front and windshield take. "
++        "Auto follows the logos and the lettering - a logo row and a wordmark "
++        "when there are any, a crop of the hero otherwise. Empty drops only "
++        "what is assigned here; the bands and motifs carried over from the "
++        "sides stay."));
++    auto *panelForm = new QFormLayout(panelGroup);
++    QVector<QPair<QString, QComboBox *>> panelBoxes;
++    for (const PanelAssignment &pa : kPanels) {
++        auto *box = new QComboBox(panelGroup);
++        for (int i = 0; i < pa.count; ++i) {
++            box->addItem(i18n::t(pa.modes[i].text), QString::fromLatin1(pa.modes[i].name));
++        }
++        pickCombo(box, faceState.value(QString::fromLatin1(pa.face)).toString(
++                           QStringLiteral("auto")));
++        panelForm->addRow(i18n::t(pa.text), box);
++        panelBoxes.push_back({QString::fromLatin1(pa.face), box});
++    }
++    auto *panelNote = new QLabel(i18n::t(
++        "Continue the side artwork copies the hero's part above the beltline "
++        "onto the door glass, the way Split at a Line does - the side keeps "
++        "its own cut."), panelGroup);
++    panelNote->setWordWrap(true);
++    panelForm->addRow(panelNote);
++    layout->addWidget(panelGroup);
++
+     auto *buttons = new QDialogButtonBox(
+         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+     buttons->button(QDialogButtonBox::Ok)->setText(i18n::t("Compose"));
+@@ -844,6 +930,11 @@ void MainWindow::showItashaDecorationDialog() {
+           << QStringLiteral("--logo-placement") << logoPlacement->currentData().toString()
+           << QStringLiteral("--symmetry")
+           << (symmetry->isChecked() ? QStringLiteral("on") : QStringLiteral("off"));
++    // Panels last: `--face` takes a list, so nothing may follow it.
++    extra << QStringLiteral("--face");
++    for (const auto &pb : panelBoxes) {
++        extra << QStringLiteral("%1=%2").arg(pb.first, pb.second->currentData().toString());
++    }
+     settings.endGroup();
+     runItashaAction(QStringLiteral("decorate"), extra);
+ }
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index 10d2b3f..6ae96eb 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -555,6 +555,40 @@ const Entry kTable[] = {
+      "re-seated on the other side in reading direction.",
+      "그림은 거울로 세웁니다. 로고·글자는 미러하지 않고 반대편의 같은 자리에 "
+      "읽는 방향 그대로 앉힙니다."},
++    {"Panels", "면 배정"},
++    {"What the door glass, rear window, rear, front and windshield take. "
++     "Auto follows the logos and the lettering - a logo row and a wordmark "
++     "when there are any, a crop of the hero otherwise. Empty drops only "
++     "what is assigned here; the bands and motifs carried over from the "
++     "sides stay.",
++     "도어 유리·뒷유리·리어·프론트·윈드실드가 맡는 일입니다. 자동은 로고·글자를 "
++     "따릅니다 — 있으면 로고 줄과 워드마크, 없으면 주역의 크롭. 비움은 여기서 "
++     "배정하는 것만 빼고, 옆면에서 이어지는 띠·산포는 남습니다."},
++    {"Door glass:", "도어 유리:"},
++    {"Rear window:", "뒷유리:"},
++    {"Rear:", "리어:"},
++    {"Front:", "프론트:"},
++    {"Windshield:", "윈드실드:"},
++    {"Auto (logo row and a phrase, else a portrait crop)",
++     "자동 (로고 열 + 문구, 없으면 초상 크롭)"},
++    {"Supporting artwork only", "보조 그림만"},
++    {"Continue the side artwork above the beltline", "옆면 그림을 벨트라인 위로 이어 그리기"},
++    {"Portrait crop", "초상 크롭"},
++    {"Empty", "비움"},
++    {"Auto (wordmark when there is lettering, else empty)",
++     "자동 (글자가 있으면 워드마크, 없으면 비움)"},
++    {"Logos and lettering", "로고·글자"},
++    {"Bust crop", "상반신 크롭"},
++    {"Auto (wordmark, logo row, colour planes)", "자동 (워드마크 + 로고 줄 + 색면 이음)"},
++    {"Poster crop", "전신 축소"},
++    {"Auto (small logos, else an emblem crop)", "자동 (작은 로고, 없으면 엠블럼 크롭)"},
++    {"Emblem crop", "엠블럼 크롭"},
++    {"Auto (lettering strip and a corner watermark)", "자동 (글자 띠 + 귀퉁이 워터마크)"},
++    {"Continue the side artwork copies the hero's part above the beltline "
++     "onto the door glass, the way Split at a Line does - the side keeps "
++     "its own cut.",
++     "이어 그리기는 주역의 벨트라인 위 몫을 도어 유리에 사본으로 세웁니다 — "
++     "[선으로 가르기]와 같은 꼴이고, 옆면은 제 자리에서 잘린 그대로입니다."},
+     {"Composition", "구성"},
+     {"Auto (score picks)", "자동 (점수가 고름)"},
+     {"Composition family:", "구성 계열:"},

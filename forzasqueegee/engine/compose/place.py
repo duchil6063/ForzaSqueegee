@@ -13,7 +13,7 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..model import LayerPlan
 from .boxes import DEFAULT_GROUP_UNIT
-from .look import Look, layer_points, person_ink, rot_ink, rot_ink_box
+from .look import Look, head_top_frac, layer_points, person_ink, rot_ink, rot_ink_box
 
 
 # 인물이 면 높이의 몇 몫까지 차지하나. 1.0을 쓰면 머리가 유리·루프로 올라가고
@@ -21,21 +21,22 @@ from .look import Look, layer_points, person_ink, rot_ink, rot_ink_box
 BODY_FILL = 0.94
 
 
-# ---- 인물은 **차체 밴드를 가로로 채운다** (2026-08-20 레퍼런스 픽셀 실측) ----
+# ---- 인물은 **차체 밴드를 가로로 채운다** (사람 리버리 corpus 실측) ----
 # 상자는 기하로 곧장 잡는다 (커버리지 내접 상자는 휠아치를 피하려 위로 올라가
 # 인물이 뜨고 작아진다 — 실차 캡처). 자는 `game.seam.person_budget`이다: 폭 =
-# 문짝(휠아치 사이)의 0.75, 높이 = 차체 밴드의 1.10 (레퍼런스 실측 중앙값).
-# 그 예산에서 인물이 가장 커지는 각도를 `person_pose`가 푼다. 높이만 예산으로
-# 잡으면 폭이 종횡비에 딸려 와 세로 도안이 가는 세로 띠로 서고 인물의 상당
-# 부분이 유리로 올라간다 (레퍼런스가 벨트라인을 넘기는 것은 0~29%, 중앙 9%이고
-# 그것도 머리카락 끝·팔·다리다). 발은 사이드실이고 다리가 휠아치를 가로지르며
-# 잘리는 것은 허용이다.
+# 문짝(휠아치 사이)의 1.44, 높이 = 차체 밴드의 1.27 (사람 판 50장 중앙값 —
+# 상수 옆에 실측). 그 예산에서 인물이 가장 커지는 각도를 `person_pose`가 푼다.
+# 높이만 예산으로 잡으면 폭이 종횡비에 딸려 와 세로 도안이 가는 세로 띠로 서고
+# 인물의 상당 부분이 유리로 올라간다. 발은 사이드실이고 다리가 휠아치를
+# 가로지르며 잘리는 것은 허용이다.
 #
 # **벨트라인 위는 옆면이 아니라 도어 유리 면이 그린다** — 설치 마스크는 옆면에
 # 그린하우스를 흰 판으로 갖고 있지만 게임은 거기에 안 그린다 (프로브 15면 대조).
-# 그래서 인물은 벨트라인을 안 넘게 앉힌다 (`game.seam.PERSON_BAND_FILL`) —
-# 넘긴 몫은 아무 데도 안 가고 그 자리에서 잘린다. 유리까지 쓰려면 편집기에서
-# 도안을 벨트라인으로 **가르고** 위쪽 반을 유리 면에 따로 올린다.
+# 넘긴 몫은 아무 데도 안 가고 그 자리에서 잘린다. 사람 판은 그것을 알고도
+# 넓이의 11%를 벨트 위에 둔다 — 잘리는 것이 머리카락·어깨·팔이라서다. 그래서
+# 예산은 벨트를 넘되 **얼굴은 벨트 아래**에 잡는다 (`person_scale` · `Look.head`).
+# 유리까지 쓰려면 편집기에서 도안을 벨트라인으로 **가르고** 위쪽 반을 유리 면에
+# 따로 올린다.
 # ---- 세로 도안 눕히기 (2026-08-20 레퍼런스 픽셀 실측) ----
 # 세로로 긴 전신 도안은 세우지 말고 **눕힌다**. 레퍼런스 옆면 여섯 장에서 인물
 # 장축이 수직에서 벗어난 각을 격자 오버레이로 쟀다: EVELYNE 43° · KOTONE 60° ·
@@ -98,6 +99,35 @@ def person_tilt(lk: Look) -> float:
     return round(min(1.0, t) * TILT_MAX, 1)
 
 
+# 머리 상자 윗변이 벨트 무릎 아래 이만큼(차체 밴드 높이의 몫)까지만 온다.
+# 벨트 무릎은 카울 높이의 어림이라(`game.seam.side_geom`) 여유를 조금 둔다.
+HEAD_BELT_PAD = 0.04
+
+
+def person_scale(lk: Look, tilt: float, mirror: bool, rig: "SideRig"
+                 ) -> tuple[float, str]:
+    """옆면 인물의 **배율** — 예산(`game.seam.person_budget`)에 내접하되 **얼굴은
+    벨트 아래**에 둔다. 되돌림: (배율, 머리 자가 물렸으면 그 설명).
+
+    사람 판은 인물 윗변을 벨트 위 29%까지 올리고 그 몫(넓이 11%)이 유리에서
+    잘리는 것을 감수한다 — 잘리는 것이 머리카락·어깨·팔이기 때문이다. 그래서
+    예산은 벨트를 넘되(`PERSON_BAND_FILL`), 머리 상자(`Look.head` — 살색 원판,
+    머리카락은 밖)의 윗변은 `HEAD_BELT_PAD`만큼 벨트 아래에 잡는다. 머리를 모르면
+    (`head_known`이 아니거나 못 찾음) 잉크 윗변 전체를 머리로 보아 벨트를 안 넘는다.
+    """
+    wb, hb = gseam.person_budget(rig.body, rig.geom)
+    iw, ih = person_ink(lk, tilt, mirror)
+    s = min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+    f = head_top_frac(lk, tilt, mirror)
+    if f is None:
+        f = 1.0
+    cap = rig.geom.body_height * (1.0 - HEAD_BELT_PAD) / max(1e-6, f * ih)
+    if cap >= s:
+        return s, ""
+    return cap, msg("얼굴이 벨트라인에 걸려 {pct:.0f}% 줄인다",
+                    pct=(1.0 - cap / max(1e-9, s)) * 100)
+
+
 def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     """옆면 인물의 **눕히는 각도**를 면 예산에서 푼다. 되돌림: (각도, 설명).
 
@@ -129,12 +159,7 @@ def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     """
     if lk.kind != "tall" or not rigs:
         return 0.0, ""
-    wb = hb = None
-    for r in rigs.values():
-        w, h = gseam.person_budget(r.body, r.geom)
-        wb = w if wb is None else min(wb, w)
-        hb = h if hb is None else min(hb, h)
-    if not wb or not hb:
+    if not all(gseam.person_budget(r.body, r.geom)[0] > 1e-5 for r in rigs.values()):
         return 0.0, ""
 
     # 탐색은 **부호를 넣어** 돈다 — 잉크 껍질은 좌우 대칭이 아니라 +θ와 −θ의
@@ -142,8 +167,12 @@ def person_pose(lk: Look, rigs: "dict[str, SideRig]") -> tuple[float, str]:
     sgn = -1.0 if LIE_HEAD_REAR else 1.0
 
     def _s(deg: float) -> float:
-        iw, ih = person_ink(lk, deg)
-        return min(wb / max(1e-6, iw), hb / max(1e-6, ih))
+        # 예산은 두 면 중 **빡빡한 쪽** — 머리 자까지 넣어 잰다 (얼굴이 벨트에
+        # 걸리는 각은 그만큼 작아지므로 그 각을 고르지 않는다)
+        return min(person_scale(lk, deg, r.mirror, r)[0] for r in rigs.values())
+
+    wb, hb = (min(v) for v in zip(*(gseam.person_budget(r.body, r.geom)
+                                     for r in rigs.values())))
 
     up = _s(0.0)
     best, bs = 0.0, up
@@ -218,9 +247,22 @@ class ManualPlace:
     scale: float = 0.25
     rot: float = 0.0
     mirror: bool = False
+    # **역할표** (`compose.cast`) — 이 덩어리가 차에서 무엇인가. `hero`가 옆면
+    # 구성의 앵커이고, `support`는 사람이 놓은 면에 그대로 두며(그 면의 변주는
+    # 안 짓는다), `logo`·`text`는 미러하지 않고, `pinned`는 꾸밈이 안 건드린다
+    # (면 밖 자르기도 안 한다). 자동 경로의 배치는 전부 `hero`다.
+    role: str = "hero"
+    no_mirror: bool = False
+    pinned: bool = False
 
     def key(self) -> str:
         return str(Path(self.plan).resolve())
+
+    @property
+    def anchors(self) -> bool:
+        """옆면 설계의 뿌리가 될 수 있나 — 그림(주역·보조)만. 로고·글자·그대로는
+        구도의 재료이지 뿌리가 아니다."""
+        return self.role in ("hero", "support")
 
 
 def manual_box(lk: Look, mp: ManualPlace,
@@ -265,6 +307,42 @@ def drawable(name: str, maps: dict[str, gsurf.SurfaceMap],
     return (sm.drawn or sm) if sm is not None else None
 
 
+# 로고·글자가 앉을 자리의 **가장자리 여유** — 면 긴 변의 몫. 마스크 계단·이음새·
+# 정면도 경계에서 한두 유닛 어긋나도 잘리지 않게 안쪽으로 들인다.
+MARK_EDGE_PAD = 0.015
+
+
+def usable(name: str, maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"],
+           media: str | None = None) -> gsurf.SurfaceMap | None:
+    """로고·글자가 **온전히 보이게** 앉을 수 있는 지도 (사용자 지시 2026-09-03:
+    면을 벗어나면 안 된다).
+
+    그리는 지도(`drawable`)에 두 겹을 더 건다: **정면도**(`surface_exposure` ≥
+    `EXPOSED_FULL` — 범퍼·후드 코끝은 칠해지지만 눌려서 안 보이고 미리보기도
+    어둡게 깐다; 프론트 마스크의 59~77%가 그렇다) 와 **가장자리 여유**
+    (`MARK_EDGE_PAD`만큼 침식). 마스크만 바뀐 사본이라 `fit`·`masked_at`·`_pane`이
+    그대로 이 자를 쓴다. 정면도를 못 재는 면(도어 유리)은 여유만 든다.
+    """
+    sm = drawable(name, maps, rigs)
+    if sm is None or sm.mask.size <= 1:
+        return sm
+    m = sm.mask.copy()
+    e = surface_exposure(name, sm, maps, media)
+    if e is not None and np.asarray(e).shape == m.shape:
+        m &= np.asarray(e, np.float32) >= EXPOSED_FULL
+    mh, mw = m.shape
+    u0, v0, u1, v1 = sm.paint
+    span = max(u1 - u0, v1 - v0)
+    px = int(round(MARK_EDGE_PAD * span * mw / max(1e-6, u1 - u0)))
+    py = int(round(MARK_EDGE_PAD * span * mh / max(1e-6, v1 - v0)))
+    if px > 0 or py > 0:
+        import cv2
+        m = cv2.erode(m.astype(np.uint8),
+                      np.ones((2 * py + 1, 2 * px + 1), np.uint8)).astype(bool)
+    return replace(sm, mask=m, fill=round(float(m.mean()), 4), drawn=None,
+                   note=(sm.note + "+usable") if sm.note else "usable")
+
+
 # 표시 밝기 — 도색 마스크 밖과 **안 보이는 자리**를 이만큼 어둡게 깐다.
 EXPOSED_FLOOR = 0.22          # 아주 안 보이는 자리 (마스크 밖과 같은 값)
 
@@ -303,6 +381,70 @@ def surface_exposure(name: str, smap: gsurf.SurfaceMap,
 # 마스크는 실측이라 가장자리가 한두 유닛 어긋날 수 있고, 걸친 레이어를 버리면
 # 이음새에 빈 띠가 생긴다 — 그래서 조금 넉넉히 두고 그 밖만 뺀다.
 OFF_CAR_MARGIN = 0.02
+
+
+def ink_outside(layers, cat: Catalog, L: np.ndarray, t: np.ndarray,
+                mm: gsurf.SurfaceMap) -> tuple[float, tuple[float, float]]:
+    """레이어 잉크 중 **면 마스크 밖**의 몫과, 안으로 들이려면 밀어야 할 (du, dv).
+
+    잉크는 레이어 껍질을 마스크 격자에 찍은 것이고 변환은 `q = p·Lᵀ + t`(면 유닛).
+    밀 양은 밖에 있는 픽셀들이 마스크 상자의 어느 변을 넘었나로 잰다 — 벨트 위면
+    아래로, 로커 아래면 위로, 앞뒤 끝이면 안쪽으로 (면 유닛, 여유 2유닛 포함).
+    """
+    import cv2
+    m = mm.mask
+    if m.size <= 1:
+        return 0.0, (0.0, 0.0)
+    mh, mw = m.shape
+    a0, b0, a1, b1 = mm.paint
+    kx = (mw - 1) / max(1e-6, a1 - a0)
+    ky = (mh - 1) / max(1e-6, b1 - b0)
+    qs = [q for l in layers
+          if len(pts := layer_points(l, cat)) and (q := pts @ L.T + t) is not None]
+    if not qs:
+        return 0.0, (0.0, 0.0)
+    allq = np.concatenate(qs, 0)
+    # 캔버스는 마스크 상자 ∪ 잉크 상자다 — 마스크 격자에만 찍으면 격자 밖(벨트 위)으로
+    # 나간 잉크가 잘려 "밖"이 0으로 나온다 (미아타 사인 글자: 23유닛 위인데 0)
+    c0, d0 = min(a0, float(allq[:, 0].min())), min(b0, float(allq[:, 1].min()))
+    c1, d1 = max(a1, float(allq[:, 0].max())), max(b1, float(allq[:, 1].max()))
+    W = int(np.ceil((c1 - c0) * kx)) + 2
+    H = int(np.ceil((d1 - d0) * ky)) + 2
+    ink = np.zeros((H, W), np.uint8)
+    for q in qs:
+        px = np.stack([(q[:, 0] - c0) * kx, (d1 - q[:, 1]) * ky], axis=1)
+        cv2.fillPoly(ink, [np.round(px).astype(np.int32)], 1)
+    n_ink = int(ink.sum())
+    if n_ink == 0:
+        return 0.0, (0.0, 0.0)
+    big = np.zeros((H, W), bool)
+    oy, ox = int(round((d1 - b1) * ky)), int(round((a0 - c0) * kx))
+    big[oy:oy + mh, ox:ox + mw] = m[:min(mh, H - oy), :min(mw, W - ox)]
+    inside = ink.astype(bool) & big
+    out = ink.astype(bool) & ~big
+    n_out = int(out.sum())
+    over = {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
+    if n_out:
+        ys, xs = np.nonzero(out)
+        vs = d1 - ys / ky
+        us = c0 + xs / kx
+        # 마스크 안쪽 잉크의 무게중심에서 밖 잉크가 어느 쪽에 있나 — 그만큼 반대로 민다
+        iy, ix = np.nonzero(inside)
+        cv = float((d1 - iy / ky).mean()) if len(iy) else float(vs.mean())
+        cu = float((c0 + ix / kx).mean()) if len(ix) else float(us.mean())
+        above = vs > cv
+        if above.any():
+            over["top"] = float(vs[above].max() - max(cv, b1 if len(iy) else cv))
+        if (~above).any():
+            over["bottom"] = float(min(cv, b0 if len(iy) else cv) - vs[~above].min())
+        aright = us > cu
+        if aright.any():
+            over["right"] = float(us[aright].max() - max(cu, a1 if len(ix) else cu))
+        if (~aright).any():
+            over["left"] = float(min(cu, a0 if len(ix) else cu) - us[~aright].min())
+        over = {k: max(0.0, v) for k, v in over.items()}
+    frac = n_out / max(1, n_ink)
+    return frac, (over["left"] - over["right"], over["bottom"] - over["top"])
 
 
 def layers_on(plan: LayerPlan, cat: Catalog, L: np.ndarray, t: np.ndarray,
@@ -414,8 +556,8 @@ def dodge_parts(box: tuple[float, float, float, float], rig: "SideRig",
     기다리고 있었다: 도색 마스크에는 그 구멍이 없어서 지금까지 "안 잰다"였고,
     설치 파일 로케이터가 그 자리를 준다 (`game.locators`).
 
-    **크기는 안 건드린다** — 작게 만들면 지침 하나 지키려고 레퍼런스 문법(문짝
-    채움 0.75)을 깨는 셈이다. 미는 것도 **문짝 구간 안**이고, 그 안에서 못
+    **크기는 안 건드린다** — 작게 만들면 지침 하나 지키려고 사람 판의 문법(차체
+    밴드 채움)을 깨는 셈이다. 미는 것도 **문짝 구간 안**이고, 그 안에서 못
     비키면 그냥 둔다 (완벽히 지킬 수 없는 차가 있는 것이 정상이다).
     """
     if not rig.parts:

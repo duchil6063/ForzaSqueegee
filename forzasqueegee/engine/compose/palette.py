@@ -83,6 +83,32 @@ def base_paint(lk: Look) -> tuple[tuple[int, int, int], tuple[float, float, floa
     return rgb, rgb_to_hsb(*rgb)
 
 
+# 파스텔 베이스 — 채도 상한 · 명도 하한, 지배 색조가 없을 때의 채도.
+PASTEL_BASE_SAT = 0.22
+PASTEL_BASE_VAL = 0.93
+PASTEL_BASE_SAT_FLAT = 0.14
+
+
+def pastel_base(lk: Look) -> tuple[tuple[int, int, int], tuple[float, float, float]]:
+    """무늬·꽃 프리셋의 **파스텔 바탕** — `base_paint`의 색조를 옅고 밝게 눌러 낸다.
+
+    테마색이 선 도안은 그 색조의 파스텔, 흰/검으로 물러난 도안은 인물의 지배
+    색조(없으면 주 액센트)를 아주 옅게 깐다 — 어느 쪽이든 인물보다 연하다.
+    """
+    rgb, (h, s, b) = base_paint(lk)
+    if s >= BASE_SAT_MIN:
+        hsb = (h, min(s, PASTEL_BASE_SAT), max(b, PASTEL_BASE_VAL))
+    else:
+        dom = dominant(lk)
+        if dom is None:
+            ah, _s, _b = rgb_to_hsb(*accent_color(lk, rgb))
+        else:
+            ah = dom[0]
+        hsb = (ah, PASTEL_BASE_SAT_FLAT, PASTEL_BASE_VAL)
+    out = tuple(int(round(v * 255)) for v in colorsys.hsv_to_rgb(*hsb))
+    return out, rgb_to_hsb(*out)
+
+
 # 인물 **지배색**과 베이스가 이만큼 안쪽이면 같은 색조로 본다
 PERSON_HUE_NEAR = 0.10
 

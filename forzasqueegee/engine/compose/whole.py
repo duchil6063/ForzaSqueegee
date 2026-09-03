@@ -951,12 +951,12 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
             c[nm] = c.get(nm, 0) + int(b)
         return c
 
-    def _budget(cur: dict) -> dict:
+    def _budget(cur: dict, gate: float = margin) -> dict:
         """① 장수 — 위계 배수를 곱한 한계효용 순 (제자리 아님, 새 사전)."""
         cur = dict(cur)
         while True:
             pen0 = _feat_penalty(_mass(cur, fill), _counts(cur), prior)
-            best, gain = None, margin
+            best, gain = None, gate
             for name in sorted(roles):
                 kind, area = roles[name]
                 v = vs.get(kind)
@@ -982,6 +982,18 @@ def allocate_hier(roles: dict, vs: dict, *, caps: dict | None = None,
     got = _budget(got)
     live = {n: b for n, b in got.items()
             if b >= VARIANT_MIN.get(roles[n][0], 1)}
+    # **주역이 가벼우면** 제 크기의 받침은 첫 장부터 위계를 깨서 ①이 아무 면도
+    # 못 세운다 (사전이 사람 판으로 좁혀진 뒤 — top1 p95 .83). 면이 통째로
+    # 빠지는 것이 §8의 실패 조건이므로 투영 몫을 한 눈금씩 줄여 다시 묻는다 —
+    # ②가 하는 일을 ① 앞으로 당긴 것뿐이라 손잡이는 같다.
+    for f in FILL_STEPS[1:]:
+        if live:
+            break
+        fill = {n: f for n in roles}
+        # 문턱도 f²로 — 같은 여덟 장이 작게 앉으면 그만큼 덜 버는 것은 구조다
+        got = _budget({n: 0 for n in roles}, margin * f * f)
+        live = {n: b for n, b in got.items()
+                if b >= VARIANT_MIN.get(roles[n][0], 1)}
     if not live:
         return {}
 

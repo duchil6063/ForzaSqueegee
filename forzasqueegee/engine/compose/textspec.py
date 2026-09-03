@@ -39,6 +39,7 @@ class TextSpec:
     enabled: bool = False
     main: str | None = None          # 캐릭터 이름 (character tag / wordmark)
     sub: str | None = None           # 작품명 · 별칭 · 팀명 (보조)
+    number: str | None = None        # 레이싱 번호 — 레이싱 프리셋만 앉힌다 (`presets`)
     style: str = "auto"
     engine: str = "font"             # font = 게임 글꼴 글리프 · shapes = 도형 맞춤 (OFL 글꼴)
     placement: str = "auto"
@@ -63,6 +64,7 @@ class TextSpec:
         spec = cls(
             enabled=bool(d.get("enabled", False)),
             main=_clean(d.get("main")), sub=_clean(d.get("sub")),
+            number=_clean(d.get("number")),
             style=("auto" if str(d.get("style") or "auto") == "game"
                    else str(d.get("style") or "auto")),
             engine=("font" if str(d.get("style") or "") == "game"
@@ -113,6 +115,7 @@ def text_from_args(args) -> TextSpec | None:
     tri = lambda v: "auto" if v in (None, "auto") else ("on" if v in ("on", True, "1") else "off")
     return TextSpec.from_dict({
         "enabled": True, "main": main, "sub": getattr(args, "subtext", None),
+        "number": getattr(args, "text_number", None),
         "style": getattr(args, "text_style", None) or "auto",
         "engine": getattr(args, "text_engine", None) or "font",
         "placement": getattr(args, "text_placement", None) or "auto",

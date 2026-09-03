@@ -1,0 +1,187 @@
+From fb16832eef10de6848621d97e869cadeb07e353f Mon Sep 17 00:00:00 2001
+From: duchil6063 <gustn9634@gmail.com>
+Date: Thu, 3 Sep 2026 19:50:48 +0900
+Subject: [PATCH 09/10] itasha: style presets in the Auto Decoration dialog -
+ the list, wording and thumbnails come from the engine (flsedit state), a race
+ number field, text group on by default
+
+---
+ src/gui/app/main_window_itasha.cpp | 86 +++++++++++++++++++-----------
+ src/gui/i18n.cpp                   | 10 ++++
+ 2 files changed, 64 insertions(+), 32 deletions(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index bd3da29..274717d 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -40,10 +40,12 @@
+ #include <QGroupBox>
+ #include <QHBoxLayout>
+ #include <QHeaderView>
++#include <QHash>
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
+ #include <QLabel>
++#include <QPixmap>
+ #include <QLineEdit>
+ #include <QListWidget>
+ #include <QPushButton>
+@@ -78,27 +80,6 @@ constexpr int kItashaTimeoutMs = 30 * 60 * 1000;   // 도안 하나가 몇 분 
+ const char *const kMotifFamilies[] = {"star", "flower", "splat", "swirl",
+                                       "crystal"};
+ 
+-// Composition families the side decoration is built from (engine/compose/
+-// families.py). Auto builds every candidate and keeps the best-scoring one.
+-struct CompositionFamily {
+-    const char *name;
+-    const char *text;
+-    const char *tip;
+-};
+-
+-const CompositionFamily kCompositionFamilies[] = {
+-    {"minimal", "&Minimal",
+-     "A thin slab, a few motifs, lots of empty space"},
+-    {"graphic_bed", "&Graphic Bed",
+-     "A big colour plate behind the character carries the composition"},
+-    {"diagonal_flow", "&Diagonal Flow",
+-     "Two diagonal plates run past the character; motifs follow the grain"},
+-    {"motorsport", "Moto&rsport",
+-     "Rocker, stripes and straight lines - a low slab, few motifs"},
+-    {"splash", "&Splash",
+-     "A blob bed with torn edges and many motifs, some over the artwork"},
+-};
+-
+ // Text styles, placements and priorities the engine accepts
+ // (engine/compose/textspec.py). The first entry of each list is the default.
+ const char *const kTextStyles[] = {"auto", "script", "brush", "graffiti",
+@@ -598,19 +579,49 @@ void MainWindow::showItashaDecorationDialog() {
+     auto *compGroup = new QGroupBox(i18n::t("Composition"), &dialog);
+     auto *compForm = new QFormLayout(compGroup);
+     auto *composition = new QComboBox(compGroup);
+-    composition->addItem(i18n::t("Auto (score picks)"), QStringLiteral("auto"));
+-    for (const CompositionFamily &fam : kCompositionFamilies) {
+-        composition->addItem(i18n::t(QString::fromLatin1(fam.text)).remove(QLatin1Char('&')),
+-                             QString::fromLatin1(fam.name));
+-        composition->setItemData(composition->count() - 1, i18n::t(fam.tip),
++    // The presets - key, label, tip, thumbnail - come from the engine's
++    // `flsedit state` (engine/compose/presets.py): the list, its wording and
++    // its language live there, so the editor never repeats them.
++    QJsonArray presets = state.value(QStringLiteral("style_presets")).toArray();
++    if (presets.isEmpty()) {
++        QJsonObject autoItem;
++        autoItem.insert(QStringLiteral("key"), QStringLiteral("auto"));
++        autoItem.insert(QStringLiteral("label"), i18n::t("Auto (score picks)"));
++        presets.append(autoItem);
++    }
++    QHash<QString, QString> thumbs;
++    for (const QJsonValue &v : presets) {
++        const QJsonObject p = v.toObject();
++        const QString key = p.value(QStringLiteral("key")).toString();
++        composition->addItem(p.value(QStringLiteral("label")).toString(key), key);
++        composition->setItemData(composition->count() - 1,
++                                 p.value(QStringLiteral("tip")).toString(),
+                                  Qt::ToolTipRole);
++        thumbs.insert(key, p.value(QStringLiteral("thumb")).toString());
+     }
+-    pickCombo(composition, state.value(QStringLiteral("family")).toString(
++    pickCombo(composition, state.value(QStringLiteral("style")).toString(
+                                QStringLiteral("auto")));
+     composition->setToolTip(i18n::t(
+-        "Which grammar the side decoration is composed in - bed, flow, density, "
+-        "empty space. Auto builds every family and keeps the best-scoring one."));
+-    compForm->addRow(i18n::t("Composition family:"), composition);
++        "A style read from hand-made liveries - the composition family plus base "
++        "paint, palette, lettering, logo row and panel assignment as one set. Auto "
++        "builds every family and keeps the best-scoring one."));
++    compForm->addRow(i18n::t("Style preset:"), composition);
++    // One picture per preset, when the engine ships one.
++    auto *thumb = new QLabel(compGroup);
++    thumb->setAlignment(Qt::AlignCenter);
++    const auto showThumb = [thumb, thumbs](const QString &key) {
++        const QPixmap pm(thumbs.value(key));
++        thumb->setVisible(!pm.isNull());
++        if (!pm.isNull()) {
++            thumb->setPixmap(pm.scaledToWidth(360, Qt::SmoothTransformation));
++        }
++    };
++    showThumb(composition->currentData().toString());
++    QObject::connect(composition, &QComboBox::currentIndexChanged, thumb,
++                     [composition, showThumb](int) {
++                         showThumb(composition->currentData().toString());
++                     });
++    compForm->addRow(QString(), thumb);
+     auto *motif = new QComboBox(compGroup);
+     motif->addItem(i18n::t("Auto (the design picks)"), QStringLiteral("auto"));
+     for (const char *family : kMotifFamilies) {
+@@ -667,7 +678,9 @@ void MainWindow::showItashaDecorationDialog() {
+     // ---- Text ----
+     auto *textGroup = new QGroupBox(i18n::t("Character Name Text"), &dialog);
+     textGroup->setCheckable(true);
+-    textGroup->setChecked(textState.value(QStringLiteral("enabled")).toBool(false));
++    // Checked by default - the recipe starts with the text group on (nothing
++    // is drawn until a name is typed).
++    textGroup->setChecked(textState.value(QStringLiteral("enabled")).toBool(true));
+     textGroup->setToolTip(i18n::t(
+         "Put the character's name (and a title) into the decoration as a "
+         "wordmark - the game's own font, or shapes fitted to a bundled font "
+@@ -692,6 +705,11 @@ void MainWindow::showItashaDecorationDialog() {
+     auto *title = new QLineEdit(stateOr("sub", QString()), textGroup);
+     title->setPlaceholderText(QStringLiteral("EVANGELION"));
+     form->addRow(i18n::t("Title / tagline (optional):"), title);
++    auto *number = new QLineEdit(stateOr("number", QString()), textGroup);
++    number->setPlaceholderText(QStringLiteral("07"));
++    number->setToolTip(i18n::t(
++        "A big number on the rear quarter - only the Racing Sponsor preset places it"));
++    form->addRow(i18n::t("Race number (racing preset):"), number);
+     const auto combo = [&](const char *const *items, int count, const char *key) {
+         auto *box = new QComboBox(textGroup);
+         for (int i = 0; i < count; ++i) {
+@@ -877,7 +895,7 @@ void MainWindow::showItashaDecorationDialog() {
+                 roleBoxes.at(i)->currentData().toString());
+         }
+     }
+-    extra << QStringLiteral("--composition") << composition->currentData().toString()
++    extra << QStringLiteral("--style") << composition->currentData().toString()
+           << QStringLiteral("--family") << motif->currentData().toString();
+     if (paintMode->currentData().toString() == QStringLiteral("pick")) {
+         extra << QStringLiteral("--color") << chosen.name(QColor::HexRgb);
+@@ -888,6 +906,7 @@ void MainWindow::showItashaDecorationDialog() {
+     if (textGroup->isChecked() && !main.trimmed().isEmpty()) {
+         settings.setValue(QStringLiteral("main"), main);
+         settings.setValue(QStringLiteral("sub"), title->text());
++        settings.setValue(QStringLiteral("number"), number->text());
+         settings.setValue(QStringLiteral("style"), style->currentData().toString());
+         settings.setValue(QStringLiteral("placement"), placement->currentData().toString());
+         settings.setValue(QStringLiteral("priority"), priority->currentData().toString());
+@@ -901,6 +920,9 @@ void MainWindow::showItashaDecorationDialog() {
+         if (!title->text().trimmed().isEmpty()) {
+             extra << QStringLiteral("--subtext") << title->text();
+         }
++        if (!number->text().trimmed().isEmpty()) {
++            extra << QStringLiteral("--text-number") << number->text();
++        }
+         extra << QStringLiteral("--text-style") << style->currentData().toString()
+               << QStringLiteral("--text-placement") << placement->currentData().toString()
+               << QStringLiteral("--text-priority") << priority->currentData().toString()
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index 6ae96eb..d8fa9be 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -592,6 +592,16 @@ const Entry kTable[] = {
+     {"Composition", "구성"},
+     {"Auto (score picks)", "자동 (점수가 고름)"},
+     {"Composition family:", "구성 계열:"},
++    {"Style preset:", "스타일 프리셋:"},
++    {"A style read from hand-made liveries - the composition family plus base "
++     "paint, palette, lettering, logo row and panel assignment as one set. Auto "
++     "builds every family and keeps the best-scoring one.",
++     "사람이 만든 리버리에서 읽은 스타일 — 구성 계열에 바탕 도색·팔레트·글자·"
++     "로고 줄·면 배정이 한 벌로 옵니다. 자동은 계열을 다 지어 점수가 제일 좋은 "
++     "것을 남깁니다."},
++    {"Race number (racing preset):", "레이싱 번호 (레이싱 프리셋):"},
++    {"A big number on the rear quarter - only the Racing Sponsor preset places it",
++     "리어 쿼터의 큰 숫자 — 레이싱 스폰서 프리셋만 앉힙니다"},
+     {"Auto (the design picks)", "자동 (도안이 고름)"},
+     {"Which family the scattered decoration draws from. The design's theme "
+      "colour picks one; a character you know is better picked by hand.",

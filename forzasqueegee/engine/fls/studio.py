@@ -34,6 +34,28 @@ r"""내장 편집기가 부르는 **이타샤 엔진** — 리버리 프로젝�
    조리법이 다시 못 짓는 그림이 되어 지금 있는 그대로 도안으로 받는다. 안 그러면
    다음 굽기가 도안 파일에서 지운 레이어를 도로 올린다.
 
+## 실린 것 전부가 재료다 — 역할표
+
+사용자 결정 2026-09-02: 편집기에 실린 덩어리 **전부**가 꾸밈의 재료다. 열 때마다
+덩어리마다 역할을 읽어 조리법에 싣는다 (`cast` → `compose.cast`): **주역**(옆면
+구성의 앵커 — 가장 크게 덮는 주역이 색·모티프·도색을 정한다) · **보조**(사람이
+놓은 면에 그대로 두고 그 면의 변주는 안 짓는다) · **로고** · **글자**(미러하지
+않는다) · **그대로**(꾸밈이 건드리지 않는다). 사람이 [Auto Decoration] 창의 실린
+그림 표에서 고치면 `role_user`로 못 박혀 다시 열어도 그대로다 (`act_roles`).
+차 예산(`compose.whole.allocate_hier`)은 사람이 올린 덩어리를 **고정 질량**으로
+받고, 그 덩어리가 앉은 면에는 변주를 안 앉힌다.
+
+## 로고와 좌우 (3단계)
+
+로고는 두 곳에서 온다 (사용자 결정 ②): **내장 워터마크**(기본 켬, `catalog/kit`)와
+**사용자 로고 이미지**(대화상자 슬롯 0~N — 열 때 벡터화해 `<작업 폴더>/logos/`에
+캐시, `act_logos`). 편집기에 올린 덩어리 중 역할이 로고인 것은 그 자리 그대로다.
+앉히는 문법은 `compose.sponsor`다. **로고·글자는 미러하지 않는다** (사용자 결정
+③) — 좌우 대칭이 그것들을 만나면 반대편의 거울 자리에 읽는 방향 그대로 다시
+앉힌다 (`compose.reseat_place`). "한쪽에만 있으면 반대편에 대칭"(`symmetry`,
+기본 켬)은 자동 꾸밈 창이 켜질 때 한 번 돈다 (`_symmetrize`) — 그림은 거울,
+로고·글자는 다시 앉히기, 우리가 세운 사본은 `symmetry` 표시를 달아 끄면 걷는다.
+
 ## 시키지 않은 것은 안 한다
 
 **꾸밈은 부를 때만 짠다** (사용자 지시 2026-08-27 · 2026-09-01). 도안을 올리면
@@ -79,7 +101,7 @@ ADOPTED_DIR = "adopted"
 # **이 문법에 안 맞는 `FS:` 그룹은 사람 몫이다** — 편집기의 그룹 복사는 이름을
 # 그대로 두고 " (Copy)"를 붙이므로(`FS:decal-1 (Copy)`) 머리만 보면 구성기 몫과
 # 안 갈린다. 그 사본은 조리법이 모르는 그림이라 `_adopt`가 도안으로 받는다.
-MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text)(?:-[A-Za-z0-9_.]+)*$")
+MADE_CHUNK = re.compile(r"^(?:decal-\d+|deco|shapes|text|logos)(?:-[A-Za-z0-9_.]+)*$")
 DECAL_CHUNK = re.compile(r"^decal-(\d+)(?:-.*)?$")
 
 
@@ -132,13 +154,28 @@ def _blank_state() -> dict:
             # (`hush_deco`). 고른 계열·이름 글자는 남으니 다시 누르면 그 설정으로
             # 자란다.
             "paint": None, "deco": False, "motif": None, "designs": [],
-            # 글자 — 기본 꺼짐. 켜면 캐릭터 이름(+작품명)이 꾸밈의 한 요소로
-            # 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져 있으면 안 선다.
-            "text": {"enabled": False, "main": None, "sub": None, "style": "auto",
-                     "engine": "font",
+            # 스타일 프리셋 — None이면 자동 (후보를 다 지어 점수로). 편집기
+            # 드롭다운이 이것이다 (`compose.STYLE_PRESETS`). 구성 계열 `family`는
+            # CLI 레버로만 남는다.
+            "style": None,
+            # 글자 — 묶음은 **기본 켬**이나 이름이 비면 안 선다 (프리셋 단계의
+            # 결정 — 사람 판 24/30이 이름 글자를 쓴다). 켜면 캐릭터 이름(+작품명)이
+            # 꾸밈의 한 요소로 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져
+            # 있으면 안 선다.
+            "text": {"enabled": True, "main": None, "sub": None, "number": None,
+                     "style": "auto", "engine": "font",
                      "placement": "auto", "priority": "normal",
                      "allow_fallback_to_game_text": True, "max_layers": None,
-                     "outline": "auto", "shadow": "auto"}}
+                     "outline": "auto", "shadow": "auto"},
+            # 로고 — 내장 워터마크(기본 켬) + 사용자 로고 이미지 (`compose.LogoSpec`).
+            "logos": {"watermark": True, "images": [], "placement": "auto"},
+            # 한쪽 옆면(도어 유리)에만 있으면 반대편에 세운다 — 그림은 거울, 로고·
+            # 글자는 읽는 방향 그대로 (`_symmetrize`).
+            "symmetry": True,
+            # 면 배정 — 유리·리어·프론트·윈드실드가 맡는 일 (`compose.FaceSpec`).
+            # `auto`는 로고·글자가 있으면 그것, 없으면 크롭으로 물러난다.
+            "faces": {"window": "auto", "rear_window": "auto", "rear": "auto",
+                      "front": "auto", "windshield": "auto"}}
 
 
 def state_path(project_path: str | Path) -> Path:
@@ -160,11 +197,24 @@ def open_project(project_path: str | Path, *,
             state.update(json.loads(sp.read_text(encoding="utf-8")))
         except ValueError:
             pass                    # 깨진 조리법은 빈 것으로 시작한다
+    _migrate_family(state)
     st = Studio(path=p, doc=doc, state=state, notes=[])
     _learn_car(st, geometry)
     live, force = _absorb(st)
     _adopt(st, live, force)
+    cast(st)
     return st
+
+
+def _migrate_family(state: dict) -> None:
+    """옛 조리법의 `family`(구성 계열 드롭다운) → `style`(프리셋). 한 번만 —
+    프리셋이 없고 계열만 적힌 조리법이 대상이다. 사선 흐름은 짝이 없어 자동으로."""
+    from .. import compose
+
+    if state.get("style") is not None or not state.get("family"):
+        return
+    state["style"] = compose.LEGACY_STYLE_FAMILY.get(state["family"])
+    state["family"] = None
 
 
 def save_state(st: Studio) -> Path:
@@ -253,7 +303,8 @@ def _absorb(st: Studio) -> tuple[set[int], set[tuple[str, str]]]:
 
     첫째 반환값은 **아직 조리법이 짓는 덩어리 번호**다 — 문서의 `decal-<n>`은 구울
     때의 번호라, 여기서 뺀 도안 때문에 번호를 다시 매기면 남은 도안의 덩어리가
-    남의 번호로 읽혀 두 겹으로 실린다."""
+    남의 번호로 읽혀 두 겹으로 실린다. 꾸밈이 켜진 판에서는 차 전체 구성의 변주
+    덩어리(조리법 도안 뒤 번호)도 장수가 그대로면 여기 든다."""
     chunks = project.section_chunks(st.doc)
     counts = _chunk_counts(st.doc)
     baked = st.state.get("baked") or {}
@@ -263,6 +314,7 @@ def _absorb(st: Studio) -> tuple[set[int], set[tuple[str, str]]]:
     kept: list = []
     live: set[int] = set()
     force: set[tuple[str, str]] = set()
+    recipe = set(decal_numbers(st.designs))      # 구울 때의 번호 (문서와 같은 셈)
     for d, n in zip(st.designs, decal_numbers(st.designs)):
         entry = chunks.get(d.get("surface") or "")
         if entry is None:
@@ -312,6 +364,22 @@ def _absorb(st: Studio) -> tuple[set[int], set[tuple[str, str]]]:
                             surface=d["surface"]))
     if len(kept) != len(st.designs):
         st.state["designs"] = kept
+    # **차 전체 구성의 변주** (`compose.whole` — 리어·유리의 얼굴 크롭·상반신)도
+    # `FS:decal-<n>` 덩어리로 서는데 그 번호는 조리법 도안 뒤다. 꾸밈이 켜진 판에서
+    # 장수가 구울 때와 같으면 구성기가 다시 짓는 몫이라 건너뛰고, 안에서 손댔으면
+    # 도안처럼 지금 그대로 받는다. 꺼진 판(또는 조리법 없는 판)에서는 아무도 다시
+    # 안 지으니 `_adopt`가 받는다.
+    if st.state.get("deco"):
+        for surface, entry in chunks.items():
+            for k in entry["chunks"]:
+                m = DECAL_CHUNK.match(k)
+                if not m or int(m.group(1)) in recipe:
+                    continue
+                was = (baked.get(surface) or {}).get(k)
+                if was is not None and counts.get(surface, {}).get(k) == was:
+                    live.add(int(m.group(1)))
+                else:
+                    force.add((surface, project.CHUNK_PREFIX + k))
     return live, force
 
 
@@ -513,16 +581,88 @@ def _group_unit_of(st: Studio) -> float:
     return _group_unit(car)
 
 
+# ────────────────────────────── 역할표 ──────────────────────────────
+
+
+def cast(st: Studio) -> None:
+    """실린 덩어리마다 **역할**을 읽어 조리법에 싣는다 (`compose.cast`).
+
+    배치마다 `role`(쓰는 값) · `role_auto`(추정) · `role_why` · `no_mirror` ·
+    `pinned` · `layers` · `label`이 선다. 사람이 표에서 고친 것(`role_user`)은
+    다시 열어도 그대로고, 나머지는 열 때마다 다시 읽는다 — 편집기에서 레이어를
+    지우거나 가르면 장수가 바뀌어 역할도 바뀔 수 있다. 같은 도안 파일은 한 번만
+    읽는다 (좌우에 같은 그림 = 같은 역할)."""
+    from .. import compose
+
+    memo: dict[str, compose.CastEntry] = {}
+    for d in st.designs:
+        key = str(Path(d["plan"]).resolve())
+        ce = memo.get(key)
+        if ce is None:
+            try:
+                ce = compose.cast_estimate(LayerPlan.load(Path(d["plan"])))
+            except Exception as e:      # noqa: BLE001 — 못 읽는 도안은 굽기가 잡는다
+                ce = compose.CastEntry("support", msg("못 읽었다: {e}", e=e), 0, 0, 0.0, 0.0)
+            memo[key] = ce
+        d["role_auto"] = ce.role
+        d["role_why"] = ce.why
+        d["layers"] = ce.layers
+        d["label"] = d.get("adopted") or Path(d["plan"]).name
+        if not d.get("role_user") or d.get("role") not in compose.CAST_ROLES:
+            d["role"] = ce.role
+            d.pop("role_user", None)
+        role = d["role"]
+        d["no_mirror"] = role in compose.NO_MIRROR_ROLES
+        d["pinned"] = role == "pinned"
+
+
+def act_roles(st: Studio, roles: dict[int, str]) -> str:
+    """실린 그림 표에서 사람이 고른 역할 — `번호 → 역할` (번호는 `designs` 차례).
+
+    `auto`(또는 추정과 같은 값)면 사람 손을 뗀다 — 다음에 열 때 다시 읽는다.
+    다른 값이면 못 박는다 (`role_user`)."""
+    from .. import compose
+
+    changed: list[str] = []
+    for i, role in sorted(roles.items()):
+        if not 0 <= i < len(st.designs):
+            raise ValueError(msg("역할 번호가 범위 밖이다 — {i} (실린 덩어리 {n}개)",
+                                 i=i, n=len(st.designs)))
+        d = st.designs[i]
+        if role == "auto" or role == d.get("role_auto"):
+            d.pop("role_user", None)
+            d["role"] = d.get("role_auto") or "hero"
+        elif role in compose.CAST_ROLES:
+            d["role"] = role
+            d["role_user"] = True
+        else:
+            raise ValueError(msg("모르는 역할: {role!r} (있는 것: {roles} · auto)",
+                                 role=role, roles=", ".join(compose.CAST_ROLES)))
+        d["no_mirror"] = d["role"] in compose.NO_MIRROR_ROLES
+        d["pinned"] = d["role"] == "pinned"
+        changed.append(f"{d.get('label') or Path(d['plan']).name}={compose.CAST_LABELS[d['role']]}")
+    if not any(d.get("role") in ("hero", "support") for d in st.designs):
+        st.notes.append(msg("그림(주역·보조)이 하나도 없다 — 로고·글자만으로는 "
+                            "구도의 뿌리가 없어 가장 큰 덩어리를 뿌리로 쓴다"))
+    return msg("역할 {what}", what=" · ".join(changed) if changed else msg("그대로"))
+
+
 # ────────────────────────────── 굽기 ──────────────────────────────
 
 
 def _main_index(st: Studio) -> int:
-    """주역 = **면에서 가장 크게 덮는** 도안 (색·모티프·베이스 도색을 이게 정한다)."""
+    """주역 = 역할이 `hero`인 것 중 **면에서 가장 크게 덮는** 도안 (색·모티프·
+    베이스 도색을 이게 정한다). 주역이 없으면 그림(보조) 중에서, 그것도 없으면
+    전부에서 고른다 — 로고만 올린 판도 서야 한다."""
     from .. import compose
 
     cat = Catalog(default_catalog_path())
-    best, area = 0, -1.0
-    for i, d in enumerate(st.designs):
+    pool = [i for i, d in enumerate(st.designs) if d.get("role") == "hero"] \
+        or [i for i, d in enumerate(st.designs) if d.get("role") == "support"] \
+        or list(range(len(st.designs)))
+    best, area = pool[0] if pool else 0, -1.0
+    for i in pool:
+        d = st.designs[i]
         try:
             plan = LayerPlan.load(Path(d["plan"]))
             lk = compose.look(plan, cat)
@@ -538,10 +678,13 @@ def _main_index(st: Studio) -> int:
 def _manual(d: dict):
     from .. import compose
 
+    role = str(d.get("role") or "hero")
     return compose.ManualPlace(
         plan=Path(d["plan"]), surface=d["surface"], x=float(d.get("x", 0.0)),
         y=float(d.get("y", 0.0)), scale=float(d.get("scale", 0.25)),
-        rot=float(d.get("rot", 0.0)), mirror=bool(d.get("mirror")))
+        rot=float(d.get("rot", 0.0)), mirror=bool(d.get("mirror")),
+        role=role, no_mirror=bool(d.get("no_mirror", role in compose.NO_MIRROR_ROLES)),
+        pinned=bool(d.get("pinned", role == "pinned")))
 
 
 def rebuild(st: Studio, *, log=None) -> dict:
@@ -569,7 +712,10 @@ def rebuild(st: Studio, *, log=None) -> dict:
         # 구성 계열은 자동(후보 점수)이 기본이다 — 조리법에 `family`가 적혀
         # 있으면 그 계열로 못 박는다 (메뉴는 없다, 사람이 조리법에 적는 레버)
         family=st.state.get("family"),
+        style=st.state.get("style"),
         text=st.state.get("text") or None,
+        logos=st.state.get("logos") or None,
+        faces=st.state.get("faces") or None,
         mirror=False, preview=False, log=log)
     cfg_path = Path(cfg.path)
     doc, stats = _write_project(st, cfg_path)
@@ -692,8 +838,11 @@ def _auto_place_one(st: Studio, d: dict) -> None:
     cat = Catalog(default_catalog_path())
     lk = compose.look(plan, cat)
     rigs = compose.side_rigs(maps, [], media=st.state.get("media"))
+    # 윗면에 올린 **보조** 그림은 후드 자리다 (사람 판의 후드 둘째 캐릭터)
     mp = compose.auto_place(d["surface"], Path(d["plan"]), lk, maps, rigs,
-                            mirror=bool(d.get("mirror")), notes=st.notes)
+                            mirror=bool(d.get("mirror")), notes=st.notes,
+                            hood=d.get("role") == "support",
+                            media=st.state.get("media"))
     if mp is None:
         st.notes.append(msg("{surface}: 자동 자리를 못 잡았다 — 프리셋으로 둔다",
                             surface=d["surface"]))
@@ -828,16 +977,32 @@ def act_text(st: Studio, fields: dict) -> str:
 def act_decorate(st: Studio, *, composition: str | None = None,
                  motif: str | None = None, paint: str | None = None,
                  auto_paint: bool = False, text: dict | None = None,
-                 drop_text: bool = False) -> str:
-    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자를 한 번에 받아 켠다.
+                 drop_text: bool = False, roles: dict[int, str] | None = None,
+                 logos: dict | None = None, symmetry: bool | None = None,
+                 faces: list | dict | None = None, style: str | None = None) -> str:
+    """**자동 꾸밈 창** — 스타일 프리셋·모티프 계열·바탕 도색·글자·역할표·로고·좌우·면 배정을 한 번에 받아 켠다.
 
     편집기의 [Auto Decoration...] 대화상자가 부른다 (`flsedit decorate`). 준 것만
-    바꾼다 — `composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
+    바꾼다 — `style`/`composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
     `auto_paint`면 도안에서 고르고, `text`는 스펙 열쇠들(`main`이 비면 끈다),
-    `drop_text`면 글자를 뺀다. 마지막에 꾸밈을 켠다 — 이 창의 뜻이 그것이다."""
+    `drop_text`면 글자를 뺀다. `roles`는 실린 그림 표에서 사람이 고른 역할
+    (`act_roles`), `logos`는 워터마크·로고 이미지·자리(`act_logos`), `symmetry`는
+    "한쪽에만 있으면 반대편에"(`act_symmetry`), `faces`는 면 배정(`act_faces`).
+    마지막에 꾸밈을 켠다 — 이 창의 뜻이 그것이다."""
     from .. import compose
 
     said: list[str] = []
+    if roles:
+        said.append(act_roles(st, roles))
+    if logos is not None:
+        said.append(act_logos(st, **logos))
+    if faces is not None:
+        said.append(act_faces(st, faces))
+    if symmetry is not None:
+        st.state["symmetry"] = bool(symmetry)
+    said.append(act_symmetry(st, bool(st.state.get("symmetry", True))))
+    if style is not None:
+        said.append(act_style(st, None if style == "auto" else style))
     if composition is not None:
         said.append(act_family(st, None if composition == "auto" else composition))
     if motif is not None:
@@ -854,6 +1019,144 @@ def act_decorate(st: Studio, *, composition: str | None = None,
     st.notes = [n for n in st.notes if "[Grow Decoration]" not in n]   # 이제 켰다
     del compose
     return msg("자동 꾸밈: {what}", what=" · ".join(said) if said else msg("그대로 짠다"))
+
+
+def act_logos(st: Studio, *, watermark: bool | None = None,
+              images: list | None = None, placement: str | None = None) -> str:
+    """로고 옵션 — 내장 워터마크 · 사용자 로고 이미지(0~N) · 자리. 준 것만 바꾼다.
+
+    이미지는 **지금** 벡터화한다 (`compose.vectorize_logo` — 셀 노선, 300장 상한,
+    내용 서명 캐시 `<작업 폴더>/logos/`) — 굽기 안에서 하면 오류가 상태줄에
+    안 뜬다. 못 굽는 이미지는 빼고 말한다."""
+    from .. import compose
+
+    cur = dict(st.state.get("logos") or {"watermark": True, "images": [], "placement": "auto"})
+    if watermark is not None:
+        cur["watermark"] = bool(watermark)
+    if placement is not None:
+        cur["placement"] = placement
+    if images is not None:
+        had = {str(it.get("image")): it for it in (cur.get("images") or [])
+               if isinstance(it, dict)}
+        got: list[dict] = []
+        for img in images:
+            key = str(Path(str(img)).resolve())
+            it = had.get(key) or had.get(str(img)) or {"image": key, "plan": None}
+            if not (it.get("plan") and Path(it["plan"]).is_file()):
+                try:
+                    it["plan"] = str(compose.vectorize_logo(
+                        key, st.work / "logos", log=lambda t: st.notes.append(t)))
+                except (ValueError, OSError, RuntimeError, SystemExit) as e:
+                    st.notes.append(msg("로고를 못 굽는다 — {name}: {e}",
+                                        name=Path(key).name, e=e))
+                    continue
+            got.append({"image": key, "plan": it["plan"]})
+        cur["images"] = got
+    spec = compose.LogoSpec.from_dict(cur)          # 값 검사 (모르는 자리면 ValueError)
+    st.state["logos"] = spec.to_dict()
+    return msg("로고: 워터마크 {wm} · 이미지 {n}장 · 자리 {place}",
+               wm=msg("켬") if spec.watermark else msg("끔"), n=len(spec.images),
+               place=spec.placement)
+
+
+def act_faces(st: Studio, faces: list | dict) -> str:
+    """면 배정 — 도어 유리·뒷유리·리어·프론트·윈드실드가 맡는 일 (`compose.FaceSpec`).
+
+    `faces`는 CLI 꼴(`["window=continue", "rear=crop"]`)이거나 dict다. 준 면만
+    바꾸고 나머지는 그대로다. 값 검사는 스펙이 한다 (모르는 모드면 ValueError)."""
+    from .. import compose
+
+    cur = dict(st.state.get("faces") or {})
+    if isinstance(faces, dict):
+        got = {compose.FACE_OF.get(str(k), str(k)): str(v) for k, v in faces.items()}
+    else:
+        parsed = compose.FaceSpec.from_args(list(faces))
+        got = {} if parsed is None else {
+            f: getattr(parsed, f) for f in compose.FACE_NAMES
+            if any(compose.FACE_OF.get(str(it).partition("=")[0].strip(),
+                                       str(it).partition("=")[0].strip()) == f
+                   for it in faces)}
+    spec = compose.FaceSpec.from_dict(cur | got)
+    st.state["faces"] = spec.to_dict()
+    return msg("면 배정: {what}", what=spec.describe())
+
+
+def act_symmetry(st: Studio, on: bool) -> str:
+    """**한쪽에만 있으면 반대편에** — 옆면·도어 유리 한 쌍에서 한쪽만 도안이 있으면
+    반대편에 세운다 (그림은 거울, 로고·글자는 자리만 거울 — `_mirror_one`).
+
+    우리가 세운 사본은 `symmetry` 표시를 단다. 끄면 그 사본만 걷는다 — 사람이 올린
+    것은 안 건드린다. 양쪽에 다 있으면(우리 사본이든 사람 것이든) 아무것도 안 한다
+    — 사람이 반대편을 지웠으면 다음 판에 다시 세운다."""
+    st.state["symmetry"] = bool(on)
+    if not on:
+        before = len(st.designs)
+        st.state["designs"] = [d for d in st.designs if not d.get("symmetry")]
+        gone = before - len(st.designs)
+        return msg("좌우: 한쪽만 둔다") + (msg(" (세웠던 사본 {n}개를 걷는다)", n=gone)
+                                        if gone else "")
+    done = _symmetrize(st)
+    return msg("좌우: 한쪽에만 있으면 반대편에") + (
+        msg(" — {what}", what=" · ".join(done)) if done else "")
+
+
+def _symmetrize(st: Studio) -> list[str]:
+    maps = _maps(st)
+    done: list[str] = []
+    for a, b in (("side_left", "side_right"), ("window_left", "window_right")):
+        on_a = [d for d in st.designs if d["surface"] == a]
+        on_b = [d for d in st.designs if d["surface"] == b]
+        if bool(on_a) == bool(on_b):
+            continue
+        src, dst = (on_a, b) if on_a else (on_b, a)
+        for d in list(src):
+            new = _mirror_one(st, d, dst, maps)
+            if new is None:
+                continue
+            new["symmetry"] = True
+            st.designs.append(new)
+            done.append(f"{d['surface']} → {dst}"
+                        + (msg(" (자리만)") if d.get("no_mirror") else ""))
+    return done
+
+
+def _mirror_one(st: Studio, d: dict, dst: str, maps: dict) -> dict | None:
+    """배치 하나의 반대편 사본 — 그림은 거울, 로고·글자는 **읽는 방향 그대로**
+    (`compose.reseat_place`). 면 지도가 없으면 None. 역할표는 그대로 물려받는다."""
+    from .. import compose
+
+    sm, dm = maps.get(d["surface"]), maps.get(dst)
+    if sm is None or dm is None:
+        st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다", surface=dst))
+        return None
+    mp = (compose.reseat_place if d.get("no_mirror") else compose.mirror_place)(
+        _manual(d), sm, dm, dst)
+    new = {"plan": d["plan"], "surface": dst, "x": mp.x, "y": mp.y,
+           "scale": mp.scale, "rot": mp.rot, "mirror": mp.mirror}
+    if d.get("origin"):
+        new["origin"] = d["origin"]
+    for k in ("role", "role_auto", "role_why", "role_user", "label",
+              "layers", "no_mirror", "pinned", "adopted"):
+        if k in d:
+            new[k] = d[k]
+    return new
+
+
+def act_style(st: Studio, style: str | None) -> str:
+    """**스타일 프리셋**을 고르거나(None이면 자동) 푼다 — 편집기 드롭다운의 값.
+
+    프리셋은 계열을 품으므로 CLI 레버 `family`는 함께 푼다 (둘이 어긋나면 사람이
+    고른 프리셋이 뜻을 잃는다)."""
+    from .. import compose
+
+    compose.resolve_style(style)                  # 모르는 이름이면 ValueError
+    st.state["style"] = style
+    if style is not None:
+        st.state["family"] = None
+    if not st.state.get("deco"):
+        st.notes.append(msg("꾸밈이 꺼져 있어 지금은 안 보인다 — "
+                            "[Grow Decoration]을 누르면 이 프리셋으로 짠다"))
+    return msg("스타일 프리셋 {style}", style=compose.presets.label(style))
 
 
 def act_family(st: Studio, family: str | None) -> str:
@@ -954,20 +1257,19 @@ def act_mirror(st: Studio, surface: str | None,
     done: list[str] = []
     for d in list(srcs):
         dst = MIRROR_PAIRS[d["surface"]]
-        sm, dm = maps.get(d["surface"]), maps.get(dst)
-        if sm is None or dm is None:
-            st.notes.append(msg("{surface}: 면 지도가 없다 — 대칭을 건너뛴다",
-                                surface=dst))
+        # 로고·글자는 **절대 미러하지 않는다** (사용자 결정 2026-09-02) — 거울에
+        # 비친 글자는 읽히지 않는다. 반대편의 거울 자리에 읽는 방향 그대로 앉힌다.
+        new = _mirror_one(st, d, dst, maps)
+        if new is None:
             continue
-        mp = compose.mirror_place(_manual(d), sm, dm, dst)
+        if d.get("no_mirror"):
+            st.notes.append(msg("{surface}: '{name}'은(는) {role}라 자리만 거울로 앉힌다",
+                                surface=dst,
+                                name=d.get("label") or Path(d["plan"]).name,
+                                role=compose.CAST_LABELS.get(d.get("role"), d.get("role"))))
         st.state["designs"] = [o for o in st.designs
                                if not (o["surface"] == dst
                                        and _same_design(o, d))]
-        new = {"plan": d["plan"], "surface": dst, "x": mp.x,
-               "y": mp.y, "scale": mp.scale, "rot": mp.rot,
-               "mirror": mp.mirror}
-        if d.get("origin"):
-            new["origin"] = d["origin"]
         st.designs.append(new)
         done.append(f"{d['surface']} → {dst}")
     if not done:
@@ -1016,36 +1318,21 @@ def _parse_rgb(text: str) -> tuple[int, int, int]:
         raise ValueError(msg("색은 #RRGGBB로 준다 — {text!r}", text=text)) from e
 
 
-def act_export(st: Studio, out_root: str | Path | None) -> str:
-    """게임이 읽는 리버리 컨테이너 한 벌 (`Livery_<이름>/C_livery` + `header`).
-
-    저장 컨테이너 뿌리에 그 폴더를 두면 인게임 리버리 목록에 뜬다. 베이스
-    도색까지 그 파일에 실리므로 자동차 도색 메뉴를 누를 일이 없다."""
-    cfg = find_run_file(st.work, "itasha.json")
-    if not cfg.is_file():
-        raise ValueError(msg("아직 구운 구성이 없다 — 도안을 올리고 한 번 지으세요"))
-    root = Path(out_root) if out_root else st.path.parent
-    label = st.path.with_suffix("").name
-    out, stats = bridge.itasha_folder(cfg, root, name=label)
-    return msg("리버리 컨테이너: {out}  ({layers:,}장 · 차 id {car_id})",
-               out=out, layers=stats["layers"], car_id=stats.get("car_id", 0))
-
-
 # ────────────────────────────── 비닐 그룹 프로젝트 내보내기 ──────────────────────────────
 
 
 def export_group(project_path: str | Path, fmt: str,
                  out: str | Path | None = None) -> tuple[Path, str]:
-    """**비닐 그룹 프로젝트**를 셋 중 하나로 내보낸다 (사용자 요청 2026-08-26).
+    """**비닐 그룹 프로젝트**를 둘 중 하나로 내보낸다 (사용자 요청 2026-08-26).
 
     | 갈래 | 무엇 | 어디에 쓰나 |
     |---|---|---|
-    | `fls` | `LayerGroup_<이름>/C_group` + `header` | 게임 저장 폴더에 두면 인게임 그리드에 뜬다 |
     | `kfps` | KFPS 타입코드 JSON | 내장 KFPS 편집기·KFPS 도구 |
     | `plan` | 우리 도안 `<이름>.plan.json` (+프리뷰) | 이 도구의 모든 명령 |
 
-    `fls`는 편집기 제 [File → Export]와 같은 것을 쓰지만 **자리를 묻지 않는다**
-    (프로젝트 옆이 기본) — 셋을 한 메뉴에서 고르게 하려고 여기 같이 둔다.
+    게임 컨테이너(`LayerGroup_<이름>/C_group`·`Livery_<이름>/C_livery`)는 편집기 제
+    [File → Export]가 쓴다 — 3D 프리뷰로 썸네일까지 찍으니 여기서 되풀이하지 않는다
+    (사용자 결정 2026-09-03).
     """
     p = Path(project_path).resolve()
     doc = project.read(p)
@@ -1056,11 +1343,6 @@ def export_group(project_path: str | Path, fmt: str,
     if not layers:
         raise ValueError(msg("프로젝트에 도형이 없다"))
     root = Path(out) if out else p.parent
-    if fmt == "fls":
-        got = folder.export_folder(root, label, livery_kind=False)
-        wst = folder.write_group(got, layers, name=label, creator="")
-        return got, msg("비닐 그룹 컨테이너: {out}  ({layers:,}장)",
-                        out=got, layers=wst["layers"])
     plan_dir = root if out and Path(root).suffix == "" else root / folder.safe_name(
         label, "group")
     plan_path = bridge._write_plan(layers, plan_dir)
@@ -1068,7 +1350,7 @@ def export_group(project_path: str | Path, fmt: str,
         return plan_path, msg("도안: {path}  ({layers:,}장)",
                               path=plan_path, layers=len(layers))
     if fmt != "kfps":
-        raise ValueError(msg("모르는 갈래: {fmt} (fls · kfps · plan)", fmt=fmt))
+        raise ValueError(msg("모르는 갈래: {fmt} (kfps · plan)", fmt=fmt))
     from ..kfpsjson import export_typecode
 
     data, est = export_typecode(LayerPlan.load(plan_path),
@@ -1093,6 +1375,8 @@ def clean_work(st: Studio) -> None:
     for p in st.work.glob("deco*.json"):
         p.unlink(missing_ok=True)
     for p in st.work.glob("shapes-*.json"):
+        p.unlink(missing_ok=True)
+    for p in st.work.glob("logos-*.json"):
         p.unlink(missing_ok=True)
     # 받은 도안 중 조리법이 더는 안 가리키는 것 — 가른 조각을 다시 갈랐거나 지운 것
     keep = {Path(d["plan"]).resolve() for d in st.designs}

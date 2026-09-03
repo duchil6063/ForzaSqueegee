@@ -17,6 +17,8 @@ def _text_args(p: argparse.ArgumentParser) -> None:
                             "모자라면 층을 낮추다 게임 글꼴로 물러난다"))
     p.add_argument("--subtext", default=None, metavar=msg("작품명"),
                    help=msg("보조 글자 — 작품명·별칭·팀명 (메인 밑에 작게)"))
+    p.add_argument("--text-number", default=None, dest="text_number", metavar=msg("번호"),
+                   help=msg("레이싱 번호 — 리어 쿼터의 큰 숫자 (레이싱 스폰서 프리셋에서만 선다)"))
     p.add_argument("--text-style", default=None, dest="text_style",
                    help=msg("auto · script · brush · graffiti · racing · techno · minimal "
                             "(기본 auto: 구성 계열이 고른다. 스타일이 글꼴을 고른다)"))
@@ -37,6 +39,27 @@ def _text_args(p: argparse.ArgumentParser) -> None:
                    choices=("auto", "on", "off"), help=msg("테두리"))
     p.add_argument("--text-shadow", default=None, dest="text_shadow",
                    choices=("auto", "on", "off"), help=msg("그림자"))
+
+
+def _logo_args(p: argparse.ArgumentParser) -> None:
+    """로고 인자 — `itasha`와 `flsedit decorate`가 같은 벌을 쓴다."""
+    p.add_argument("--logo", action="append", default=None, metavar=msg("이미지"),
+                   help=msg("사용자 로고 이미지(또는 도안) — 여러 번 줄 수 있다. 셀 노선으로 "
+                            "벡터화해(300장 상한) 스폰서 문법으로 앉힌다"))
+    p.add_argument("--logo-placement", default=None, dest="logo_placement",
+                   choices=("auto", "rear", "front", "windshield", "rocker"),
+                   help=msg("로고 자리 — auto(워터마크는 리어, 로고는 옆면 로커 줄·리어·"
+                            "프론트) · rear · front · windshield · rocker(옆면 줄만)"))
+
+
+def _face_args(p: argparse.ArgumentParser) -> None:
+    """면 배정 인자 — `itasha`와 `flsedit decorate`가 같은 벌을 쓴다 (`compose.facespec`)."""
+    p.add_argument("--face", nargs="*", default=None, metavar=msg("면=모드"),
+                   help=msg("면이 맡는 일 — `window=auto|support|continue|crop|empty` · "
+                            "`rear_window|rear|front=auto|logos|crop|empty` · "
+                            "`windshield=auto|logos|empty`. auto는 로고·글자가 있으면 "
+                            "그것(리어 워드마크+로고 줄 · 윈드실드 글자 띠 · 유리 로고 열), "
+                            "없으면 크롭으로 물러난다 (리어·뒷유리는 비운다)"))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,6 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
                                "(--car/--media를 주면 그 이름의 후보만 점수와 함께)"))
     p_it.add_argument("--no-paint", action="store_true",
                       help=msg("베이스 도색(자동차 도색 메뉴)을 안 칠한다"))
+    p_it.add_argument("--no-watermark", action="store_true", dest="no_watermark",
+                      help=msg("내장 ForzaSqueegee 워터마크를 뺀다 (기본은 리어 범퍼에 선다)"))
     p_it.add_argument("--no-deco", action="store_true",
                       help=msg("꾸밈을 빼고 **도안만** 올린다 (꾸밈 그룹·관통 밴드·"
                                "지붕 블랙아웃·모티프 없음). 베이스 도색은 그대로다"))
@@ -162,12 +187,20 @@ def build_parser() -> argparse.ArgumentParser:
                                "고른다, engine/compose.motif_family). 계열은 원래 "
                                "캐릭터 의미에서 오는 것이라 팔레트로는 거기까지 못 "
                                "간다 — 수이세이에 star처럼 아는 사람이 짚는 자리다"))
+    p_it.add_argument("--style", default=None, metavar=msg("프리셋"),
+                      help=msg("스타일 프리셋 — racing(레이싱 스폰서) · floral(무늬·꽃) · "
+                               "splash(스플래시·찢김) · minimal(미니멀) · dark(다크 그래피티) "
+                               "(기본: 자동 — 계열 후보를 다 지어 점수로 고른다). 계열에 "
+                               "바탕 도색·글자 스타일과 크기·로고 줄·리어 배정이 한 벌로 온다 "
+                               "(engine/compose/presets)"))
     p_it.add_argument("--family", default=None, metavar=msg("계열"),
-                      help=msg("옆면 꾸밈의 구성 계열을 못 박는다 — minimal · "
-                               "graphic_bed · diagonal_flow · motorsport · splash "
-                               "(기본: 후보를 다 지어 점수로 고른다, "
+                      help=msg("옆면 꾸밈의 구성 계열만 못 박는다 (엔진 레버) — minimal · "
+                               "graphic_bed · diagonal_flow · dark · motorsport · splash "
+                               "(기본: 프리셋의 계열, 없으면 후보를 다 지어 점수로 고른다, "
                                "engine/compose/design)"))
     _text_args(p_it)
+    _logo_args(p_it)
+    _face_args(p_it)
     p_it.add_argument("--no-mirror", action="store_true",
                       help=msg("우측면을 미러하지 않는다"))
     p_it.add_argument("--flip", action="store_true",
@@ -289,16 +322,16 @@ def build_parser() -> argparse.ArgumentParser:
                  "거의 없다 (편집기가 QSettings `itasha/command`로 부른다)"))
     p_fx.add_argument("action",
                       choices=("load-design", "auto-place", "decoration",
-                               "no-decoration", "decorate", "motif", "family",
+                               "no-decoration", "decorate", "motif", "family", "style",
                                "mirror", "base-paint", "text", "no-text",
-                               "export", "export-group", "rebuild", "state"),
+                               "export-group", "rebuild", "state"),
                       help=msg("load-design(도안 올리기) · auto-place(자동 자리) · "
                                "decoration/no-decoration(꾸밈) · motif(계열) · "
-                               "decorate(자동 꾸밈 창 — 계열·모티프·도색·글자를 한 번에) · "
-                               "family(구성 계열) · mirror(좌우 대칭) · "
+                               "decorate(자동 꾸밈 창 — 프리셋·모티프·도색·글자를 한 번에) · "
+                               "style(스타일 프리셋) · family(구성 계열) · mirror(좌우 대칭) · "
                                "base-paint(베이스 도색) · text/no-text(캐릭터 이름 글자) · "
-                               "export(리버리 컨테이너) · export-group(비닐 그룹을 "
-                               "FLS·KFPS·plan 셋 중 하나로) · rebuild · state"))
+                               "export-group(비닐 그룹을 KFPS JSON·plan.json으로 — 게임 "
+                               "컨테이너는 편집기 제 [File → Export]) · rebuild · state"))
     _text_args(p_fx)
     p_fx.add_argument("--project", required=True,
                       help=msg("편집기가 저장한 `.3so` 경로"))
@@ -314,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_fx.add_argument("--design", default=None,
                       help=msg("load-design이 올릴 도안 — *.plan.json · KFPS JSON · "
                                "`.3so`(비닐 그룹) · C_group 아무거나"))
-    p_fx.add_argument("--format", choices=("fls", "kfps", "plan"), default="plan",
+    p_fx.add_argument("--format", choices=("kfps", "plan"), default="plan",
                       help=msg("export-group의 갈래"))
     p_fx.add_argument("--color", default=None, metavar="#RRGGBB",
                       help=msg("base-paint 색 (안 주면 도안에서 고른다)"))
@@ -325,12 +358,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_fx.add_argument("--family", default=None,
                       help=msg("motif 계열 — star · flower · splat · swirl · crystal "
                                "(안 주면 도안의 테마색이 고른다)"))
+    p_fx.add_argument("--style", default=None,
+                      help=msg("style·decorate 명령의 스타일 프리셋 — auto · racing · floral · "
+                               "splash · minimal · dark (편집기 드롭다운의 값)"))
     p_fx.add_argument("--composition", default=None,
                       help=msg("family 명령의 구성 계열 — minimal · graphic_bed · "
-                               "diagonal_flow · motorsport · splash (안 주면 자동: "
+                               "diagonal_flow · dark · motorsport · splash (안 주면 자동: "
                                "후보를 다 지어 점수로 고른다)"))
+    _logo_args(p_fx)
+    _face_args(p_fx)
+    p_fx.add_argument("--no-logos", action="store_true", dest="no_logos",
+                      help=msg("decorate: 사용자 로고를 다 뺀다 (워터마크는 별개)"))
+    p_fx.add_argument("--watermark", default=None, choices=("on", "off"),
+                      help=msg("decorate: 내장 ForzaSqueegee 워터마크 (기본 on)"))
+    p_fx.add_argument("--symmetry", default=None, choices=("on", "off"),
+                      help=msg("decorate: 한쪽 옆면에만 있으면 반대편에 세운다 (기본 on) — "
+                               "그림은 거울, 로고·글자는 읽는 방향 그대로"))
+    p_fx.add_argument("--role", nargs="*", default=None, metavar=msg("번호=역할"),
+                      help=msg("decorate: 실린 덩어리의 역할을 사람이 정한다 — "
+                               "`<번호>=<hero|support|logo|text|pinned|auto>` "
+                               "(번호는 `state`의 designs 차례, auto면 추정으로 되돌린다)"))
     p_fx.add_argument("-o", "--out", default=None,
-                      help=msg("export·export-group이 쓸 자리"))
+                      help=msg("export-group이 쓸 자리"))
 
     p_ed = sub.add_parser("edit",
                           help=msg("내장 KFPS 편집기를 연다 — 도안을 브라우저 "

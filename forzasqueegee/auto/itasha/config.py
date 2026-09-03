@@ -399,6 +399,9 @@ def compose_config(main_plan: Path, out: Path, *,
                    deco: bool = True, whole: bool | None = None,
                    motif: str | None = None, family: str | None = None,
                    text: "dict | None" = None,
+                   logos: "dict | None" = None,
+                   faces: "dict | None" = None,
+                   style: str | None = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -414,7 +417,8 @@ def compose_config(main_plan: Path, out: Path, *,
        이웃 면에 안 잇고 그 자리에서 잘린다. 모티프 계열은 도안의 테마색이
        고르고 `motif`로 못 박는다 (`compose.motif_family`). 옆면 꾸밈의 **구성
        계열**은 후보를 지어 점수로 고르고 `family`로 못 박는다
-       (`compose.FAMILIES`).
+       (`compose.FAMILIES`). `style`은 스타일 프리셋 (`compose.STYLE_PRESETS` —
+       계열 + 바탕 도색·글자·로고 줄·면 배정이 한 벌).
 
     `manual`(`engine.compose.ManualPlace` 목록)을 주면 **도안 자리만** 사람이
     정한 것으로 바뀌고 나머지는 그대로다 — 내장 편집기(`engine.fls.studio`)가
@@ -429,13 +433,20 @@ def compose_config(main_plan: Path, out: Path, *,
     # 그 실측을 넣어 다시 짓는다. 한 판으로는 못 하는 까닭은 실측이다 —
     # 배분 시점에는 꾸밈 그룹이 아직 없는데 옆면 무게의 63~84%가 그것이라,
     # 넓이·잉크 어느 대리값으로도 몫이 안 맞았다 (L1 0.26~0.58).
-    # `FS_WC_HIER=0`이면 한 판으로 물러난다 (바이트 동일).
+    # `FS_WC_HIER=0`이면 한 판으로 물러난다 (바이트 동일). 손 배치(편집기) 판도
+    # 같은 두 판이다 — 사람이 올린 덩어리는 배분이 **고정 질량**으로 받는다
+    # (`compose.build`의 `taken_mass`·`base_mass`).
     two_pass = (os.environ.get("FS_WC_HIER", "1").strip() != "0"
-                and deco and whole is not False and not manual)
+                and deco and whole is not False)
     # `out`이 폴더인지 파일인지는 **있는 그대로** 본다 — 확장자로 짐작하면
     # 스튜디오 작업 폴더(`<이름>.fsitasha/`)가 파일로 오인돼 구성이 부모
     # 폴더로 새고, 폴더 위에 파일을 쓰려다 'Permission denied'로 죽는다.
     as_dir = out.is_dir() or not out.suffix
+
+    # 첫 판의 말은 **모아 둔다** — 둘째 판이 서면 버리고(같은 말을 두 번 하지 않게),
+    # 변주가 없어 둘째 판이 안 서면 그대로 내보낸다 (면 배정이 크롭을 다 거둔 판은
+    # 첫 판이 곧 결과인데, 종전 코드는 그 판의 알림을 통째로 삼켰다).
+    first: list[str] = []
 
     def _build(hint):
         return compose.build(main_plan, out if as_dir else out.parent,
@@ -444,12 +455,14 @@ def compose_config(main_plan: Path, out: Path, *,
                              mirror=mirror, paint=paint, base_rgb=base_rgb,
                              flip=flip, manual=manual,
                              deco=deco, whole=whole, motif=motif,
-                             family=family, text=text, mass_hint=hint,
-                             log=(lambda *_a, **_k: None) if hint is None
-                             and two_pass else log)
+                             family=family, text=text, logos=logos, faces=faces,
+                             style=style, mass_hint=hint,
+                             log=(lambda *a, **_k: first.append(" ".join(str(x) for x in a)))
+                             if hint is None and two_pass else log)
 
     rec = _build(None)
     cfg_path = next(p for p in rec.written if p.name.endswith("itasha.json"))
+    second = False
     if two_pass and rec.config.get("whole"):
         from ...engine.catalog import Catalog, default_catalog_path
         from ...engine.compose import whole as _whole
@@ -464,6 +477,10 @@ def compose_config(main_plan: Path, out: Path, *,
             rec = _build(hint)
             cfg_path = next(p for p in rec.written
                             if p.name.endswith("itasha.json"))
+            second = True
+    if two_pass and not second:
+        for line in first:
+            log(line)
     # `out`이 **폴더**면 구성 파일은 이미 그 안에 쓰였다 — 폴더 위에 덮어쓰려
     # 하면 안 된다 (`-o out/내차`가 'Permission denied: out/내차'로 죽었다).
     if as_dir:

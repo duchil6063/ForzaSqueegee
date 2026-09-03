@@ -213,7 +213,7 @@ def _forbidden(colors: list, idx: np.ndarray, boxes: np.ndarray,
 
 
 def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
-           move: float = MAX_MOVE_DE):
+           move: float = MAX_MOVE_DE, k_max: int = 0):
     """제약 병합 — 더 못 묶을 때까지 가장 가까운 쌍을 합친다.
 
     가중 평균 연결(Ward와 같은 결)이라 무게가 큰 색이 대표를 잡는다. 두 제약이
@@ -221,6 +221,12 @@ def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
     (a-b가 금지면 a가 든 무리와 b가 든 무리도 금지),
     **어느 원색도 제 무리 중심에서 `move` Lab ΔE 넘게 멀어질 수 없다**
     (자는 `celart.marks._MARK_DE`와 같은 계다).
+
+    `k_max`가 양수면 **상한**이다 — 무리가 그 수까지 줄면 멈춘다(그 전에 반경·
+    경계가 막으면 거기서 멈춘다). 상한을 쓰는 곳은 분해 단계의 팔레트
+    (`decompose`의 영역 색·`celfit.lines.recolor_strokes`의 획 색)다 — 거기서는
+    목표가 함께 움직이므로 자가 원화 기준(`rmse_src`)이고, 여기 맨 끝 접기는
+    상한 없이 반경만 쓴다 (색 수는 반경의 결과다, 모듈 머리말).
     """
     n = len(lab)
     cen = lab.copy()
@@ -251,7 +257,8 @@ def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
     heap = list(zip(vals[fin].tolist(), iu[fin].tolist(), ju[fin].tolist()))
     heapq.heapify(heap)
     live = n
-    while live > 1 and heap:
+    floor = max(1, int(k_max)) if k_max else 1
+    while live > floor and heap:
         val, i, j = heapq.heappop(heap)
         if d[i, j] != val:
             continue                               # 낡은 항목 (갱신·기각·사망)
@@ -293,6 +300,42 @@ def _merge(lab: np.ndarray, weight: np.ndarray, bad: set,
         for m in member[i]:
             root[m] = i
     return root, cen
+
+
+def fold_palette(colors: list, weight, bad_pairs, *,
+                 k_max: int, move: float) -> tuple[dict, dict]:
+    """색 목록을 **상한 `k_max`·반경 `move`** 안에서 접는다 — (원색→새 색) 표.
+
+    분해 단계가 쓰는 입구다 (`_merge` 문서). `colors[i]`는 항목 i의 sRGB 튜플
+    (겹쳐도 된다 — 같은 색은 한 색으로 모은다), `weight[i]`는 그 항목이 칠하는
+    넓이(px), `bad_pairs`는 못 묶는 **항목** 색인 쌍 (i, j)다 — 두 항목이
+    맞닿아 있고 그 경계가 보여야 하는 자리. 같은 입력이면 같은 표다
+    (정렬·힙 동점 규칙은 `_merge` 그대로).
+    """
+    cols = [tuple(int(v) for v in c) for c in colors]
+    uniq = sorted(set(cols))
+    if len(uniq) < 2 or len(uniq) <= max(1, int(k_max)):
+        return {c: c for c in uniq}, {"before": len(uniq), "after": len(uniq)}
+    cmap = {c: i for i, c in enumerate(uniq)}
+    idx = np.array([cmap[c] for c in cols], np.int64)
+    w = np.zeros(len(uniq))
+    np.add.at(w, idx, np.asarray(weight, np.float64))
+    bad = set()
+    for i, j in bad_pairs:
+        ci, cj = int(idx[i]), int(idx[j])
+        if ci != cj:
+            bad.add((min(ci, cj), max(ci, cj)))
+    lab = _lab(np.array(uniq, np.float64))
+    root, cen = _merge(lab, w, bad, move, k_max)
+    rgb = np.clip(_lab_to_rgb(cen), 0, 255).astype(int)
+    table = {uniq[i]: tuple(int(v) for v in rgb[int(root[i])])
+             for i in range(len(uniq))}
+    de = de00(lab, cen[root])
+    st = {"before": len(uniq), "after": len(set(table.values())),
+          "locked": len(bad),
+          "mean_de00": round(float((de * w).sum() / max(w.sum(), 1e-9)), 3),
+          "max_de00": round(float(de.max()), 3)}
+    return table, st
 
 
 def fold_colors(plan: LayerPlan, cat: Catalog, *, move: float = MAX_MOVE_DE,

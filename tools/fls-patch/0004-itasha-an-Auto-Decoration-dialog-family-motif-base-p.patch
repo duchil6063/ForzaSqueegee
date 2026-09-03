@@ -1,7 +1,7 @@
-From dd6ea8805fae378a57f5fd401ce6a10b6aa4282a Mon Sep 17 00:00:00 2001
+From 7cc9a42fe9b50b275c4bed3a28cd4c1b29f83b22 Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Mon, 31 Aug 2026 00:52:14 +0900
-Subject: [PATCH 4/4] itasha: an Auto Decoration dialog - family, motif, base
+Subject: [PATCH 04/10] itasha: an Auto Decoration dialog - family, motif, base
  paint and name text in one place
 
 The scattered entries (Grow Decoration, Motif Family, Base Paint, and the
@@ -36,7 +36,7 @@ index 597f24f..0e939da 100644
                           bool needLivery = true, bool reload = true);
      QStringList itashaCommand() const;
 diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
-index 6058e7d..ad07a38 100644
+index 6058e7d..62c85dd 100644
 --- a/src/gui/app/main_window_itasha.cpp
 +++ b/src/gui/app/main_window_itasha.cpp
 @@ -29,9 +29,26 @@
@@ -487,7 +487,7 @@ index 6058e7d..ad07a38 100644
      // Panel geometry: the engine needs to know where the car's surface is to
      // carry artwork across a seam, and the dump's file name tells it which car
 diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
-index e00074e..4053a55 100644
+index e00074e..94f5b95 100644
 --- a/src/gui/i18n.cpp
 +++ b/src/gui/i18n.cpp
 @@ -493,6 +493,116 @@ const Entry kTable[] = {

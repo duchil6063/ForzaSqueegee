@@ -66,17 +66,27 @@ def cmd_itasha(args) -> int:
                               base=args.base))
                     return 1
                 base = tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+            from ..engine.compose.facespec import FaceSpec
             from ..engine.compose.textspec import text_from_args
 
             tspec = text_from_args(args)          # `--text`가 없으면 None (글자 없음)
+            try:
+                fspec = FaceSpec.from_args(getattr(args, "face", None))
+            except ValueError as e:
+                print(msg("오류: {e}", e=e))
+                return 1
             try:
                 cfg = itasha.compose_config(
                     plans[0], out, extra_plans=plans[1:], car=args.car,
                     media=media,
                     mirror=not args.no_mirror, paint=not args.no_paint,
                     base_rgb=base, flip=args.flip, deco=not args.no_deco,
-                    motif=args.motif, family=args.family,
-                    text=(tspec.to_dict() if tspec is not None else None))
+                    motif=args.motif, family=args.family, style=args.style,
+                    text=(tspec.to_dict() if tspec is not None else None),
+                    logos={"watermark": not args.no_watermark,
+                           "images": list(args.logo or []),
+                           "placement": args.logo_placement or "auto"},
+                    faces=(fspec.to_dict() if fspec is not None else None))
             except (ValueError, OSError) as e:
                 print(msg("오류: {e}", e=e))
                 return 1

@@ -80,7 +80,8 @@ def _hand_spread(hand: list[ManualPlace], hand_look: dict, hand_path: dict,
     for mp in hand:
         hp, _hlk = hand_look[mp.key()]
         got = keep_by_plan.setdefault(mp.key(), set())
-        dm = drawable(mp.surface, maps, rigs) if trim else None
+        # "그대로"(`pinned`) 덩어리는 손대지 않는다 — 면 밖 자르기도 안 한다
+        dm = drawable(mp.surface, maps, rigs) if (trim and not mp.pinned) else None
         if dm is None:
             got.update(range(len(hp.layers)))
             continue

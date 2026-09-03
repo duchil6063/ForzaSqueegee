@@ -195,11 +195,14 @@ def cmd_flsedit(args) -> int:
             said = studio.act_motif(st, args.family)
         elif args.action == "family":
             said = studio.act_family(st, args.composition)
+        elif args.action == "style":
+            said = studio.act_style(st, None if args.style in (None, "auto") else args.style)
         elif args.action == "decorate":
             text_fields = None
             if args.text:
                 text_fields = {
-                    "main": args.text, "sub": args.subtext, "style": args.text_style,
+                    "main": args.text, "sub": args.subtext, "number": args.text_number,
+                    "style": args.text_style,
                     "engine": args.text_engine,
                     "placement": args.text_placement, "priority": args.text_priority,
                     "allow_fallback_to_game_text": (
@@ -207,16 +210,37 @@ def cmd_flsedit(args) -> int:
                         else args.game_text_fallback != "off"),
                     "max_layers": args.text_max_layers, "outline": args.text_outline,
                     "shadow": args.text_shadow}
+            roles = None
+            if args.role is not None:
+                roles = {}
+                for item in args.role:
+                    k, sep, v = str(item).partition("=")
+                    if not sep or not k.strip().isdigit():
+                        print(msg("오류: --role은 `<번호>=<역할>` 꼴이다 — {item!r}",
+                                  item=item))
+                        return 2
+                    roles[int(k)] = v.strip()
+            logos = None
+            if (args.logo is not None or args.no_logos or args.watermark is not None
+                    or args.logo_placement is not None):
+                logos = {"images": ([] if args.no_logos else args.logo),
+                         "watermark": (None if args.watermark is None
+                                       else args.watermark == "on"),
+                         "placement": args.logo_placement}
             said = studio.act_decorate(
-                st, composition=args.composition, motif=args.family,
+                st, composition=args.composition, motif=args.family, style=args.style,
                 paint=args.color, auto_paint=bool(args.auto_paint),
-                text=text_fields, drop_text=bool(args.no_text))
+                text=text_fields, drop_text=bool(args.no_text), roles=roles,
+                logos=logos,
+                symmetry=(None if args.symmetry is None else args.symmetry == "on"),
+                faces=getattr(args, "face", None))
         elif args.action == "text":
             if not args.text:
                 print(msg("오류: --text가 필요하다"))
                 return 2
             said = studio.act_text(st, {
-                "main": args.text, "sub": args.subtext, "style": args.text_style,
+                "main": args.text, "sub": args.subtext, "number": args.text_number,
+                "style": args.text_style,
                 "engine": args.text_engine,
                 "placement": args.text_placement, "priority": args.text_priority,
                 "allow_fallback_to_game_text": (
@@ -230,17 +254,15 @@ def cmd_flsedit(args) -> int:
             said = studio.act_mirror(st, surface, args.group)
         elif args.action == "base-paint":
             said = studio.act_base_paint(st, args.color, args.color is None)
-        elif args.action == "export":
-            # 내보내기는 **지금 프로젝트 그대로**를 쓴다 — 다시 굽지 않는다
-            # (편집기에서 손댄 것이 그 자리에서 컨테이너로 간다).
-            studio.rebuild(st, log=log)
-            print("\n".join(lines))
-            print(studio.act_export(st, args.out))
-            return 0
         elif args.action == "state":
             import json as _json
+            from ..engine import compose as _compose
 
-            print(_json.dumps(st.state, ensure_ascii=False, indent=1))
+            # 편집기 창이 읽는 것 — 조리법 그대로에 **드롭다운 목록**을 더한다
+            # (프리셋 이름·설명은 엔진의 것이고 언어도 엔진이 안다)
+            out = dict(st.state)
+            out["style_presets"] = _compose.style_listing()
+            print(_json.dumps(out, ensure_ascii=False, indent=1))
             return 0
         stats = studio.rebuild(st, log=log)
     except (ValueError, OSError, FileNotFoundError, RuntimeError) as e:

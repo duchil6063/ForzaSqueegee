@@ -1,0 +1,217 @@
+From 8d657d1d0ede5481f4f02fa01a5f92821cd42b16 Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Thu, 3 Sep 2026 00:55:43 +0900
+Subject: [PATCH 06/10] itasha: Logos and Sides in the Auto Decoration dialog -
+ watermark, logo images, placement, one-side symmetry
+
+---
+ src/gui/app/main_window_itasha.cpp | 123 +++++++++++++++++++++++++++++
+ src/gui/i18n.cpp                   |  33 ++++++++
+ 2 files changed, 156 insertions(+)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index e68bc7e..62befe5 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -45,6 +45,7 @@
+ #include <QJsonObject>
+ #include <QLabel>
+ #include <QLineEdit>
++#include <QListWidget>
+ #include <QPushButton>
+ #include <QSpinBox>
+ #include <QTableWidget>
+@@ -52,6 +53,7 @@
+ 
+ #include <iterator>
+ #include <QFileDialog>
++#include <QFileInfo>
+ #include <QGuiApplication>
+ #include <QMenu>
+ #include <QMenuBar>
+@@ -106,6 +108,26 @@ const char *const kTextPlacements[] = {"auto", "side", "rear", "hood", "roof",
+ const char *const kTextPriorities[] = {"normal", "high", "low"};
+ const char *const kTextTri[] = {"auto", "on", "off"};
+ 
++// Where the logo kit goes (engine/compose/logokit.py PLACEMENTS). auto puts
++// the watermark on the rear bumper and user logos on the side rocker row,
++// the rear and the front; the others pin everything to that one panel.
++struct LogoPlacement {
++    const char *name;
++    const char *text;
++};
++
++const LogoPlacement kLogoPlacements[] = {
++    {"auto", "Auto (rear watermark, logos on sides / rear / front)"},
++    {"rear", "Rear bumper"},
++    {"front", "Front bumper"},
++    {"windshield", "Windshield"},
++    {"rocker", "Side rocker row only"},
++};
++
++// Layers a logo image is vectorised down to (engine/compose/logokit.py
++// LOGO_LAYERS) - shown in the dialog so the person knows what to expect.
++constexpr int kLogoLayerCap = 110;
++
+ // What each group placed on the car is to the decoration (engine/compose/
+ // cast.py). The engine guesses from layer count, colours, skin and glyphs;
+ // the dialog shows the guess and lets the person overrule it per group.
+@@ -664,6 +686,92 @@ void MainWindow::showItashaDecorationDialog() {
+     textLayout->addWidget(fallback);
+     layout->addWidget(textGroup);
+ 
++    // ---- Logos ----
++    // The built-in watermark (default on) plus any logo images the person
++    // adds. Images are vectorised by the engine when the dialog is confirmed
++    // (cached by content), so the list here only carries paths.
++    const QJsonObject logoState = state.value(QStringLiteral("logos")).toObject();
++    auto *logoGroup = new QGroupBox(i18n::t("Logos"), &dialog);
++    logoGroup->setToolTip(i18n::t(
++        "Sponsor-style logo clusters - the built-in ForzaSqueegee watermark and "
++        "your own logo images, placed on the side rocker row, the rear and the "
++        "front bumper. Logos are never mirrored."));
++    auto *logoLayout = new QVBoxLayout(logoGroup);
++    auto *watermark = new QCheckBox(
++        i18n::t("Built-in ForzaSqueegee watermark"), logoGroup);
++    watermark->setChecked(logoState.value(QStringLiteral("watermark")).toBool(true));
++    watermark->setToolTip(i18n::t(
++        "A small ForzaSqueegee mark - on the rear bumper by default, on a "
++        "windshield corner when the rear has no room. Dark ink on light paint, "
++        "light ink on dark paint."));
++    logoLayout->addWidget(watermark);
++    auto *logoList = new QListWidget(logoGroup);
++    logoList->setSelectionMode(QAbstractItemView::ExtendedSelection);
++    logoList->setMaximumHeight(96);
++    for (const QJsonValue &v : logoState.value(QStringLiteral("images")).toArray()) {
++        const QJsonObject it = v.toObject();
++        const QString image = it.value(QStringLiteral("image")).toString();
++        if (!image.isEmpty()) {
++            auto *row = new QListWidgetItem(QFileInfo(image).fileName(), logoList);
++            row->setToolTip(image);
++            row->setData(Qt::UserRole, image);
++        }
++    }
++    auto *logoButtons = new QHBoxLayout;
++    auto *addLogo = new QPushButton(i18n::t("Add Logo Image..."), logoGroup);
++    auto *removeLogo = new QPushButton(i18n::t("Remove"), logoGroup);
++    logoButtons->addWidget(addLogo);
++    logoButtons->addWidget(removeLogo);
++    logoButtons->addStretch(1);
++    auto *logoNote = new QLabel(
++        i18n::t("Each image is vectorised to at most %1 layers - simple marks "
++                "with few colours read best; small text inside a logo will not.")
++            .arg(kLogoLayerCap), logoGroup);
++    logoNote->setWordWrap(true);
++    connect(addLogo, &QPushButton::clicked, &dialog, [&]() {
++        const QStringList paths = QFileDialog::getOpenFileNames(
++            &dialog, i18n::t("Add Logo Image"), QString(),
++            i18n::t("Images and designs (*.png *.jpg *.jpeg *.webp *.json)"));
++        for (const QString &path : paths) {
++            auto *row = new QListWidgetItem(QFileInfo(path).fileName(), logoList);
++            row->setToolTip(path);
++            row->setData(Qt::UserRole, path);
++        }
++    });
++    connect(removeLogo, &QPushButton::clicked, &dialog, [&]() {
++        for (QListWidgetItem *row : logoList->selectedItems()) {
++            delete row;
++        }
++    });
++    logoLayout->addWidget(logoList);
++    logoLayout->addLayout(logoButtons);
++    logoLayout->addWidget(logoNote);
++    auto *logoForm = new QFormLayout;
++    auto *logoPlacement = new QComboBox(logoGroup);
++    for (const LogoPlacement &lp : kLogoPlacements) {
++        logoPlacement->addItem(i18n::t(lp.text), QString::fromLatin1(lp.name));
++    }
++    pickCombo(logoPlacement, logoState.value(QStringLiteral("placement")).toString(
++                                 QStringLiteral("auto")));
++    logoForm->addRow(i18n::t("Placement:"), logoPlacement);
++    logoLayout->addLayout(logoForm);
++    layout->addWidget(logoGroup);
++
++    // ---- Sides ----
++    auto *sideGroup = new QGroupBox(i18n::t("Sides"), &dialog);
++    auto *sideLayout = new QVBoxLayout(sideGroup);
++    auto *symmetry = new QCheckBox(
++        i18n::t("When only one side has artwork, place it on the other side too"),
++        sideGroup);
++    symmetry->setChecked(state.value(QStringLiteral("symmetry")).toBool(true));
++    auto *symmetryNote = new QLabel(i18n::t(
++        "Artwork is mirrored. Logos and lettering are never mirrored - they are "
++        "re-seated on the other side in reading direction."), sideGroup);
++    symmetryNote->setWordWrap(true);
++    sideLayout->addWidget(symmetry);
++    sideLayout->addWidget(symmetryNote);
++    layout->addWidget(sideGroup);
++
+     auto *buttons = new QDialogButtonBox(
+         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+     buttons->button(QDialogButtonBox::Ok)->setText(i18n::t("Compose"));
+@@ -721,6 +829,21 @@ void MainWindow::showItashaDecorationDialog() {
+     } else {
+         extra << QStringLiteral("--no-text");
+     }
++    // Logos: every path in the list, or an explicit "none" so a cleared list
++    // clears the recipe too. The watermark and the placement always go.
++    if (logoList->count() > 0) {
++        for (int i = 0; i < logoList->count(); ++i) {
++            extra << QStringLiteral("--logo")
++                  << logoList->item(i)->data(Qt::UserRole).toString();
++        }
++    } else {
++        extra << QStringLiteral("--no-logos");
++    }
++    extra << QStringLiteral("--watermark")
++          << (watermark->isChecked() ? QStringLiteral("on") : QStringLiteral("off"))
++          << QStringLiteral("--logo-placement") << logoPlacement->currentData().toString()
++          << QStringLiteral("--symmetry")
++          << (symmetry->isChecked() ? QStringLiteral("on") : QStringLiteral("off"));
+     settings.endGroup();
+     runItashaAction(QStringLiteral("decorate"), extra);
+ }
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index 6395667..10d2b3f 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -522,6 +522,39 @@ const Entry kTable[] = {
+     {"Logo", "로고"},
+     {"Lettering", "글자"},
+     {"As is", "그대로"},
++    {"Sponsor-style logo clusters - the built-in ForzaSqueegee watermark and "
++     "your own logo images, placed on the side rocker row, the rear and the "
++     "front bumper. Logos are never mirrored.",
++     "스폰서 문법의 로고 무리 — 내장 ForzaSqueegee 워터마크와 사용자 로고 이미지를 "
++     "옆면 로커 줄·리어·프론트 범퍼에 앉힙니다. 로고는 미러하지 않습니다."},
++    {"Built-in ForzaSqueegee watermark", "내장 ForzaSqueegee 워터마크"},
++    {"A small ForzaSqueegee mark - on the rear bumper by default, on a "
++     "windshield corner when the rear has no room. Dark ink on light paint, "
++     "light ink on dark paint.",
++     "작은 ForzaSqueegee 마크 — 기본은 리어 범퍼, 리어에 자리가 없으면 윈드실드 "
++     "귀퉁이입니다. 밝은 도색엔 검정 잉크, 어두운 도색엔 흰 잉크."},
++    {"Add Logo Image...", "로고 이미지 추가..."},
++    {"Add Logo Image", "로고 이미지 추가"},
++    {"Remove", "빼기"},
++    {"Images and designs (*.png *.jpg *.jpeg *.webp *.json)",
++     "이미지·도안 (*.png *.jpg *.jpeg *.webp *.json)"},
++    {"Each image is vectorised to at most %1 layers - simple marks "
++     "with few colours read best; small text inside a logo will not.",
++     "이미지마다 최대 %1장으로 벡터화합니다 — 색이 적은 단순한 마크가 잘 읽히고, "
++     "로고 안의 작은 글자는 안 읽힙니다."},
++    {"Auto (rear watermark, logos on sides / rear / front)",
++     "자동 (워터마크는 리어, 로고는 옆면·리어·프론트)"},
++    {"Rear bumper", "리어 범퍼"},
++    {"Front bumper", "프론트 범퍼"},
++    {"Windshield", "윈드실드"},
++    {"Side rocker row only", "옆면 로커 줄만"},
++    {"Sides", "좌우"},
++    {"When only one side has artwork, place it on the other side too",
++     "한쪽 옆면에만 그림이 있으면 반대편에도 세웁니다"},
++    {"Artwork is mirrored. Logos and lettering are never mirrored - they are "
++     "re-seated on the other side in reading direction.",
++     "그림은 거울로 세웁니다. 로고·글자는 미러하지 않고 반대편의 같은 자리에 "
++     "읽는 방향 그대로 앉힙니다."},
+     {"Composition", "구성"},
+     {"Auto (score picks)", "자동 (점수가 고름)"},
+     {"Composition family:", "구성 계열:"},

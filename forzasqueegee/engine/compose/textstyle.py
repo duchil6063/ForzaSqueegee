@@ -19,6 +19,7 @@ FAMILY_STYLES: dict[str, tuple[str, ...]] = {
     "minimal": ("minimal", "script"),
     "graphic_bed": ("script", "minimal", "brush"),
     "diagonal_flow": ("racing", "techno"),
+    "dark": ("graffiti", "techno"),
     "motorsport": ("racing", "techno", "minimal"),
     "splash": ("brush", "graffiti"),
 }

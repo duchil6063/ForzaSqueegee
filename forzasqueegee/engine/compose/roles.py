@@ -51,7 +51,17 @@ BED_DARK_EDGE = 0.30
 BED_SAT_MAX = 0.62
 
 
-ROLE_VARIANTS = ("shadow", "primary", "neutral", "inverse")
+ROLE_VARIANTS = ("shadow", "primary", "neutral", "inverse", "pastel", "neon")
+
+
+# 파스텔 변종 — 판의 채도 상한 · 명도 하한 (무늬·꽃 프리셋의 "파스텔 바탕").
+PASTEL_SAT = 0.30
+PASTEL_VAL = 0.90
+
+
+# 형광 변종 — 액센트의 채도 하한 · 명도 (다크 프리셋의 "형광 액센트").
+NEON_SAT = 0.88
+NEON_VAL = 1.0
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,20 @@ def _hsb_rgb(h: float, s: float, b: float) -> tuple[int, int, int]:
 def _shift(c: tuple[int, int, int], ds: float = 0.0, db: float = 0.0) -> tuple[int, int, int]:
     h, s, b = rgb_to_hsb(*c)
     return _hsb_rgb(h, s + ds, b + db)
+
+
+def _pastel(c: tuple[int, int, int]) -> tuple[int, int, int]:
+    """색조는 두고 채도를 눌러 밝힌다 — 무채면 근백."""
+    h, s, b = rgb_to_hsb(*c)
+    return _hsb_rgb(h, min(s, PASTEL_SAT), max(b, PASTEL_VAL))
+
+
+def _neon(c: tuple[int, int, int]) -> tuple[int, int, int]:
+    """색조는 두고 채도·명도를 끝까지 — 무채(살색·회색)는 형광이 못 되니 그대로."""
+    h, s, b = rgb_to_hsb(*c)
+    if s < 0.12:
+        return c
+    return _hsb_rgb(h, max(s, NEON_SAT), NEON_VAL)
 
 
 def _separate(c: tuple[int, int, int], edge_lum: float, base_lum: float,
@@ -119,6 +143,9 @@ def role_palette(it: DesignIntent, lk: Look, base: tuple[int, int, int],
     - `primary` — 베드가 주 액센트의 눌린 판. 테마색이 확실한 도안.
     - `neutral` — 베드가 무채(근검정/근백) 판. 파스텔·저대비 도안.
     - `inverse` — 베이스가 무채로 물러나고 베드가 액센트를 쥔다 (밝은 도안 위 짙은 판).
+    - `pastel`  — 베드가 주색·부색의 **파스텔**(옅고 밝은 판). 무늬·꽃 프리셋.
+    - `neon`    — 액센트 셋이 **형광**으로 서고 베드는 그 형광의 눌린 판.
+      검정 바탕에서만 뜻이 있다 (다크 프리셋 · `families` dark).
     """
     base_lum = _lum(base)
     prim = accent_color(lk, base)
@@ -151,6 +178,16 @@ def role_palette(it: DesignIntent, lk: Look, base: tuple[int, int, int],
         bed = _separate((30, 30, 36) if prefer_dark else (246, 246, 246), edge,
                         base_lum, prefer_dark, body)
         bed_alt = _separate(prim, edge, base_lum, prefer_dark, body)
+    elif variant == "pastel":
+        # 판은 밝은 파스텔 — `_separate`는 명도만 고르니 채도를 먼저 눌러 두고
+        # 연한 쪽을 선호시킨다 (인물이 아주 밝으면 자가 중간 명도로 민다)
+        bed = _separate(_pastel(prim), edge, base_lum, False, body)
+        bed_alt = _separate(_pastel(sec), edge, base_lum, False, body)
+    elif variant == "neon":
+        prim, sec, third = _neon(prim), _neon(sec), _neon(third)
+        hl = _neon(hl)
+        bed = _separate(prim, edge, base_lum, prefer_dark, body)
+        bed_alt = _separate(third, edge, base_lum, prefer_dark, body)
     else:                                # inverse — 액센트가 판, 하이라이트가 잔것
         bed = _separate(prim, edge, base_lum, not prefer_dark, body)
         bed_alt = _separate(third, edge, base_lum, not prefer_dark, body)

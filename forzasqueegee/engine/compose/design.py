@@ -29,17 +29,18 @@ from ...i18n import msg
 from ..catalog import Catalog
 from ..model import Layer, LayerPlan, rnd
 from .bands import _teeth, stripe_layers
-from .bed import keyline_layers
 from .echo import echo_layers
 from .families import FAMILIES, Family, rank_families
 from .field import CompositionField, build_field
 from .graph import Rel, derive
-from .macro import macro_layers, plan as macro_plan
+from .macro import build as macro_build, plan as macro_plan
+from .stack import StackPiece, build as stack_build, plan as stack_plan
 from .intent import DesignIntent
 from .look import Look
 from .place import _refit_canvas
 from dataclasses import replace as _replace
-from .roles import RolePalette, role_palette
+from .presets import StylePreset
+from .roles import RolePalette, _lum, role_palette
 from .scatter import (
     DECO_FRONT_SIZE, DECO_GAP_MAX, DECO_TIER_SIZE, HALO_GROW, rhythm_motifs,
     scatter_motifs)
@@ -68,7 +69,7 @@ DECO_BAND_FILL = 1.0
 # 여기 없다: 큰 구도는 마지막까지 남아야 장수를 줄여도 구성이 유지된다.
 # 옛 자는 산포·에코만 뺐고, 그러고도 넘치면 `build`가 꾸밈 그룹을 **통째로**
 # 버렸다 — 도안이 2,983장인 판 셋이 그래서 꾸밈 0장이 됐다.
-TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_keyline", "itasha_stripe")
+TRIM_ORDER = ("itasha_echo", "itasha_deco", "itasha_stack", "itasha_stripe")
 
 
 # 모티프가 **제 뒤 배경에서 읽히는** 최소 색차 (Lab). 이 아래면 조각이 판에
@@ -177,13 +178,14 @@ class Design:
     score: ScoreCard
     flow_rear: bool                     # 흐름이 차 뒤쪽인가
     level: float
-    keyline: bool = False
     text: TextSet | None = None         # 글자 몫 (없으면 None)
     text_plan: TextPlan | None = None
     text_style: str | None = None
     trimmed: int = 0                    # 면 상한 때문에 뺀 산포·에코 장수
     tweak: "Tweak" = field(default_factory=lambda: Tweak())
     macro: tuple[str, str] = ("ribbon", "ribbon")   # 이긴 매크로 어휘 짝
+    # 블록 위에 얹은 색면 스택 (`stack.plan`) — 벨트 띠는 `build`가 이음새 너머로 잇는다
+    stack: tuple[StackPiece, ...] = ()
     notes: list[str] = field(default_factory=list)
     ranking: list[tuple[str, float]] = field(default_factory=list)
 
@@ -311,17 +313,19 @@ def _scatter(fld: CompositionField, fam: Family, pal: RolePalette, cat: Catalog,
     return out, stats
 
 
-def _fit_cap(layers: list[Layer], room: int) -> tuple[list[Layer], int]:
+def _fit_cap(layers: list[Layer], room: int,
+             order: tuple[str, ...] = TRIM_ORDER) -> tuple[list[Layer], int]:
     """`room`장에 맞게 **역할이 낮은 것부터** 뺀 목록과 뺀 장수.
 
     같은 역할 안에서는 뒤에서부터 뺀다 (산포·에코는 뒤가 잔것이다). 판만 남는
-    자리까지 가면 그 이상은 안 뺀다 — 넘치는 판은 `build`가 잡는다.
+    자리까지 가면 그 이상은 안 뺀다 — 넘치는 판은 `build`가 잡는다. `order`는
+    버리는 순서 — 프리셋은 제 정체가 아닌 것부터 뺀다 (`presets.StylePreset.trim`).
     """
     n = len(layers) - max(0, room)
     if n <= 0:
         return layers, 0
     drop: set[int] = set()
-    for label in TRIM_ORDER:
+    for label in order:
         if len(drop) >= n:
             break
         for i in range(len(layers) - 1, -1, -1):
@@ -365,16 +369,11 @@ def _readable_motifs(layers: list[Layer], fld: CompositionField, pal: RolePalett
     return out
 
 
-def _keyline_color(pal: RolePalette) -> tuple[int, int, int]:
-    """키라인 색 — 베드의 반대 명도 (짙은 판엔 밝은 테, 연한 판엔 짙은 테)."""
-    b = (0.299 * pal.bed[0] + 0.587 * pal.bed[1] + 0.114 * pal.bed[2]) / 255.0
-    return (250, 250, 250) if b < 0.5 else (24, 24, 28)
-
-
 def _macro_colors(pal: RolePalette) -> dict[str, tuple[int, int, int]]:
     """매크로 명세의 색 역할 이름 → 실제 색 (`macro.MacroSpec.role`)."""
     return {"bed": pal.bed, "bed_alt": pal.bed_alt, "primary": pal.primary,
-            "secondary": pal.secondary, "shadow": pal.shadow, "dark": pal.dark}
+            "secondary": pal.secondary, "shadow": pal.shadow, "dark": pal.dark,
+            "highlight": pal.highlight, "rocker": ROOF_DARK}
 
 
 def _tear(base: list[Layer], fld: CompositionField, edge_v: tuple[str, ...],
@@ -408,16 +407,21 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                    frame_box: tuple[float, float, float, float],
                    person_box: tuple[float, float, float, float],
                    L: np.ndarray, t: np.ndarray, frame_center: tuple[float, float],
-                   u: float, rear_sign: float, drawable_at=None,
+                   u: float, rear_sign: float, drawable_at=None, exposed_at=None,
                    motif: str | None = None, halo: tuple[int, int, int] | None = None,
                    family: str | None = None, phase: float = 0.0,
                    text: TextSpec | None = None, cap: int | None = None,
-                   n_person: int = 0, log=None) -> Design:
+                   n_person: int = 0, style: StylePreset | None = None,
+                   log=None) -> Design:
     """후보 생성 + 평가 + 선택. 되돌림은 이긴 설계다 (순위표는 `ranking`).
 
     `text`가 켜져 있으면 글자도 후보의 한 축이다 — 배치 후보(워드마크·로커·
     사인)마다, 그리고 "글자 없음"까지 같은 표에서 겨룬다. 층은 면에 남는 장수
     (`cap` − `n_person` − 꾸밈)와 우선순위가 정한다 (`textbudget`).
+
+    `style`(스타일 프리셋 — `presets`)이 오면 그 계열 안에서만 고르고, 어휘 짝·
+    산포 배율·팔레트 변종·워드마크 배율·레이싱 번호·예산 사다리가 프리셋 것이다.
+    `family`를 따로 주면 계열은 그것이 이긴다 (엔진 레버).
     """
     text_on = text is not None and text.active
     cap = cap or 3000
@@ -425,8 +429,33 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
     edge_v = edge_shapes(lk, cat, motif)
     fx0, _f, fx1, _g = frame_box
     person_frac = (person_box[2] - person_box[0]) / max(1e-6, fx1 - fx0)
-    fams = rank_families(it, lk, person_frac)
+    base_lum = _lum(car_rgb) if car_rgb is not None else None
+    fams = rank_families(it, lk, person_frac, base_lum=base_lum)
+    # 다크 계열은 **프리셋으로만** 선다. 자동에 넣어 보니 흰 차에서는 순위만으로
+    # 넷 안에 들어 형광 사선이 이겼고(giulia-01), 검은 바탕에서만 두어도 검은 차
+    # 셋이 다크로 갈리며 차 자가 내려갔다 (W14D→W15B: H 중앙 .744→.727 · 재료
+    # .744→.727, big_n 벌점 .58→.70). 자동은 기준판 그대로다.
+    if style is None:
+        fams = [n for n in fams if n != "dark"]
+    if family is None and style is not None:
+        family = style.family
     fams = [family] if family is not None else fams[:FAMILY_TOP]
+    trim_order = style.trim if style is not None else TRIM_ORDER
+    text_scale = style.text_scale if style is not None else 1.0
+
+    def _styled(fam: Family) -> Family:
+        """프리셋이 계열을 좁히는 자리 — 어휘 짝과 산포 배율. 이름은 그대로다."""
+        if style is None:
+            return fam
+        kw: dict = {}
+        if style.macro:
+            kw["macro"] = style.macro
+        if style.motif_k != 1.0:
+            kw["tier_scale"] = fam.tier_scale * style.motif_k
+            kw["motif_n"] = max(1, int(round(fam.motif_n * style.motif_k)))
+        if style.bed_level is not None:
+            kw["bed_level"] = style.bed_level
+        return _replace(fam, **kw) if kw else fam
     # 흐름별 필드 — 후보가 나눠 쓴다 (필드 짓기가 후보보다 비싸다)
     fields: dict[str, CompositionField] = {}
 
@@ -434,31 +463,49 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         if mode not in fields:
             flow = None if mode == "auto" else (rear_sign if mode == "rear" else -rear_sign, 0.0)
             fields[mode] = build_field(it, L, t, frame_center, u, frame_box, person_box,
-                                       rear_sign, drawable_at=drawable_at, flow=flow)
+                                       rear_sign, drawable_at=drawable_at,
+                                       exposed_at=exposed_at, flow=flow)
         return fields[mode]
 
     def _base(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
-              kinds: tuple[str, str], tw: "Tweak") -> list[Layer]:
-        """큰 색면 + 로커 — 후보의 **바탕**.
+              kinds: tuple[str, str], tw: "Tweak"
+              ) -> tuple[list[Layer], tuple[StackPiece, ...]]:
+        """큰 색면 + 스택 + 로커 — 후보의 **바탕** (레이어들, 스택 조각들).
 
         판이 먼저, 로커가 그 위다 — 색면은 프레임을 관통해 로커 속으로도 내려가고
         로커 띠가 그 아랫단을 덮어 하부 투톤이 색면을 자른다 (레퍼런스의 검은
         하부는 판 위에 얹힌 층이다 — Evo IX·EVELYNE).
+
+        **스택**(`stack`)은 블록의 z 사이에 끼어든다 — 가장자리 무늬와 홈은 블록
+        바로 위(짝 아래)에, 벨트·아치·핀은 짝 위에 선다. 조각은 계열이 정하고
+        매개변수는 블록·인물·차체 선에서 나온다 — 좌표하강이 블록을 흔들면
+        스택도 그 블록을 따라간다.
         """
         specs = macro_plan(fld, kinds, level, rocker=fam.rocker,
                            d_rot=tw.bed_rot, d_y=tw.bed_dy, d_w=tw.bed_w)
-        base = macro_layers(specs, fld.frame_box, _macro_colors(pal), cat)
+        cols = _macro_colors(pal)
+        groups: list[tuple[float, list[Layer]]] = [
+            (float(sp.z), macro_build(sp, fld.frame_box, cols.get(sp.role, cols["bed"]), cat))
+            for sp in sorted(specs, key=lambda s: (s.z, s.kind, s.ang))]
+        pieces: tuple[StackPiece, ...] = ()
+        if fam.stack:
+            pieces = stack_plan(fld, fam.name, fam.stack, specs, level, colors=cols,
+                                rocker=fam.rocker)
+            groups += stack_build(pieces, fld.frame_box, cols, cat)
+        groups.sort(key=lambda g: g[0])          # 안정 정렬 — 같은 z는 지은 순서
+        base = [l for _z, ls in groups for l in ls]
         if fam.torn and edge_v and base:
             base += _tear(base, fld, edge_v, cat)
         if fam.rocker:
             base += _rocker(fld, lk, cat, car_rgb, edge_v)
-        return base
+        return base, pieces
 
     def _parts(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
                kinds: tuple[str, str], tw: "Tweak"
-               ) -> tuple[list[Layer], list[Layer], list[Layer], list]:
-        """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계) — 미세 조정도 이 자를 쓴다."""
-        base = _base(fam, fld, pal, level, kinds, tw)
+               ) -> tuple[list[Layer], list[Layer], list[Layer], list,
+                          tuple[StackPiece, ...]]:
+        """후보 한 벌의 (바탕, 꼬리, 전경, 산포 통계, 스택) — 미세 조정도 이 자를 쓴다."""
+        base, pieces = _base(fam, fld, pal, level, kinds, tw)
         fam_m = _replace(fam, tier_scale=fam.tier_scale * tw.motif_k)
         sc, stats = _scatter(fld, fam_m, pal, cat, vocab, halo, False, phase,
                              anchor_dx=tw.anchor_dx, angularity=it.angularity)
@@ -469,12 +516,13 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         tail = _readable_motifs(tail, fld, pal, cat, base)
         front, _fs = _scatter(fld, fam_m, pal, cat, vocab, None, True, phase,
                               anchor_dx=tw.anchor_dx, angularity=it.angularity)
-        return base, tail, front, stats
+        return base, tail, front, stats, pieces
 
     def _card(fam: Family, fld: CompositionField, pal: RolePalette, level: float,
-              base, tail, front, front_ras, keyl, keyline: bool, ts, stats,
+              base, tail, front, front_ras, ts, stats,
               text_ras, behind, tplan, tstyle, tw: "Tweak",
-              kinds: tuple[str, str] = ("ribbon", "ribbon")) -> Design:
+              kinds: tuple[str, str] = ("ribbon", "ribbon"),
+              pieces: tuple[StackPiece, ...] = ()) -> Design:
         """부품 한 벌 → 재고 담은 후보. 후보 루프와 미세 조정이 같은 자를 쓴다."""
         back = list(base)
         # 글자는 **손잡이대로 다시 앉힌다** — 원형 블록이 있어 값싸다
@@ -484,17 +532,16 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
             text_ras = raster_layers(ts.layers, fld, cat)
         tl = ts.layers if ts is not None else []
         n_text = ts.n if ts is not None else 0
-        if keyline:
-            back += keyl
         back += tail
         # 면 상한 — 역할이 낮은 것부터 뺀다 (도안·판·글자가 먼저다).
         # 글자는 제 그룹이라 따로 센다.
         room = cap - 4 - n_person - len(front) - n_text
-        back, trimmed = _fit_cap(back, room)
+        back, trimmed = _fit_cap(back, room, trim_order)
         extra = None
         if text_on:
             extra = text_parts(fld, cat, ts.poses if ts else [], tl, behind,
-                               front_alpha=front_ras[1])
+                               front_alpha=front_ras[1],
+                               outline=bool(tplan is not None and tplan.outline))
         # **구성 그래프** — 지어 놓은 부품에서 역할 노드를 되읽고 계열의 문법을
         # 건다 (`graph`). 점수가 "무엇이 있나"가 아니라 "무엇과 무엇이 어떤
         # 사이인가"를 잴 수 있게 하는 자리다. 여백 노드는 점수기가 붙인다.
@@ -509,8 +556,8 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                             text=text_ras, front_raster=front_ras, graph=gr)
         return Design(family=fam, pal=pal, fld=fld, back=back, front=front, score=card,
                       flow_rear=(fld.flow[0] * rear_sign) > 0, level=level,
-                      keyline=keyline, text=ts, text_plan=tplan, text_style=tstyle,
-                      trimmed=trimmed, tweak=tw, macro=kinds)
+                      text=ts, text_plan=tplan, text_style=tstyle,
+                      trimmed=trimmed, tweak=tw, macro=kinds, stack=pieces)
 
     # ---- 단계 A: **매크로 기하**만 겨룬다 -------------------------------------
     # 계열 × 흐름 × 어휘 짝 × 크기를 전수로 돌면 후보가 사백을 넘어 한 판에
@@ -523,12 +570,12 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
     seeds: list[tuple[tuple[int, float], Family, str, CompositionField,
                       tuple[str, str], float]] = []
     for fname in fams:
-        fam = FAMILIES[fname]
+        fam = _styled(FAMILIES[fname])
         for mode in fam.flows:
             fld = _field(mode)
             for kinds in fam.macro:
                 for level in (fam.bed_level, max(0.0, fam.bed_level - 0.25)):
-                    base = _base(fam, fld, pal0, level, kinds, Tweak())
+                    base, _pc = _base(fam, fld, pal0, level, kinds, Tweak())
                     gr = derive(fld, base, [], [])
                     gr.rels = tuple(Rel(k, a, b, w) for k, a, b, w in fam.rels())
                     sc = score_design(fld, pal0, cat, base, [],
@@ -561,14 +608,13 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
     # ---- 단계 B: 살아남은 기하에 팔레트·키라인·글자를 붙인다 -------------------
     cands: list[Design] = []
     for _k, fam, _mode, fld, kinds, level in seeds:
-        for variant in VARIANTS_TRIED:
+        # 팔레트 변종 — 프리셋이 있으면 그 벌, 없으면 계열 제 것(다크의 형광)
+        # 이나 공통 셋
+        for variant in (style.variants if style is not None
+                        else (fam.variants or VARIANTS_TRIED)):
             pal = role_palette(it, lk, car_rgb, variant)
-            base, tail, front, stats = _parts(fam, fld, pal, level, kinds, Tweak())
+            base, tail, front, stats, pieces = _parts(fam, fld, pal, level, kinds, Tweak())
             front_ras = raster_layers(front, fld, cat)
-            # 키라인은 후보의 한 축이다 — 짙은 판 위에서 실루엣이 읽히나를
-            # 점수(readability)가 가르고, 안 필요한 판에서는 장수만 먹는다
-            key_col = _keyline_color(pal)
-            keyl = keyline_layers(fld, key_col, cat)
             # ---- 글자 — 배치 후보마다 한 벌, 그리고 "없음" ----
             text_sets: list[TextSet | None] = [None]
             tplan = None
@@ -577,7 +623,7 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                 tstyle = choose_style(text.style, fam, it)
                 # 남는 장수: 우선순위 high면 산포·에코를 안 세고(글자가
                 # 먼저다 — 넘치면 그쪽을 뺀다), low면 절반만 준다
-                fixed = n_person + len(base) + len(keyl) + len(front) + 12
+                fixed = n_person + len(base) + len(front) + 12
                 free = cap - fixed - (0 if text.priority == "high" else len(tail))
                 if text.priority == "low":
                     free = int(free * 0.5)
@@ -587,7 +633,8 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                                           fld, cat)
                 text_sets += build_text_sets(
                     fld, pal, cat, main=text.main or "", sub=text.sub, style=tstyle,
-                    plan=tplan, rocker=fam.rocker, bed_alpha=bed_a)
+                    plan=tplan, rocker=fam.rocker, bed_alpha=bed_a,
+                    scale=text_scale)
             # 게임 글꼴 글리프는 후보당 수십 장이라 도형 맞춤(수백 장)과 달리
             # 다듬기를 막을 이유가 없다 — 다만 판을 흔들면 글자 자리도 흔들려
             # 다시 지어야 하므로 `_refine`은 여전히 글자 없는 판만 돈다.
@@ -597,12 +644,11 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                         for ts in text_sets if ts is not None}
             behind = composite(fld, pal, cat, base, [], front_raster=front_ras)["behind"] \
                 if text_on else None
-            for keyline in (False, True):
-                for ts in text_sets:
-                    cands.append(_card(fam, fld, pal, level, base, tail, front,
-                                       front_ras, keyl, keyline, ts, stats,
-                                       text_ras.get(id(ts)), behind,
-                                       tplan, tstyle, Tweak(), kinds))
+            for ts in text_sets:
+                cands.append(_card(fam, fld, pal, level, base, tail, front,
+                                   front_ras, ts, stats,
+                                   text_ras.get(id(ts)), behind,
+                                   tplan, tstyle, Tweak(), kinds, pieces))
     # 탈락 조건에 걸린 후보는 점수와 무관하게 뒤로 간다 (전멸하면 위반 수로 고른다).
     #
     # 총점은 **여섯째 자리에서 끊어** 견준다. 점수 항목 몇은 LAPACK을 거치는데
@@ -621,7 +667,6 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
         축·걸음·순서가 못 박혀 있고(`REFINE_STEPS`) 같은 점수면 원래 값이 이긴다
         — 난수도 전수 조합도 없다 (`REFINE_STEPS`).
         """
-        keyl = keyline_layers(d.fld, _keyline_color(d.pal), cat)
         d_behind = composite(d.fld, d.pal, cat, d.back, [])["behind"] \
             if d.text is not None else None
         best_d, tw = d, d.tweak
@@ -635,14 +680,14 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
                     if not (lo <= v <= hi):
                         continue
                     cand_tw = _replace(tw, **{name: v})
-                    b2, t2, f2, s2 = _parts(d.family, d.fld, d.pal, d.level,
-                                            d.macro, cand_tw)
+                    b2, t2, f2, s2, p2 = _parts(d.family, d.fld, d.pal, d.level,
+                                                d.macro, cand_tw)
                     ts2 = d.text
                     tr2 = raster_layers(ts2.layers, d.fld, cat) if ts2 else None
                     cd = _card(d.family, d.fld, d.pal, d.level, b2, t2, f2,
-                               raster_layers(f2, d.fld, cat), keyl, d.keyline,
+                               raster_layers(f2, d.fld, cat),
                                ts2, s2, tr2, d_behind, d.text_plan, d.text_style,
-                               cand_tw, d.macro)
+                               cand_tw, d.macro, p2)
                     if _rank(cd) < _rank(best_d):
                         best_d, tw, moved = cd, cand_tw, True
             if not moved:
@@ -660,7 +705,7 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
     best = cands[0]
     best.ranking = [(f"{'!' * len(d.score.fails)}{d.family.name}/{d.pal.variant}"
                      f"/{'rear' if d.flow_rear else 'front'}"
-                     f"/{d.level:.2f}{'/key' if d.keyline else ''}"
+                     f"/{d.level:.2f}"
                      + (f"/txt-{d.text.poses[0].role}-{d.text.tier_main}" if d.text else
                         ("/txt-none" if text_on else "")),
                      round(d.score.total, 4)) for d in cands[:8]]
@@ -683,6 +728,12 @@ def compose_design(plan: LayerPlan, lk: Look, it: DesignIntent, cat: Catalog,
             best.notes += best.text_plan.notes
     if best.trimmed:
         best.notes.append(msg("면 상한 때문에 산포·에코 {n}장을 뺐다", n=best.trimmed))
+    if best.stack:
+        best.notes.append(msg(
+            "색면 스택: {pieces} — {n}장 (블록 {kinds} 위에 계열 {family}의 문법대로)",
+            pieces=" · ".join(p.kind for p in best.stack),
+            n=sum(1 for l in best.back if l.label == "itasha_stack"),
+            kinds="+".join(best.macro), family=best.family.name))
     best.notes.append(msg(
         "구성 설계: 후보 {n}벌 중 {family} 계열 ({variant} 팔레트 · 흐름 {flow} · "
         "베드 {level:.2f}) 점수 {score:.3f} — {parts}",
