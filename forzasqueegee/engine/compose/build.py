@@ -1541,6 +1541,10 @@ ROW_RESERVE = 0.5
 TEXT_OUT_MAX = 0.01
 
 
+# 들일 자리가 없을 때 그래도 **두는** 상한 — 이만큼 넘는 글자는 빼지 않는다
+TEXT_OUT_KEEP = 0.10
+
+
 # 글자가 서려면 이만큼은 **눈에 보여야** 한다 (`place.surface_exposure`, 0~1). 옆면
 # 실측(줄리아·실비아): 차체 밴드 한가운데 .8~.9, 사이드실 아랫단·벨트 바로 아래 .2~.5.
 TEXT_EXPOSURE_MIN = 0.5
@@ -1642,6 +1646,12 @@ def _side_text_guard(tset, fld, cat: Catalog, body: gsurf.SurfaceMap, u: float,
                 break
     if not drop:
         notes.append(msg("옆면 글자의 {pct:.0f}%가 눌린 띠에 걸리는데 들일 자리가 없다 — 그대로 둔다",
+                         pct=100 * frac))
+        return tset
+    if frac <= TEXT_OUT_KEEP:
+        # 조금 넘는 것은 둔다 — 글리프 끝이 벨트를 스치는 정도는 잘린 이름이 아니라
+        # 이름이다. 빼면 옆면에 이름이 없는 판이 된다 (사용자: 없는 것보다 낫다)
+        notes.append(msg("옆면 글자의 {pct:.0f}%가 차체 밴드 밖인데 들일 자리가 없다 — 그대로 둔다",
                          pct=100 * frac))
         return tset
     notes.append(msg("옆면 글자가 차체 밴드 밖으로 나가고 들일 자리가 없다 — 뺀다"))
