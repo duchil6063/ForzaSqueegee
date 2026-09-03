@@ -986,7 +986,7 @@
  "못 읽었다: {e}": "could not read: {e}",
  " (자리만)": " (position only)",
  "이미지": "IMAGE",
- "사용자 로고 이미지(또는 도안) — 여러 번 줄 수 있다. 셀 노선으로 벡터화해(110장 상한) 스폰서 문법으로 앉힌다": "A user logo image (or design) — repeatable. Vectorised on the cel route (110-layer cap) and placed by the sponsor grammar",
+ "사용자 로고 이미지(또는 도안) — 여러 번 줄 수 있다. 셀 노선으로 벡터화해(300장 상한) 스폰서 문법으로 앉힌다": "A user logo image (or design) — repeatable. Vectorised on the cel route (300-layer cap) and placed by the sponsor grammar",
  "로고 자리 — auto(워터마크는 리어, 로고는 옆면 로커 줄·리어·프론트) · rear · front · windshield · rocker(옆면 줄만)": "Logo placement — auto (watermark on the rear, logos on the side rocker row, rear and front) · rear · front · windshield · rocker (side rows only)",
  "배경 제거 전처리를 켠다 (알파 없는 입력에서 신경망으로 인물만 딴다)": "Enable background removal (a neural matte cuts the subject out of inputs without alpha)",
  "내장 ForzaSqueegee 워터마크를 뺀다 (기본은 리어 범퍼에 선다)": "Drop the built-in ForzaSqueegee watermark (by default it sits on the rear bumper)",

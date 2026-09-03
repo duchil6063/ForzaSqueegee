@@ -70,8 +70,16 @@ FACE_ROW_V = 0.20
 CORNER_PAD = 0.08
 
 
+# 다른 면 줄의 로고가 **읽히는 크기의 하한** — 기준 폭(옆면 로고 폭 × `FACE_LOGO_K`)
+# 대비. 노출 띠가 좁아 이 아래로 줄어야 들어가면 뺀다. W13 실측: 리어 줄은 0.37~0.45
+# 배에서 읽히고(실비아·미아타), 프론트 0.21배는 점이었다.
+FACE_LOGO_MIN = 0.33
+
+
 # 면 위의 다른 덩어리와 이만큼 넘게 겹치면 그 자리는 안 쓴다 (로고 상자 몫).
-BUSY_MAX = 0.05
+# 로고는 도안·글자에 가려지면 안 된다 (사용자 지시 2026-09-03) — 상자끼리 스치는
+# 몫만 남긴다.
+BUSY_MAX = 0.02
 
 
 @dataclass
@@ -219,10 +227,90 @@ def side_row(protos: list[Proto], fld: CompositionField,
 
 
 def _drawn(sm: gsurf.SurfaceMap, box: tuple[float, float, float, float]) -> float:
-    """상자의 다섯 점(중심·네 귀) 중 도색 마스크 안인 몫."""
+    """상자 안 **5×5 격자점** 중 마스크 안인 몫 — 귀퉁이·변 한가운데까지 다 든다.
+
+    종전 다섯 점(중심·네 귀)은 변 한가운데가 마스크 계단에 걸린 상자를 통과시켰다
+    (W11F 프론트: 엠블럼 윗변이 후드 코에 걸쳤다)."""
     u0, v0, u1, v1 = box
-    pts = ((u0, v0), (u1, v0), (u0, v1), (u1, v1), ((u0 + u1) / 2, (v0 + v1) / 2))
-    return sum(1 for u, v in pts if sm.masked_at(u, v)) / 5.0
+    pts = [(u0 + (u1 - u0) * i / 4.0, v0 + (v1 - v0) * j / 4.0)
+           for i in range(5) for j in range(5)]
+    return sum(1 for u, v in pts if sm.masked_at(u, v)) / 25.0
+
+
+# ────────────────────────────── 모티프 양보 ──────────────────────────────
+# 글자·로고 상자 둘레로 모티프가 비워 줘야 하는 여유 (상자 짧은 변의 몫).
+MARK_PAD = 0.15
+
+
+def rect_box(x: float, y: float, hw: float, hh: float, rot: float
+             ) -> tuple[float, float, float, float]:
+    """중심·반폭·반높이·각 → 축 정렬 상자."""
+    r = math.radians(rot)
+    c, s = abs(math.cos(r)), abs(math.sin(r))
+    ex, ey = hw * c + hh * s, hw * s + hh * c
+    return (x - ex, y - ey, x + ex, y + ey)
+
+
+def _pad(box, k: float = MARK_PAD):
+    p = k * min(box[2] - box[0], box[3] - box[1])
+    return (box[0] - p, box[1] - p, box[2] + p, box[3] + p)
+
+
+def hits_marks(box, marks: list) -> bool:
+    return any(_overlap(box, _pad(m)) > 0.0 for m in marks)
+
+
+def prune_shape_specs(specs: list[dict], marks: list, face_w: float) -> tuple[list[dict], int]:
+    """면 위저드 도형 명세에서 글자·로고 상자에 닿는 **모티프**를 뺀다.
+
+    큰 색면(면 폭 25%↑ — 띠·블록)은 바탕이라 둔다: 글자가 띠 위에 서는 것은 사람
+    판의 문법이다. 되돌림: (남은 명세, 뺀 수). 사용자 지시 2026-09-03 — 글자·로고는
+    도안·꾸밈에 가려지면 안 된다. 꾸밈이 양보한다.
+    """
+    if not marks:
+        return specs, 0
+    keep, cut = [], 0
+    for s in specs:
+        hw, hh = UNITS_PER_SCALE * abs(float(s["sx"])), UNITS_PER_SCALE * abs(float(s.get("sy", s["sx"])))
+        if 2 * max(hw, hh) >= 0.25 * face_w:
+            keep.append(s)
+            continue
+        if hits_marks(rect_box(float(s["x"]), float(s["y"]), hw, hh, float(s.get("rot") or 0.0)),
+                      marks):
+            cut += 1
+            continue
+        keep.append(s)
+    return keep, cut
+
+
+# 옆면 꾸밈에서 **바탕**인 라벨 — 로커 띠·베드·색면 스택. 글자·로고가 그 위에 서는
+# 것은 사람 판의 문법이라 양보하지 않는다. 나머지(산포·에코·전경 모티프)는 양보한다.
+BACKGROUND_LABELS = frozenset({"itasha_bed", "itasha_stripe", "itasha_stack"})
+
+
+def prune_motif_layers(layers: list[Layer], marks: list, frame_w: float
+                       ) -> tuple[list[Layer], int]:
+    """레이어 목록(프레임 좌표)에서 글자·로고 상자에 닿는 모티프를 뺀다 — 옆면 꾸밈
+    그룹용. 바탕 라벨(`BACKGROUND_LABELS`)과 큰 색면은 `prune_shape_specs`와 같은
+    자로 둔다."""
+    if not marks:
+        return layers, 0
+    keep, cut = [], 0
+    for l in layers:
+        hw, hh = UNITS_PER_SCALE * abs(float(l.sx)), UNITS_PER_SCALE * abs(float(l.sy))
+        if l.label in BACKGROUND_LABELS or 2 * max(hw, hh) >= 0.25 * frame_w:
+            keep.append(l)
+            continue
+        if hits_marks(rect_box(float(l.x), float(l.y), hw, hh, float(l.rot)), marks):
+            cut += 1
+            continue
+        keep.append(l)
+    return keep, cut
+
+
+def pose_box(p: TextPose) -> tuple[float, float, float, float]:
+    """글자 포즈의 축 정렬 상자 (프레임 좌표)."""
+    return rect_box(p.x, p.y, p.w / 2, p.h / 2, p.rot)
 
 
 def _busy(box, busy: list[tuple[float, float, float, float]]) -> float:
@@ -231,14 +319,32 @@ def _busy(box, busy: list[tuple[float, float, float, float]]) -> float:
 
 
 def _fits(sm: gsurf.SurfaceMap, box, busy) -> bool:
-    return _drawn(sm, box) >= 0.99 and _busy(box, busy) <= BUSY_MAX
+    return _drawn(sm, box) >= 0.999 and _busy(box, busy) <= BUSY_MAX
+
+
+def _mask_without(sm: gsurf.SurfaceMap, busy: list) -> gsurf.SurfaceMap:
+    """다른 덩어리 상자(`busy`)를 판 마스크 사본 — 내접 상자를 찾을 때 글자·도안이
+    차지한 자리를 빈 자리로 세지 않게 (리어: 워드마크 위·아래에서 줄 자리를 찾는다)."""
+    if not busy or sm.mask.size <= 1:
+        return sm
+    m = sm.mask.copy()
+    mh, mw = m.shape
+    u0, v0, u1, v1 = sm.paint
+    kx = (mw - 1) / max(1e-6, u1 - u0)
+    ky = (mh - 1) / max(1e-6, v1 - v0)
+    for b in busy:
+        x0 = max(0, int((b[0] - u0) * kx)); x1 = min(mw, int((b[2] - u0) * kx) + 1)
+        y0 = max(0, int((v1 - b[3]) * ky)); y1 = min(mh, int((v1 - b[1]) * ky) + 1)
+        if x1 > x0 and y1 > y0:
+            m[y0:y1, x0:x1] = False
+    return replace(sm, mask=m, fill=round(float(m.mean()), 4), drawn=None)
 
 
 def _nudge(sm: gsurf.SurfaceMap, pl: Placed, busy, steps: tuple[float, ...]) -> Placed | None:
-    """자리를 위로 조금씩 밀어 보고, 안 들면 줄여 본다."""
+    """자리를 위로 조금씩 밀어 보고, 안 들면 줄여 본다 (0.55배까지 — 좁은 노출 띠)."""
     _u0, v0, _u1, v1 = sm.paint
     H = v1 - v0
-    for k in (1.0, 0.85, 0.7):
+    for k in (1.0, 0.85, 0.7, 0.55):
         for dv in steps:
             q = Placed(proto=pl.proto, x=pl.x, y=pl.y + dv * H, w=pl.w * k, rot=pl.rot)
             if _fits(sm, q.box, busy):
@@ -287,19 +393,55 @@ def face_row(protos: list[Proto], sm: gsurf.SurfaceMap, busy: list, *,
         hrow *= k
         gap *= k
         total = FACE_ROW_W * W
+    nominal = dict(widths)                        # 읽히는 크기의 기준 — 이 아래로 줄면 뺀다
+    # 줄이 **온전히 드는 상자** — 마스크(그리는 지도 ∧ 정면도 ∧ 여유, `place.usable`)에
+    # 내접하는 줄 비율의 상자. 범퍼 아랫단은 마스크에 있어도 정면도가 낮아 안 보이므로
+    # 상수 높이(`FACE_ROW_V`)로 못 박으면 줄이 통째로 빠진다 (W12: 프론트 33/33).
+    # 상자가 줄보다 좁으면 줄을 그만큼 줄인다.
+    fitbox = _mask_without(sm, busy).fit(max(0.5, total / max(1e-6, hrow)), coverage=0.995,
+                                         anchor="bottom", margin=0.0)
+    if fitbox is not None and pane is not None:
+        fitbox = (max(fitbox[0], u0), fitbox[1], min(fitbox[2], u1), fitbox[3])
+    if fitbox is not None and fitbox[2] - fitbox[0] < total:
+        k = max(0.3, (fitbox[2] - fitbox[0]) / max(1e-6, total))
+        for key in widths:
+            widths[key] *= k
+        hrow *= k
+        gap *= k
+        total *= k
     v = v0 + FACE_ROW_V * H
     if floor_v is not None:
         v = max(v, floor_v + 0.5 * hrow + 0.03 * H)
-    u = (u0 + u1) / 2 - total / 2
+    ucen = (u0 + u1) / 2
+    if fitbox is not None:
+        v = min(max(v, fitbox[1] + hrow / 2), fitbox[3] - hrow / 2)
+        ucen = (fitbox[0] + fitbox[2]) / 2
     out: list[Placed] = []
+    if fitbox is None:
+        steps = NUDGES
+    else:
+        # 상자 높이 전체를 훑는다 — 아래에서 위로, 그다음 아래로. 리어의 노출 띠는
+        # 워드마크가 아래를 차지하므로 줄이 그 위로 올라가야 한다 (W12S2 리어 0/4).
+        lo, hi = fitbox[1] + hrow / 2, fitbox[3] - hrow / 2
+        up = [dv for dv in np.arange(0.0, (hi - v) / H + 1e-9, 0.03)]
+        down = [-dv for dv in np.arange(0.03, (v - lo) / H + 1e-9, 0.03)]
+        steps = tuple(float(d) for d in up + down) or (0.0,)
+    u = ucen - total / 2
     for pr in order:
         w = widths[id(pr)]
         pl = Placed(proto=pr, x=u + w / 2, y=v, w=w)
         u += w + gap
-        q = _nudge(sm, pl, busy, NUDGES)
+        q = _nudge(sm, pl, busy, steps or (0.0,))
         if q is None:
             notes.append(msg("{surface}: '{name}'을(를) 앉힐 자리가 없다 — 뺀다",
                              surface=sm.name, name=pr.item.name))
+            continue
+        if q.w < FACE_LOGO_MIN * nominal[id(pr)]:
+            # 들어가긴 하는데 점이 된다 (실비아 프론트: 노출 띠가 좁아 0.16배) —
+            # 안 읽히는 로고는 없는 것보다 나쁘다
+            notes.append(msg("{surface}: '{name}'은(는) 자리가 좁아 {k:.2f}배로 줄어야 "
+                             "든다 — 뺀다", surface=sm.name, name=pr.item.name,
+                             k=q.w / max(1e-6, nominal[id(pr)])))
             continue
         busy = list(busy) + [q.box]
         out.append(q)
@@ -338,6 +480,20 @@ def corner(pr: Proto, sm: gsurf.SurfaceMap, busy: list, *, side_w: float | None,
     w = min(SIDE_LOGO_W * ref * WATERMARK_K, FACE_W_MAX * W)
     h = w / pr.aspect
     for sgn in (+1.0, -1.0):
+        # 귀퉁이도 마스크(∧ 정면도)에 **드는 상자** 안이다 — 그 쪽 아래 귀퉁이에
+        # 내접하는 상자를 찾아 그 구석에 앉힌다 (`place.usable` — 범퍼 아랫단은
+        # 안 보인다). 상자가 없으면 종전 자리(면 상자 귀퉁이)에서 밀어 본다.
+        box = _mask_without(sm, busy).fit(pr.aspect, coverage=0.995, anchor="bottom",
+                                          bias_x=1.0 if sgn > 0 else 0.0, margin=0.0)
+        if box is not None and (box[2] - box[0]) >= w and (box[3] - box[1]) >= h:
+            x = (box[2] if sgn > 0 else box[0]) - sgn * (CORNER_PAD * W + w / 2)
+            x = min(max(x, box[0] + w / 2), box[2] - w / 2)
+            y = min(box[1] + CORNER_PAD * H + h / 2, box[3] - h / 2)
+            pl = Placed(proto=pr, x=x, y=y, w=w)
+            q = _nudge(sm, pl, busy, tuple(
+                dv for dv in NUDGES if box[1] + h / 2 <= y + dv * H <= box[3] - h / 2) or (0.0,))
+            if q is not None:
+                return q
         x = (u1 if sgn > 0 else u0) - sgn * (CORNER_PAD * W + w / 2)
         pl = Placed(proto=pr, x=x, y=v0 + CORNER_PAD * H + h / 2, w=w)
         q = _nudge(sm, pl, busy, NUDGES)

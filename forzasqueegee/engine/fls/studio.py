@@ -1001,7 +1001,7 @@ def act_logos(st: Studio, *, watermark: bool | None = None,
               images: list | None = None, placement: str | None = None) -> str:
     """로고 옵션 — 내장 워터마크 · 사용자 로고 이미지(0~N) · 자리. 준 것만 바꾼다.
 
-    이미지는 **지금** 벡터화한다 (`compose.vectorize_logo` — 셀 노선, 110장 상한,
+    이미지는 **지금** 벡터화한다 (`compose.vectorize_logo` — 셀 노선, 300장 상한,
     내용 서명 캐시 `<작업 폴더>/logos/`) — 굽기 안에서 하면 오류가 상태줄에
     안 뜬다. 못 굽는 이미지는 빼고 말한다."""
     from .. import compose

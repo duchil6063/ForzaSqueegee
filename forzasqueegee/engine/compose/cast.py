@@ -12,8 +12,8 @@
 |---|---|
 | `text`    | 글꼴 글리프 페이지 비 ≥ 0.60 |
 | `hero`    | ≥ 1,200장 — 살색이 없어도 후보다 (로봇·동물 주역) |
-| `support` | 120 ~ 1,200장, 또는 작은데 로고 자에 안 드는 것 |
-| `logo`    | ≤ 120장 · ≤ 4색 · 살색 0 |
+| `logo`    | ≤ 4색 · 살색 0 · ≤ `LOGO_MAX`장 — 래스터 로고를 구우면 300장쯤이라 (`logokit.LOGO_LAYERS`) 장수보다 색·살색이 자다 |
+| `support` | 1,200장 아래에서 로고가 아닌 것 (사람 둘째 그림·치비는 120장 위) |
 | `pinned`  | 사람이 고른 것만 — "그대로" (꾸밈이 안 건드린다). 자동으로는 안 낸다 |
 
 오판은 사람이 고친다 — 편집기 [Auto Decoration] 창의 실린 그림 표
@@ -41,6 +41,7 @@ FONT_PAGES = frozenset(p for pair in FONTS.values() for p in pair)
 HERO_MIN = 1200          # 이 위면 주역 후보 (사람 주역 중앙 2,440장 · p10 ≈ 1,200)
 SUPPORT_MIN = 120        # 이 위면 그림 (사람 둘째 그림·치비의 아랫단)
 LOGO_COLORS_MAX = 4      # 로고는 색이 적다 (사람 로고 중앙 2색)
+LOGO_MAX = 400           # 이 위면 색이 적어도 그림이다 (구운 로고는 262~300장)
 SKIN_MIN = 0.03          # 살색 레이어 몫 — 이 위면 인물이 있다
 GLYPH_MIN = 0.60         # 글리프 몫 — 이 위면 글자 덩어리다
 
@@ -100,10 +101,10 @@ def estimate(plan: LayerPlan) -> CastEntry:
         role = "hero"
         why = (msg("{n:,}장 · 살색 {s:.1%}", n=n, s=skin) if skin > 0.0
                else msg("{n:,}장 · 살색 없음 (배경 그림이면 보조로 고칠 것)", n=n))
+    elif colors <= LOGO_COLORS_MAX and skin < 1e-9 and n <= LOGO_MAX:
+        role, why = "logo", msg("{n}장 · {c}색 · 살색 없음", n=n, c=colors)
     elif n >= SUPPORT_MIN:
         role, why = "support", msg("{n:,}장 · 살색 {s:.1%}", n=n, s=skin)
-    elif colors <= LOGO_COLORS_MAX and skin < 1e-9:
-        role, why = "logo", msg("{n}장 · {c}색 · 살색 없음", n=n, c=colors)
     else:
         role = "support"
         why = msg("{n}장 · {c}색 · 살색 {s:.1%} — 작은 그림", n=n, c=colors, s=skin)

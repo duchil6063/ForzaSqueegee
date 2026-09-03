@@ -307,6 +307,42 @@ def drawable(name: str, maps: dict[str, gsurf.SurfaceMap],
     return (sm.drawn or sm) if sm is not None else None
 
 
+# 로고·글자가 앉을 자리의 **가장자리 여유** — 면 긴 변의 몫. 마스크 계단·이음새·
+# 정면도 경계에서 한두 유닛 어긋나도 잘리지 않게 안쪽으로 들인다.
+MARK_EDGE_PAD = 0.015
+
+
+def usable(name: str, maps: dict[str, gsurf.SurfaceMap], rigs: dict[str, "SideRig"],
+           media: str | None = None) -> gsurf.SurfaceMap | None:
+    """로고·글자가 **온전히 보이게** 앉을 수 있는 지도 (사용자 지시 2026-09-03:
+    면을 벗어나면 안 된다).
+
+    그리는 지도(`drawable`)에 두 겹을 더 건다: **정면도**(`surface_exposure` ≥
+    `EXPOSED_FULL` — 범퍼·후드 코끝은 칠해지지만 눌려서 안 보이고 미리보기도
+    어둡게 깐다; 프론트 마스크의 59~77%가 그렇다) 와 **가장자리 여유**
+    (`MARK_EDGE_PAD`만큼 침식). 마스크만 바뀐 사본이라 `fit`·`masked_at`·`_pane`이
+    그대로 이 자를 쓴다. 정면도를 못 재는 면(도어 유리)은 여유만 든다.
+    """
+    sm = drawable(name, maps, rigs)
+    if sm is None or sm.mask.size <= 1:
+        return sm
+    m = sm.mask.copy()
+    e = surface_exposure(name, sm, maps, media)
+    if e is not None and np.asarray(e).shape == m.shape:
+        m &= np.asarray(e, np.float32) >= EXPOSED_FULL
+    mh, mw = m.shape
+    u0, v0, u1, v1 = sm.paint
+    span = max(u1 - u0, v1 - v0)
+    px = int(round(MARK_EDGE_PAD * span * mw / max(1e-6, u1 - u0)))
+    py = int(round(MARK_EDGE_PAD * span * mh / max(1e-6, v1 - v0)))
+    if px > 0 or py > 0:
+        import cv2
+        m = cv2.erode(m.astype(np.uint8),
+                      np.ones((2 * py + 1, 2 * px + 1), np.uint8)).astype(bool)
+    return replace(sm, mask=m, fill=round(float(m.mean()), 4), drawn=None,
+                   note=(sm.note + "+usable") if sm.note else "usable")
+
+
 # 표시 밝기 — 도색 마스크 밖과 **안 보이는 자리**를 이만큼 어둡게 깐다.
 EXPOSED_FLOOR = 0.22          # 아주 안 보이는 자리 (마스크 밖과 같은 값)
 
@@ -345,6 +381,70 @@ def surface_exposure(name: str, smap: gsurf.SurfaceMap,
 # 마스크는 실측이라 가장자리가 한두 유닛 어긋날 수 있고, 걸친 레이어를 버리면
 # 이음새에 빈 띠가 생긴다 — 그래서 조금 넉넉히 두고 그 밖만 뺀다.
 OFF_CAR_MARGIN = 0.02
+
+
+def ink_outside(layers, cat: Catalog, L: np.ndarray, t: np.ndarray,
+                mm: gsurf.SurfaceMap) -> tuple[float, tuple[float, float]]:
+    """레이어 잉크 중 **면 마스크 밖**의 몫과, 안으로 들이려면 밀어야 할 (du, dv).
+
+    잉크는 레이어 껍질을 마스크 격자에 찍은 것이고 변환은 `q = p·Lᵀ + t`(면 유닛).
+    밀 양은 밖에 있는 픽셀들이 마스크 상자의 어느 변을 넘었나로 잰다 — 벨트 위면
+    아래로, 로커 아래면 위로, 앞뒤 끝이면 안쪽으로 (면 유닛, 여유 2유닛 포함).
+    """
+    import cv2
+    m = mm.mask
+    if m.size <= 1:
+        return 0.0, (0.0, 0.0)
+    mh, mw = m.shape
+    a0, b0, a1, b1 = mm.paint
+    kx = (mw - 1) / max(1e-6, a1 - a0)
+    ky = (mh - 1) / max(1e-6, b1 - b0)
+    qs = [q for l in layers
+          if len(pts := layer_points(l, cat)) and (q := pts @ L.T + t) is not None]
+    if not qs:
+        return 0.0, (0.0, 0.0)
+    allq = np.concatenate(qs, 0)
+    # 캔버스는 마스크 상자 ∪ 잉크 상자다 — 마스크 격자에만 찍으면 격자 밖(벨트 위)으로
+    # 나간 잉크가 잘려 "밖"이 0으로 나온다 (미아타 사인 글자: 23유닛 위인데 0)
+    c0, d0 = min(a0, float(allq[:, 0].min())), min(b0, float(allq[:, 1].min()))
+    c1, d1 = max(a1, float(allq[:, 0].max())), max(b1, float(allq[:, 1].max()))
+    W = int(np.ceil((c1 - c0) * kx)) + 2
+    H = int(np.ceil((d1 - d0) * ky)) + 2
+    ink = np.zeros((H, W), np.uint8)
+    for q in qs:
+        px = np.stack([(q[:, 0] - c0) * kx, (d1 - q[:, 1]) * ky], axis=1)
+        cv2.fillPoly(ink, [np.round(px).astype(np.int32)], 1)
+    n_ink = int(ink.sum())
+    if n_ink == 0:
+        return 0.0, (0.0, 0.0)
+    big = np.zeros((H, W), bool)
+    oy, ox = int(round((d1 - b1) * ky)), int(round((a0 - c0) * kx))
+    big[oy:oy + mh, ox:ox + mw] = m[:min(mh, H - oy), :min(mw, W - ox)]
+    inside = ink.astype(bool) & big
+    out = ink.astype(bool) & ~big
+    n_out = int(out.sum())
+    over = {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
+    if n_out:
+        ys, xs = np.nonzero(out)
+        vs = d1 - ys / ky
+        us = c0 + xs / kx
+        # 마스크 안쪽 잉크의 무게중심에서 밖 잉크가 어느 쪽에 있나 — 그만큼 반대로 민다
+        iy, ix = np.nonzero(inside)
+        cv = float((d1 - iy / ky).mean()) if len(iy) else float(vs.mean())
+        cu = float((c0 + ix / kx).mean()) if len(ix) else float(us.mean())
+        above = vs > cv
+        if above.any():
+            over["top"] = float(vs[above].max() - max(cv, b1 if len(iy) else cv))
+        if (~above).any():
+            over["bottom"] = float(min(cv, b0 if len(iy) else cv) - vs[~above].min())
+        aright = us > cu
+        if aright.any():
+            over["right"] = float(us[aright].max() - max(cu, a1 if len(ix) else cu))
+        if (~aright).any():
+            over["left"] = float(min(cu, a0 if len(ix) else cu) - us[~aright].min())
+        over = {k: max(0.0, v) for k, v in over.items()}
+    frac = n_out / max(1, n_ink)
+    return frac, (over["left"] - over["right"], over["bottom"] - over["top"])
 
 
 def layers_on(plan: LayerPlan, cat: Catalog, L: np.ndarray, t: np.ndarray,

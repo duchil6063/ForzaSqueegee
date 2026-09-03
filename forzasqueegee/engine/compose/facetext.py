@@ -68,7 +68,7 @@ def _box_for(placement: str, sm: gsurf.SurfaceMap, hood_u: float | None, aspect:
         bcx, bcy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         rdir = 1.0 if sm.warp.jac(bcx, bcy)[0, 0] > 0 else -1.0
         return box, (-rdir * 90.0) % 360.0
-    box = sm.fit(aspect, coverage=0.85, anchor="center") or sm.paint
+    box = sm.fit(aspect, coverage=0.99, anchor="center") or sm.paint
     return box, 0.0
 
 
@@ -229,11 +229,16 @@ def _wings(design, cat: Catalog, sm: gsurf.SurfaceMap, cx: float, cy: float,
 
 def assigned_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: Catalog,
                   out_dir: Path, plan: LayerPlan, *, faces: list[str], group_unit: float,
-                  notes: list[str], written: list[Path]) -> dict:
+                  notes: list[str], written: list[Path],
+                  reserve: dict[str, float] | None = None) -> dict:
     """면 배정이 준 면들에 글자 그룹을 더한다 (`text-<면>.json`).
 
     `faces`는 부르는 쪽이 이미 거른 목록이다 (배정이 `sponsor`이고, 글자 자리를 못
-    박은 면이 아니고, 사람 덩어리가 없는 면). 되돌림: 면 → {role, tier, layers, text}."""
+    박은 면이 아니고, 사람 덩어리가 없는 면). `maps`는 **온전히 보이는 지도**
+    (`place.usable`)다 — 글자 상자는 그 안에 내접한다 (coverage 0.99). `reserve`는
+    면 → 내접 상자 아래쪽에서 **로고 줄에 남길 몫**(높이 비) — 리어·프론트의 노출
+    띠는 좁아서(실비아 리어 24%) 워드마크가 다 차지하면 로고 줄이 못 선다.
+    되돌림: 면 → {role, tier, layers, text}."""
     style = design.text_style or choose_style(spec.style, design.family, None)
     out: dict = {}
     done: list[str] = []
@@ -270,12 +275,15 @@ def assigned_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: 
                   else v_roof + (STRIP_PAD * H + bh / 2))
             box = sm.paint
         else:
-            box = sm.fit(aspect, coverage=0.85, anchor="center") or sm.paint
+            box = sm.fit(aspect, coverage=0.99, anchor="center") or sm.paint
             # 도어 유리처럼 마스크가 덩이 둘이면(B필러) 문구는 **큰 덩이** 안에 —
             # 내접 상자는 필러를 건너 두 창에 걸쳤다 (로고 줄과 같은 규칙, `sponsor._pane`).
             pane = sponsor._pane(sm) if role == "phrase" else None
             if pane is not None:
                 box = (pane[0], box[1], pane[1], box[3])
+            rv = float((reserve or {}).get(name, 0.0))
+            if rv > 0.0:                        # 아래 몫은 로고 줄 (`sponsor.face_row`)
+                box = (box[0], box[1] + rv * (box[3] - box[1]), box[2], box[3])
             bw_box = box[2] - box[0]
             wcap = ROLE_W[role]
             if role == "glass_wordmark" and design.family.name in EDGE_SHAPES:

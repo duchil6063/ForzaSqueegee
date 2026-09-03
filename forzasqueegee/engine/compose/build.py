@@ -8,6 +8,8 @@ import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import numpy as np
+
 from ...game import fold as gfold, seam as gseam, surface as gsurf
 from ...i18n import msg
 from ...paths import run_file
@@ -25,8 +27,8 @@ from .bands import ROCKER_BASE_MIN
 from .roof import ROOF_DARK, hood_index, roof_blackout, top_segments
 from .place import (
     BODY_BIAS, BODY_FILL, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, ManualPlace, dodge_parts,
-    drawable, layers_on, manual_box, person_pose, person_scale, person_tilt,
-    place_in_rect, place_xf, take_layers)
+    drawable, ink_outside, layers_on, manual_box, person_pose, person_scale, person_tilt,
+    place_in_rect, place_xf, take_layers, usable)
 from .atlas import build_atlas
 from . import seams as gseams
 from .folds import _all_folds, seam_fold
@@ -515,6 +517,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         if wm_face is None:
             notes.append(msg("워터마크를 앉힐 면이 없다 ({place})", place=logo_spec.placement))
     deco_plan = deco_place = deco_front = front_place = None
+    side_logos: list = []
     # 옆면이 이음새로 내보내는 두 선 — 큰 색면의 띠와 하부 투톤의 윗선 (면 유닛).
     # 잇는 자는 `compose.seams`이고, 띠는 **어디서 쟀는지**(`Band.at_u`)를 같이 든다.
     side_band: "gseams.Band | None" = None
@@ -646,6 +649,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         else:
             deco_front = None
         # ---- 옆면 글자 — 면마다 제 그룹 (미러 금지) ----
+        # 글리프 실물이 차체 밴드 밖으로 나가면 들인다 (필드 격자의 포즈 상자는
+        # 글리프 잉크와 어긋난다 — 미아타 사인 글자의 15%가 벨트 위였다)
+        if design.text is not None and deco_place is not None:
+            design.text = _side_text_guard(design.text, design.fld, cat, dm0, u,
+                                           (fcu, fcv), notes)
         if design.text is not None and deco_place is not None:
             sets = {deco_src: design.text}
             other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)), None)
@@ -703,6 +711,27 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                                  n=logo_summary[deco_src]))
 
     # ---- 예산 사다리 — 넘치면 꾸밈부터 버린다 (도안이 주역이다) ----
+    # ---- 옆면 모티프가 글자·로고에 **양보한다** (사용자 지시 2026-09-03) ----
+    # 산포·전경 모티프는 글자·로고보다 먼저 흩어진다 — 글자·로고 상자(프레임 좌표)에
+    # 닿는 모티프를 두 벌(배경·전경)에서 뺀다. 반대편은 꾸밈도 글자·로고도 자리가
+    # 거울이라 같은 자로 맞는다. 큰 색면(띠·블록·베드)은 바탕이라 둔다.
+    if design is not None and deco_place is not None:
+        marks = [sponsor.pose_box(p)
+                 for p in (design.text.poses if design.text is not None else [])]
+        marks += [pl.box for pl in side_logos]
+        cut_all = 0
+        for dp, dpath in ((deco_plan, out_dir / "deco.json"),
+                          (deco_front, out_dir / "deco-front.json")):
+            if dp is None or not marks:
+                continue
+            kept, cut = sponsor.prune_motif_layers(dp.layers, marks, CANVAS_UNITS)
+            if cut:
+                dp.layers = kept
+                dp.save(dpath)
+                cut_all += cut
+        if cut_all:
+            notes.append(msg("옆면 글자·로고 상자에 닿는 모티프 {n}장을 뺀다", n=cut_all))
+
     # 기준은 **가장 무거운 옆면**이다 (한 면에 여러 장을 올릴 수 있다). 장수는
     # 면에 실제로 올라갈 값이다 — 꾸밈을 켠 판이면 어느 면에도 안 그려질
     # 레이어는 이미 빠졌다 (`_hand_spread`; 끈 판은 통째라 `_check`가 잡는다).
@@ -1156,10 +1185,16 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if n_motif:
         notes.append(msg("도어 유리에 모티프를 흩는다 (ARIS 문법)"))
 
+    # ---- 글자·로고가 앉는 지도 — **온전히 보이는 자리**만 (`place.usable`: 그리는
+    # 지도 ∧ 정면도 ∧ 가장자리 여유). 사용자 지시 2026-09-03: 글자·로고는 면을 벗어나면
+    # 안 된다. 옆면은 설계 필드가 같은 일을 한다 (`textlayout.DRAWABLE_MIN`).
+    umaps = {n: (usable(n, maps, rigs, pinned) or sm) if n not in ROLE_MAIN else sm
+             for n, sm in maps.items()}
+
     # ---- 다른 면의 글자 — 자리를 못 박았을 때 (rear · hood · roof · window) ----
     if (deco and text_spec.active and text_spec.placement not in ("auto", "side")
             and design is not None):
-        face_summary = face_text(text_spec, design, items, maps, rigs, cat, out_dir, plan,
+        face_summary = face_text(text_spec, design, items, umaps, rigs, cat, out_dir, plan,
                                  group_unit=group_unit, hood_u=hood_u, notes=notes,
                                  written=written)
     # ---- 면 배정의 글자 — 자동 자리일 때 다른 면이 받는 몫 (사람 판: 리어 워드마크 ·
@@ -1171,9 +1206,16 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         want = [n for n in ("rear", "rear_window", "windshield", "window_left", "window_right")
                 if assign[n].sponsor and n not in _pinned and n not in hand_box]
         if want:
+            # 리어·프론트에 로고 줄이 설 판이면 워드마크가 내접 상자의 아래 몫을 남긴다
+            # — 노출 띠가 좁은 차(실비아 리어 24%)에서 둘이 한 띠를 나눠 쓴다
+            _row = {}
+            if logo_protos and logo_spec.placement in ("auto", "rear") or wm_face == "rear":
+                _row["rear"] = ROW_RESERVE
+            if logo_protos and logo_spec.placement in ("auto", "front"):
+                _row["front"] = ROW_RESERVE
             assigned_summary = assigned_text(
-                text_spec, design, items, maps, rigs, cat, out_dir, plan, faces=want,
-                group_unit=group_unit, notes=notes, written=written)
+                text_spec, design, items, umaps, rigs, cat, out_dir, plan, faces=want,
+                group_unit=group_unit, notes=notes, written=written, reserve=_row)
 
     # ---- 다른 면의 로고 — 리어 범퍼(가운데 워터마크 + 좌우) · 프론트 · 윈드실드 ----
     if deco and (logo_protos or wm_proto is not None):
@@ -1210,7 +1252,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             center = wm_proto if wm_face == face else None
             if not users and center is None:
                 continue
-            sm = drawable(face, maps, rigs)
+            sm = umaps.get(face)
             if sm is None or (sm.uncertain and not _deco_usable(sm)):
                 continue
             item = next((it for it in items if it["surface"] == face), None)
@@ -1274,6 +1316,37 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
              and (an := _anchor_memo.get(it["surface"])) is not None]
     if roots:
         notes.append(msg("꾸밈이 자란 뿌리: {roots}", roots=" · ".join(roots)))
+
+    # ---- 모티프가 글자·로고에 **양보한다** (사용자 지시 2026-09-03) ----
+    # 면 위저드 도형(산포·전경 모티프)은 글자·로고보다 먼저 흩어져 그 위에 앉는다
+    # (W11F: 리어 워드마크 33/33에 별이 겹쳤다). 글자·로고 상자에 닿는 모티프를
+    # 뺀다 — 큰 색면(띠·블록)은 바탕이라 둔다.
+    for it in items:
+        if it["surface"] in ROLE_MAIN or not (it.get("shapes") or it.get("post_shapes")):
+            continue
+        marks = []
+        for g in it.get("groups") or []:
+            stem = Path(str(g["plan"])).stem
+            if not (stem.startswith("text-") or stem.startswith("logos-")):
+                continue
+            try:
+                bx = look(LayerPlan.load(out_dir / g["plan"]), cat).box
+            except Exception:              # noqa: BLE001 — 못 읽는 그룹은 안 피한다
+                continue
+            s = float(g.get("scale", 1.0)) * group_unit
+            marks.append((g["x"] + s * bx[0], g["y"] + s * bx[1],
+                          g["x"] + s * bx[2], g["y"] + s * bx[3]))
+        if not marks:
+            continue
+        fw = maps[it["surface"]].width if it["surface"] in maps else 1.0
+        cut = 0
+        for key in ("shapes", "post_shapes"):
+            if it.get(key):
+                it[key], k = sponsor.prune_shape_specs(it[key], marks, fw)
+                cut += k
+        if cut:
+            notes.append(msg("{surface}: 글자·로고 상자에 닿는 모티프 {n}장을 뺀다",
+                             surface=it["surface"], n=cut))
 
     # ---- 장수 신원 정리 — 그룹마다 장수가 달라야 한다 ----
     # 게임 그리드는 이름을 그림으로만 보여 줘서 **장수로** 그룹을 고른다
@@ -1390,6 +1463,53 @@ CONT_MIN_RISE = 0.12
 # 유리 이음새의 배율이 이만큼 넘게 비등방이면 세로 배율이 어긋난다고 적는다 (그룹
 # 변환은 균등 배율뿐이라 가로 배율을 쓰고 이음선만 맞춘다).
 CONT_ANISO_NOTE = 1.15
+# 리어·프론트 워드마크가 내접 상자(온전히 보이는 지도) 아래쪽에 **로고 줄에 남기는
+# 몫** (높이 비) — 노출 띠가 좁은 차에서 워드마크와 로고 줄이 한 띠를 나눠 쓴다.
+ROW_RESERVE = 0.5
+# 옆면 글자 글리프가 차체 밴드 밖으로 나가도 되는 몫 — 사실상 0 (사용자 지시
+# 2026-09-03). 1%는 마스크 계단이다.
+TEXT_OUT_MAX = 0.01
+
+
+def _side_text_guard(tset, fld, cat: Catalog, body: gsurf.SurfaceMap, u: float,
+                     fc: tuple[float, float], notes: list[str]):
+    """옆면 글자 몫의 **글리프 실물**을 차체 밴드 마스크에 대고 본다 — 나가면 안으로
+    밀고, 그래도 안 들면 줄이고, 그래도 안 되면 뺀다.
+
+    설계는 필드 격자(5유닛)의 포즈 상자로 자리를 골랐다 (`textlayout.pose_fit`).
+    글리프 잉크는 그 상자와 어긋날 수 있다 (기울인 사인 글자의 끝, 디센더). 미는
+    양은 밖 잉크가 넘은 만큼(`place.ink_outside`)이고, 민 자리도 인물을 덮으면 안
+    되므로 포즈 자로 다시 본다. 되돌림은 고친 글자 몫이거나 None(뺀다)."""
+    from .textbuild import reposed
+    from .textlayout import _ok, pose_fit
+
+    def _xf(ts):
+        L = np.array([[u, 0.0], [0.0, u]])
+        return ink_outside(ts.layers, cat, L, np.array(fc, float), body)
+
+    def _poses_ok(ts) -> bool:
+        return all(_ok(pose_fit(fld, p), p.role) for p in ts.poses)
+
+    frac, _push = _xf(tset)
+    if frac <= TEXT_OUT_MAX:
+        return tset
+    for k in (1.0, 0.85, 0.7):
+        cand = reposed(tset, k=k) if k != 1.0 else tset
+        for _ in range(3):
+            frac, (du, dv) = _xf(cand)
+            if frac <= TEXT_OUT_MAX and _poses_ok(cand):
+                notes.append(msg("옆면 글자가 차체 밴드 밖으로 나가 안으로 들였다 "
+                                 "(크기 {k:.2f}배)", k=k))
+                return cand
+            if frac <= TEXT_OUT_MAX:
+                break                             # 안에는 들었는데 인물을 덮는다 — 줄여 본다
+            pad = 2.0
+            cand = reposed(cand, dx=(du + (pad if du > 0 else -pad if du < 0 else 0.0)) / u,
+                           dy=(dv + (pad if dv > 0 else -pad if dv < 0 else 0.0)) / u)
+            if not cand.layers:
+                break
+    notes.append(msg("옆면 글자가 차체 밴드 밖으로 나가고 들일 자리가 없다 — 뺀다"))
+    return None
 
 
 def _continuations(hand: list[ManualPlace], assign: dict, rigs: dict, maps: dict,

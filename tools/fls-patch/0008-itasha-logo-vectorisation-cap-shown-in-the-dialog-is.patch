@@ -1,0 +1,23 @@
+From 4ab4988b51ba6e4321bd18f939a6f3a9bc3538eb Mon Sep 17 00:00:00 2001
+From: duchil6063 <duchil6063@gmail.com>
+Date: Thu, 3 Sep 2026 11:47:12 +0900
+Subject: [PATCH 8/8] itasha: logo vectorisation cap shown in the dialog is 300
+ layers (engine LOGO_LAYERS)
+
+---
+ src/gui/app/main_window_itasha.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 9e2df71..bd3da29 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -126,7 +126,7 @@ const LogoPlacement kLogoPlacements[] = {
+ 
+ // Layers a logo image is vectorised down to (engine/compose/logokit.py
+ // LOGO_LAYERS) - shown in the dialog so the person knows what to expect.
+-constexpr int kLogoLayerCap = 110;
++constexpr int kLogoLayerCap = 300;
+ 
+ // What each group placed on the car is to the decoration (engine/compose/
+ // cast.py). The engine guesses from layer count, colours, skin and glyphs;

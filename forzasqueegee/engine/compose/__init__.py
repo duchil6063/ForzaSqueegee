@@ -170,7 +170,7 @@ from .place import (
     PART_PAD, Place, ROLE_EXTRA, ROLE_MAIN, ROLE_REAR, SideRig, TILT_ASPECT,
     TILT_FULL, TILT_MAX, HEAD_BELT_PAD, _refit_canvas, dodge_parts, door_span,
     drawable, face_zone, fit_on, layers_on, manual_box, person_pose, person_scale,
-    person_tilt, place_in_rect, place_xf, surface_exposure, take_layers)
+    person_tilt, place_in_rect, place_xf, surface_exposure, take_layers, usable)
 from .folds import _all_folds, _pillar_hints, seam_fold
 from .atlas import BodyLines, Seam, VehicleAtlas, build_atlas
 from .autoplace import _side_place, auto_place, mirror_place, reseat_place

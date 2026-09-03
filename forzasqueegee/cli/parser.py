@@ -43,7 +43,7 @@ def _logo_args(p: argparse.ArgumentParser) -> None:
     """로고 인자 — `itasha`와 `flsedit decorate`가 같은 벌을 쓴다."""
     p.add_argument("--logo", action="append", default=None, metavar=msg("이미지"),
                    help=msg("사용자 로고 이미지(또는 도안) — 여러 번 줄 수 있다. 셀 노선으로 "
-                            "벡터화해(110장 상한) 스폰서 문법으로 앉힌다"))
+                            "벡터화해(300장 상한) 스폰서 문법으로 앉힌다"))
     p.add_argument("--logo-placement", default=None, dest="logo_placement",
                    choices=("auto", "rear", "front", "windshield", "rocker"),
                    help=msg("로고 자리 — auto(워터마크는 리어, 로고는 옆면 로커 줄·리어·"
