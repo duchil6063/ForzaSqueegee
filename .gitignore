@@ -21,6 +21,10 @@ vendor/fls-editor/*
 # tools/get_kfps.py가 KFPS 고정 커밋에서 받는다)
 vendor/kfps-editor/Resources/
 
+# 프리셋 썸네일 (구운 판이 레퍼런스 원화의 파생물이라 재배포하지 않는다 —
+# 없으면 편집기 드롭다운이 그림 없이 뜬다, tools/preset_thumbs.py)
+forzasqueegee/engine/compose/thumbs/
+
 # Python
 __pycache__/
 *.pyc

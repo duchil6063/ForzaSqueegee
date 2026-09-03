@@ -6,6 +6,10 @@
 옆면)를 차체 밴드 높이로 잘라 `forzasqueegee/engine/compose/thumbs/<프리셋>.png`
 (폭 360)에 쓴다. 자동은 `<TAG>-auto`가 있으면 그것, 없으면 `--auto-tag`의 판이다.
 같은 판을 프리셋마다 구워야 그림이 프리셋의 차이만 보인다.
+
+구운 그림은 **저장소에 안 둔다** — 레퍼런스 원화의 파생물이라 재배포하지
+않는다 (`.gitignore`). 없으면 편집기 드롭다운이 그림 없이 뜬다
+(`presets.thumb`이 None을 주고 창이 라벨을 숨긴다).
 """
 from __future__ import annotations
 
