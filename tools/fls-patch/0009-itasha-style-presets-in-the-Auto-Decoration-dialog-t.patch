@@ -1,7 +1,7 @@
-From fb16832eef10de6848621d97e869cadeb07e353f Mon Sep 17 00:00:00 2001
+From b9db611f8fc445906f473c07c405b160852407b6 Mon Sep 17 00:00:00 2001
 From: duchil6063 <gustn9634@gmail.com>
 Date: Thu, 3 Sep 2026 19:50:48 +0900
-Subject: [PATCH 09/10] itasha: style presets in the Auto Decoration dialog -
+Subject: [PATCH 09/11] itasha: style presets in the Auto Decoration dialog -
  the list, wording and thumbnails come from the engine (flsedit state), a race
  number field, text group on by default
 

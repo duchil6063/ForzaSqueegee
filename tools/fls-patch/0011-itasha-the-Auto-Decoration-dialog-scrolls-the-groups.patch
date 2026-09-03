@@ -1,0 +1,71 @@
+From e855198b29d966250cceadfc339951bf2b389e26 Mon Sep 17 00:00:00 2001
+From: duchil6063 <gustn9634@gmail.com>
+Date: Thu, 3 Sep 2026 22:23:17 +0900
+Subject: [PATCH 11/11] itasha: the Auto Decoration dialog scrolls (the groups
+ outgrew the screen); an empty race number clears the one kept in the recipe
+
+---
+ src/gui/app/main_window_itasha.cpp | 22 ++++++++++++++++------
+ 1 file changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index 2186249..e49f5a8 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -49,6 +49,7 @@
+ #include <QJsonObject>
+ #include <QLabel>
+ #include <QPixmap>
++#include <QScrollArea>
+ #include <QLineEdit>
+ #include <QListWidget>
+ #include <QPushButton>
+@@ -481,7 +482,14 @@ void MainWindow::showItashaDecorationDialog() {
+ 
+     QDialog dialog(this);
+     dialog.setWindowTitle(i18n::t("Auto Decoration"));
+-    auto *layout = new QVBoxLayout(&dialog);
++    // The groups stack taller than most screens - the body scrolls, the
++    // buttons stay put.
++    auto *outer = new QVBoxLayout(&dialog);
++    auto *scroll = new QScrollArea(&dialog);
++    scroll->setWidgetResizable(true);
++    scroll->setFrameShape(QFrame::NoFrame);
++    auto *body = new QWidget(scroll);
++    auto *layout = new QVBoxLayout(body);
+     auto *intro = new QLabel(i18n::t(
+         "The decoration is composed around the artwork you placed - the "
+         "artwork itself never moves. Auto lets the engine build every "
+@@ -690,7 +698,6 @@ void MainWindow::showItashaDecorationDialog() {
+     title->setPlaceholderText(QStringLiteral("EVANGELION"));
+     form->addRow(i18n::t("Title / tagline (optional):"), title);
+     auto *number = new QLineEdit(stateOr("number", QString()), textGroup);
+-    number->setPlaceholderText(QStringLiteral("07"));
+     number->setToolTip(i18n::t(
+         "A big number on the rear quarter - only the Racing Sponsor preset places it"));
+     form->addRow(i18n::t("Race number (racing preset):"), number);
+@@ -865,7 +872,11 @@ void MainWindow::showItashaDecorationDialog() {
+     buttons->button(QDialogButtonBox::Ok)->setText(i18n::t("Compose"));
+     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+-    layout->addWidget(buttons);
++    layout->addStretch(1);
++    scroll->setWidget(body);
++    outer->addWidget(scroll, 1);
++    outer->addWidget(buttons);
++    dialog.resize(body->sizeHint().width() + 48, 720);
+ 
+     if (dialog.exec() != QDialog::Accepted) {
+         return;
+@@ -904,9 +915,8 @@ void MainWindow::showItashaDecorationDialog() {
+         if (!title->text().trimmed().isEmpty()) {
+             extra << QStringLiteral("--subtext") << title->text();
+         }
+-        if (!number->text().trimmed().isEmpty()) {
+-            extra << QStringLiteral("--text-number") << number->text();
+-        }
++        // Always sent - an emptied field clears the number kept in the recipe.
++        extra << QStringLiteral("--text-number") << number->text();
+         extra << QStringLiteral("--text-style") << style->currentData().toString()
+               << QStringLiteral("--text-placement") << placement->currentData().toString()
+               << QStringLiteral("--text-priority") << priority->currentData().toString()
