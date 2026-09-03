@@ -695,8 +695,15 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 글리프 실물이 차체 밴드 밖으로 나가면 들인다 (필드 격자의 포즈 상자는
         # 글리프 잉크와 어긋난다 — 미아타 사인 글자의 15%가 벨트 위였다)
         if design.text is not None and deco_place is not None:
-            design.text = _side_text_guard(design.text, design.fld, cat, dm_ex, u,
+            design.text = _side_text_guard(design.text, design.fld, cat, dm0, u,
                                            (fcu, fcv), notes)
+        if design.text is not None and deco_place is not None and dm_ex is not dm0:
+            # 저노출 띠는 **너그럽게** — 잉크의 15%까지는 둔다. 1%로 걸면 설계가 고른
+            # 글자(점수 .91)를 굽기가 통째로 빼서 옆면에 이름이 없는 판이 11/60이었다
+            # (P-B 실측). 못 들이면 빼지 않고 그대로 둔다 — 없는 이름보다 낫다.
+            design.text = _side_text_guard(design.text, design.fld, cat, dm_ex, u,
+                                           (fcu, fcv), notes, out_max=TEXT_LOWEXPO_MAX,
+                                           drop=False)
         if design.text is not None and deco_place is not None:
             sets = {deco_src: design.text}
             other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)), None)
@@ -1539,6 +1546,10 @@ TEXT_OUT_MAX = 0.01
 TEXT_EXPOSURE_MIN = 0.5
 
 
+# 글리프 잉크가 저노출 띠에 걸려도 되는 몫 — 마스크 밖(`TEXT_OUT_MAX`)과 달리 너그럽다
+TEXT_LOWEXPO_MAX = 0.15
+
+
 def _side_number(design, spec: TextSpec, cat: Catalog, out_dir: Path, plan: LayerPlan,
                  sides: list[str], center: tuple[float, float], ds: float,
                  notes: list[str], written: list[Path]) -> tuple[dict[str, dict], list]:
@@ -1592,7 +1603,8 @@ def _side_number(design, spec: TextSpec, cat: Catalog, out_dir: Path, plan: Laye
 
 
 def _side_text_guard(tset, fld, cat: Catalog, body: gsurf.SurfaceMap, u: float,
-                     fc: tuple[float, float], notes: list[str]):
+                     fc: tuple[float, float], notes: list[str],
+                     out_max: float = TEXT_OUT_MAX, drop: bool = True):
     """옆면 글자 몫의 **글리프 실물**을 차체 밴드 마스크에 대고 본다 — 나가면 안으로
     밀고, 그래도 안 들면 줄이고, 그래도 안 되면 뺀다.
 
@@ -1611,23 +1623,27 @@ def _side_text_guard(tset, fld, cat: Catalog, body: gsurf.SurfaceMap, u: float,
         return all(_ok(pose_fit(fld, p), p.role) for p in ts.poses)
 
     frac, _push = _xf(tset)
-    if frac <= TEXT_OUT_MAX:
+    if frac <= out_max:
         return tset
     for k in (1.0, 0.85, 0.7):
         cand = reposed(tset, k=k) if k != 1.0 else tset
         for _ in range(3):
             frac, (du, dv) = _xf(cand)
-            if frac <= TEXT_OUT_MAX and _poses_ok(cand):
+            if frac <= out_max and _poses_ok(cand):
                 notes.append(msg("옆면 글자가 차체 밴드 밖으로 나가 안으로 들였다 "
                                  "(크기 {k:.2f}배)", k=k))
                 return cand
-            if frac <= TEXT_OUT_MAX:
+            if frac <= out_max:
                 break                             # 안에는 들었는데 인물을 덮는다 — 줄여 본다
             pad = 2.0
             cand = reposed(cand, dx=(du + (pad if du > 0 else -pad if du < 0 else 0.0)) / u,
                            dy=(dv + (pad if dv > 0 else -pad if dv < 0 else 0.0)) / u)
             if not cand.layers:
                 break
+    if not drop:
+        notes.append(msg("옆면 글자의 {pct:.0f}%가 눌린 띠에 걸리는데 들일 자리가 없다 — 그대로 둔다",
+                         pct=100 * frac))
+        return tset
     notes.append(msg("옆면 글자가 차체 밴드 밖으로 나가고 들일 자리가 없다 — 뺀다"))
     return None
 
