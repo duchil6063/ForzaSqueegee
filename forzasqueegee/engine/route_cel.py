@@ -80,7 +80,8 @@ def _make_cel(image: Path, out: Path, shapes: int, size: int,
     # 선화는 줄이기 전 중간본에서 뽑아 여기서 작업 해상도로 맞춘다
     clk = _Clock("cel", _CEL_STAGES, progress)
     big, line_gray, detail_gray, native_gray = _source_bundle(
-        read_rgba(image), size, log, progress=clk.sub("prep", msg("앞단")))
+        read_rgba(image), size, log, progress=clk.sub("prep", msg("앞단")),
+        clean_fringe=True)                 # 알파 프린지 정화는 cel 노선만
     rgba = upscale.fit(big, size)
     h, w = rgba.shape[:2]
     opaque = bool(rgba[..., 3].min() >= 250)

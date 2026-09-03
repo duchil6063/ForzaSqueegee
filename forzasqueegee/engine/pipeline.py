@@ -294,7 +294,38 @@ def _bundle_cache_path(rgba: np.ndarray, size: int):
 _PREP_MARKS = (0.70, 0.81, 0.93, 1.00)   # SR 끝 · basic · detail · 원화판
 
 
-def _source_bundle(rgba: np.ndarray, size: int, log, progress=None):
+# 컷아웃의 **반투명 가장자리 px**(알파 1~249)는 RGB가 배경 색으로 오염돼 있다
+# (배경 제거 도구가 남긴 프린지). 알파 ≥ 128을 불투명으로 보는 뒤 단이 그 색을
+# 그대로 쓰면 실루엣 최외곽 1~2px가 원화에 없는 **어두운 테**가 된다 — 목표
+# (cel.png)·선화 지도·실루엣 획 씨앗 색이 전부 그 테를 본다. 실측(F1, 원화
+# 불투명 px 대비 파이프라인 src L*): 06 201 ↔ 81~176 · 11 172 ↔ 89 · 29 217 ↔
+# 118~188, 실루엣 획 색은 30장 전부 목표보다 어둡다(가중 중앙 −15 L*, 06 −58).
+# 그래서 SR·선화·분해 **전에** 완전 불투명 px(≥ `_FRINGE_A`)의 색만 믿고 나머지는
+# 가장 가까운 불투명 px 색으로 채운다. 알파(실루엣)는 손대지 않는다.
+# **cel 노선만** 켠다 (`clean_fringe`) — line 노선은 그 가짜 테가 곧 실루엣 선
+# 지도라(06: outline_cover 0.97 → 0.30, outline 게이트 실패) 켜면 외곽선을 잃는다
+_FRINGE_A = int(os.environ.get("FS_ALPHA_FRINGE", "250"))   # 0 = 끔 (종전 그대로)
+
+
+def _clean_fringe(rgba: np.ndarray, log) -> np.ndarray:
+    if _FRINGE_A <= 0 or rgba.shape[2] < 4:
+        return rgba
+    from .celart import _fill_bg_nearest
+
+    a = rgba[..., 3]
+    opq = a >= _FRINGE_A
+    if opq.all() or not opq.any():
+        return rgba
+    fringe = int(((a >= 128) & ~opq).sum())
+    out = rgba.copy()
+    out[..., :3] = _fill_bg_nearest(np.ascontiguousarray(rgba[..., :3]), opq)
+    log(msg("  알파 가장자리 {n:,}px 색을 불투명 px로 채움 (프린지 오염 제거)",
+            n=fringe))
+    return out
+
+
+def _source_bundle(rgba: np.ndarray, size: int, log, progress=None,
+                   clean_fringe: bool = False):
     """노선이 받을 중간본 + 그 해상도의 선화 지도를 만든다.
 
     반환 (중간본, basic 지도, detail 지도, **원화 판** 지도). 선화를 **작업
@@ -333,6 +364,8 @@ def _source_bundle(rgba: np.ndarray, size: int, log, progress=None):
     from . import lineart, upscale
     from .celart import _fill_bg_nearest
 
+    if clean_fringe:
+        rgba = _clean_fringe(rgba, log)
     cache = _bundle_cache_path(rgba, size)
     if cache is not None and cache.is_file():
         z = np.load(cache)
