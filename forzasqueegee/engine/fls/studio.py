@@ -154,10 +154,16 @@ def _blank_state() -> dict:
             # (`hush_deco`). 고른 계열·이름 글자는 남으니 다시 누르면 그 설정으로
             # 자란다.
             "paint": None, "deco": False, "motif": None, "designs": [],
-            # 글자 — 기본 꺼짐. 켜면 캐릭터 이름(+작품명)이 꾸밈의 한 요소로
-            # 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져 있으면 안 선다.
-            "text": {"enabled": False, "main": None, "sub": None, "style": "auto",
-                     "engine": "font",
+            # 스타일 프리셋 — None이면 자동 (후보를 다 지어 점수로). 편집기
+            # 드롭다운이 이것이다 (`compose.STYLE_PRESETS`). 구성 계열 `family`는
+            # CLI 레버로만 남는다.
+            "style": None,
+            # 글자 — 묶음은 **기본 켬**이나 이름이 비면 안 선다 (프리셋 단계의
+            # 결정 — 사람 판 24/30이 이름 글자를 쓴다). 켜면 캐릭터 이름(+작품명)이
+            # 꾸밈의 한 요소로 선다 (`compose.textspec.TextSpec`의 꼴). 꾸밈이 꺼져
+            # 있으면 안 선다.
+            "text": {"enabled": True, "main": None, "sub": None, "number": None,
+                     "style": "auto", "engine": "font",
                      "placement": "auto", "priority": "normal",
                      "allow_fallback_to_game_text": True, "max_layers": None,
                      "outline": "auto", "shadow": "auto"},
@@ -191,12 +197,24 @@ def open_project(project_path: str | Path, *,
             state.update(json.loads(sp.read_text(encoding="utf-8")))
         except ValueError:
             pass                    # 깨진 조리법은 빈 것으로 시작한다
+    _migrate_family(state)
     st = Studio(path=p, doc=doc, state=state, notes=[])
     _learn_car(st, geometry)
     live, force = _absorb(st)
     _adopt(st, live, force)
     cast(st)
     return st
+
+
+def _migrate_family(state: dict) -> None:
+    """옛 조리법의 `family`(구성 계열 드롭다운) → `style`(프리셋). 한 번만 —
+    프리셋이 없고 계열만 적힌 조리법이 대상이다. 사선 흐름은 짝이 없어 자동으로."""
+    from .. import compose
+
+    if state.get("style") is not None or not state.get("family"):
+        return
+    state["style"] = compose.LEGACY_STYLE_FAMILY.get(state["family"])
+    state["family"] = None
 
 
 def save_state(st: Studio) -> Path:
@@ -694,6 +712,7 @@ def rebuild(st: Studio, *, log=None) -> dict:
         # 구성 계열은 자동(후보 점수)이 기본이다 — 조리법에 `family`가 적혀
         # 있으면 그 계열로 못 박는다 (메뉴는 없다, 사람이 조리법에 적는 레버)
         family=st.state.get("family"),
+        style=st.state.get("style"),
         text=st.state.get("text") or None,
         logos=st.state.get("logos") or None,
         faces=st.state.get("faces") or None,
@@ -960,11 +979,11 @@ def act_decorate(st: Studio, *, composition: str | None = None,
                  auto_paint: bool = False, text: dict | None = None,
                  drop_text: bool = False, roles: dict[int, str] | None = None,
                  logos: dict | None = None, symmetry: bool | None = None,
-                 faces: list | dict | None = None) -> str:
-    """**자동 꾸밈 창** — 구성 계열·모티프 계열·바탕 도색·글자·역할표·로고·좌우·면 배정을 한 번에 받아 켠다.
+                 faces: list | dict | None = None, style: str | None = None) -> str:
+    """**자동 꾸밈 창** — 스타일 프리셋·모티프 계열·바탕 도색·글자·역할표·로고·좌우·면 배정을 한 번에 받아 켠다.
 
     편집기의 [Auto Decoration...] 대화상자가 부른다 (`flsedit decorate`). 준 것만
-    바꾼다 — `composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
+    바꾼다 — `style`/`composition`/`motif`는 "auto"면 자동(None), `paint`는 #RRGGBB,
     `auto_paint`면 도안에서 고르고, `text`는 스펙 열쇠들(`main`이 비면 끈다),
     `drop_text`면 글자를 뺀다. `roles`는 실린 그림 표에서 사람이 고른 역할
     (`act_roles`), `logos`는 워터마크·로고 이미지·자리(`act_logos`), `symmetry`는
@@ -982,6 +1001,8 @@ def act_decorate(st: Studio, *, composition: str | None = None,
     if symmetry is not None:
         st.state["symmetry"] = bool(symmetry)
     said.append(act_symmetry(st, bool(st.state.get("symmetry", True))))
+    if style is not None:
+        said.append(act_style(st, None if style == "auto" else style))
     if composition is not None:
         said.append(act_family(st, None if composition == "auto" else composition))
     if motif is not None:
@@ -1119,6 +1140,23 @@ def _mirror_one(st: Studio, d: dict, dst: str, maps: dict) -> dict | None:
         if k in d:
             new[k] = d[k]
     return new
+
+
+def act_style(st: Studio, style: str | None) -> str:
+    """**스타일 프리셋**을 고르거나(None이면 자동) 푼다 — 편집기 드롭다운의 값.
+
+    프리셋은 계열을 품으므로 CLI 레버 `family`는 함께 푼다 (둘이 어긋나면 사람이
+    고른 프리셋이 뜻을 잃는다)."""
+    from .. import compose
+
+    compose.resolve_style(style)                  # 모르는 이름이면 ValueError
+    st.state["style"] = style
+    if style is not None:
+        st.state["family"] = None
+    if not st.state.get("deco"):
+        st.notes.append(msg("꾸밈이 꺼져 있어 지금은 안 보인다 — "
+                            "[Grow Decoration]을 누르면 이 프리셋으로 짠다"))
+    return msg("스타일 프리셋 {style}", style=compose.presets.label(style))
 
 
 def act_family(st: Studio, family: str | None) -> str:

@@ -81,7 +81,7 @@ def cmd_itasha(args) -> int:
                     media=media,
                     mirror=not args.no_mirror, paint=not args.no_paint,
                     base_rgb=base, flip=args.flip, deco=not args.no_deco,
-                    motif=args.motif, family=args.family,
+                    motif=args.motif, family=args.family, style=args.style,
                     text=(tspec.to_dict() if tspec is not None else None),
                     logos={"watermark": not args.no_watermark,
                            "images": list(args.logo or []),

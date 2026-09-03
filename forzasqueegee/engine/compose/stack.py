@@ -114,6 +114,7 @@ GAP_OFF = 0.30
 EDGE_SHAPES: dict[str, tuple[str, ...]] = {
     "graphic_bed": ("D_03", "D_02"),
     "diagonal_flow": ("V_01", "V_11"),
+    "dark": ("V_01", "V_11"),
     "splash": ("G_12", "G_13"),
 }
 

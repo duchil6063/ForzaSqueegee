@@ -167,16 +167,19 @@ def _row_size(pr: Proto, frame_w: float, band: float) -> tuple[float, float]:
 
 def side_row(protos: list[Proto], fld: CompositionField,
              text_poses: list[TextPose] | None,
-             notes: list[str]) -> list[Placed]:
+             notes: list[str], size_k: float = 1.0) -> list[Placed]:
     """로커 위 한 줄 — 인물의 흐름 쪽에서 흐름 방향으로 (프레임 좌표).
 
     로커 글자가 이미 그 줄에 있으면 그 뒤에서 시작한다. 흐름 쪽에 못 앉는 로고는
-    반대쪽 끝에서 안쪽으로 세워 본다. 그래도 안 되면 뺀다."""
+    반대쪽 끝에서 안쪽으로 세워 본다. 그래도 안 되면 뺀다. `size_k`는 프리셋의
+    로고 줄 배율 (`presets.StylePreset.logo_row` — 레이싱은 크게, 미니멀은 0 = 줄 없음)."""
+    if size_k <= 0:
+        return []
     fx0, fy0, fx1, fy1 = fld.frame_box
     band = fy1 - fy0
     frame_w = fx1 - fx0
     flow = 1.0 if fld.flow[0] >= 0 else -1.0
-    sizes = [_row_size(p, frame_w, band) for p in protos]
+    sizes = [_row_size(p, frame_w * size_k, band * size_k) for p in protos]
     hrow = max([h for _w, h in sizes] or [0.0])
     if hrow <= 0:
         return []

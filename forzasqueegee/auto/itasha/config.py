@@ -401,6 +401,7 @@ def compose_config(main_plan: Path, out: Path, *,
                    text: "dict | None" = None,
                    logos: "dict | None" = None,
                    faces: "dict | None" = None,
+                   style: str | None = None,
                    preview: bool = True, log=print) -> Config:
     """도안 하나(+보조) → **설계된** 이타샤 구성. `engine.compose`가 짠다.
 
@@ -416,7 +417,8 @@ def compose_config(main_plan: Path, out: Path, *,
        이웃 면에 안 잇고 그 자리에서 잘린다. 모티프 계열은 도안의 테마색이
        고르고 `motif`로 못 박는다 (`compose.motif_family`). 옆면 꾸밈의 **구성
        계열**은 후보를 지어 점수로 고르고 `family`로 못 박는다
-       (`compose.FAMILIES`).
+       (`compose.FAMILIES`). `style`은 스타일 프리셋 (`compose.STYLE_PRESETS` —
+       계열 + 바탕 도색·글자·로고 줄·면 배정이 한 벌).
 
     `manual`(`engine.compose.ManualPlace` 목록)을 주면 **도안 자리만** 사람이
     정한 것으로 바뀌고 나머지는 그대로다 — 내장 편집기(`engine.fls.studio`)가
@@ -454,7 +456,7 @@ def compose_config(main_plan: Path, out: Path, *,
                              flip=flip, manual=manual,
                              deco=deco, whole=whole, motif=motif,
                              family=family, text=text, logos=logos, faces=faces,
-                             mass_hint=hint,
+                             style=style, mass_hint=hint,
                              log=(lambda *a, **_k: first.append(" ".join(str(x) for x in a)))
                              if hint is None and two_pass else log)
 

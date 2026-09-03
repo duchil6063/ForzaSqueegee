@@ -48,6 +48,10 @@ SIGNATURE_H = 0.24
 SUB_RATIO = 0.42
 
 
+# 레이싱 번호 — 리어 쿼터(흐름 끝)에 **바로 선** 큰 숫자. 높이는 차체 밴드 몫.
+NUMBER_H = 0.46
+
+
 # 인물이 글자를 덮어도 되는 몫 — **사실상 0**이다 (사용자 지시 2026-09-03: 글자·로고는
 # 도안에 가려지면 안 된다). 종전 0.45(인물 뒤 워드마크 0.5 — RIN SHIBUYA의 양끝만
 # 읽히는 문법)는 W11F 33판에서 옆면 글자 10/26이 인물 밑에 들어가게 했다. 2%는
@@ -238,8 +242,11 @@ def _run_length(fld: CompositionField, x: float, y: float, axis: tuple[float, fl
 
 
 def wordmark_poses(fld: CompositionField, text: str, aspect: float, hratio: float,
-                   rocker: bool) -> list[TextPose]:
-    """인물 곁 **사선 워드마크** 후보 — 흐름 쪽 우선, 안 되면 반대쪽(여백 활용)."""
+                   rocker: bool, scale: float = 1.0) -> list[TextPose]:
+    """인물 곁 **사선 워드마크** 후보 — 흐름 쪽 우선, 안 되면 반대쪽(여백 활용).
+
+    `scale`은 프리셋의 워드마크 배율 (`presets.StylePreset.text_scale`) — 상한만
+    키운다, 자리 길이가 정하는 높이는 그대로다."""
     ax = slab_axis(fld)
     ang = math.degrees(math.atan2(ax[1], ax[0]))
     ch, cw = fld.char_h, fld.char_w
@@ -258,7 +265,7 @@ def wordmark_poses(fld: CompositionField, text: str, aspect: float, hratio: floa
         if run < 0.5 * cw:
             continue
         # 상자 높이의 상한 → 대문자 높이
-        bh = min(WORDMARK_H_MAX * ch * hratio, 0.6 * band, run / max(0.5, aspect))
+        bh = min(WORDMARK_H_MAX * scale * ch * hratio, 0.6 * band, run / max(0.5, aspect))
         h = max(bh / hratio, 0.12 * band)
         w = h * hratio * aspect
         cx = start + sign * (0.5 * w + 0.02 * run)
@@ -342,6 +349,30 @@ def signature_pose(fld: CompositionField, text: str, aspect: float, hratio: floa
     return _settle(fld, p, ax, -flow_sign, 0.10 * band)
 
 
+def number_pose(fld: CompositionField, text: str, aspect: float, hratio: float,
+                avoid: np.ndarray | None = None) -> TextPose | None:
+    """리어 쿼터의 **레이싱 번호** — 흐름 끝에 바로 선 큰 숫자 (사인 자리, 더 크게).
+
+    이름 글자 묶음의 한 포즈가 **아니다** — 묶음에 얹어 겨루게 하면 이름이 지는 판에서
+    번호도 같이 지고(W15-racing: 33판 중 3판), 이름이 사인 자리를 쓰면 둘이 겨룬다.
+    `build`가 이긴 설계 뒤에 로고 줄처럼 따로 앉힌다 (`avoid` = 이름 글자 자리)."""
+    fx0, fy0, fx1, fy1 = fld.frame_box
+    band = fy1 - fy0
+    flow_sign = 1.0 if fld.flow[0] >= 0 else -1.0
+    h = NUMBER_H * band / hratio
+    w = h * hratio * aspect
+    edge = fld.person_box[2] if flow_sign > 0 else fld.person_box[0]
+    room = (fx1 - edge) if flow_sign > 0 else (edge - fx0)
+    if w > 0.8 * room:
+        h = max(0.2 * band, 0.8 * room / max(0.5, aspect) / hratio)
+        w = h * hratio * aspect
+    x = (fx1 if flow_sign > 0 else fx0) - flow_sign * (0.5 * w + 0.05 * (fx1 - fx0))
+    y = fy0 + 0.5 * band
+    p = TextPose(role="number", text=text, x=x, y=y, rot=0.0, height=h, aspect=aspect,
+                 hratio=hratio)
+    return _settle(fld, p, (1.0, 0.0), -flow_sign, 0.12 * band, avoid=avoid)
+
+
 def sub_pose(fld: CompositionField, main: TextPose, text: str, aspect: float, hratio: float
              ) -> TextPose | None:
     """메인 밑에 붙는 서브 — 같은 각, 높이는 메인의 `SUB_RATIO`."""
@@ -385,15 +416,15 @@ ROLES = ("wordmark", "behind", "rocker", "signature")
 
 def layout_sets(fld: CompositionField, main: str, sub: str | None,
                 box_main: tuple[float, float], box_sub: tuple[float, float], rocker: bool,
-                roles: tuple[str, ...] = ROLES) -> list[list[TextPose]]:
+                roles: tuple[str, ...] = ROLES, scale: float = 1.0) -> list[list[TextPose]]:
     """포즈 묶음 후보들 — 각 묶음은 메인 하나(+서브 하나). `box_*`는 (잉크 상자 w/h,
     상자 높이/대문자 높이). `main`은 이미 줄이 갈린 문자열일 수 있다 (`lockups`) —
-    로커 글자는 한 줄일 때만."""
+    로커 글자는 한 줄일 때만. `scale`은 워드마크 상한 배율 (프리셋)."""
     sets: list[list[TextPose]] = []
     mains: list[TextPose] = []
     am, hm = box_main
     if "wordmark" in roles:
-        mains += wordmark_poses(fld, main, am, hm, rocker)
+        mains += wordmark_poses(fld, main, am, hm, rocker, scale)
     if "behind" in roles:
         p = behind_pose(fld, main, am, hm)
         if p is not None:

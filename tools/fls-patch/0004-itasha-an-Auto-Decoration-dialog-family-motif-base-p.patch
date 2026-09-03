@@ -1,7 +1,7 @@
 From 7cc9a42fe9b50b275c4bed3a28cd4c1b29f83b22 Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Mon, 31 Aug 2026 00:52:14 +0900
-Subject: [PATCH 4/8] itasha: an Auto Decoration dialog - family, motif, base
+Subject: [PATCH 4/9] itasha: an Auto Decoration dialog - family, motif, base
  paint and name text in one place
 
 The scattered entries (Grow Decoration, Motif Family, Base Paint, and the

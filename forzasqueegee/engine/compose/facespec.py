@@ -133,8 +133,12 @@ class FaceSpec:
                 raise ValueError(msg("면 {face}의 모드 {mode!r}를 모른다 (있는 것: {modes})",
                                      face=f, mode=v, modes=" · ".join(MODES[f])))
 
-    def resolve(self, face: str, *, logos: bool, text: bool) -> Assignment:
-        """면 하나의 배정 — `logos`는 사용자 로고가 있나, `text`는 글자가 켜졌나."""
+    def resolve(self, face: str, *, logos: bool, text: bool,
+                poster: bool = False) -> Assignment:
+        """면 하나의 배정 — `logos`는 사용자 로고가 있나, `text`는 글자가 켜졌나.
+
+        `poster`는 프리셋 "미니멀"의 자리 — 로고·글자가 없는 리어 `auto`가 비는
+        대신 전신 축소를 받는다 (`presets.StylePreset.rear_poster`)."""
         key = FACE_OF.get(face, face)
         m = self.mode(face)
         if m == "empty":
@@ -158,6 +162,8 @@ class FaceSpec:
                 return Assignment(crop=True, why=msg("사용자 로고가 없어 엠블럼 크롭으로 물러난다"))
             return Assignment(sponsor=True, why=msg("작은 로고 2~3 + 색면 이음"))
         if key == "rear":
+            if poster and not logos and not text:
+                return Assignment(crop=True, why=msg("전신 축소 (미니멀 프리셋 — 로고·글자가 없다)"))
             return Assignment(sponsor=True, why=msg("워드마크 + 로고 줄 + 색면 이음"))
         # rear_window
         return Assignment(sponsor=True, why=(msg("워드마크 + 무늬 도형 날개") if text

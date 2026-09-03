@@ -19,8 +19,9 @@ from .boxes import (
     CANVAS_UNITS, _clamp_box, _face_phase, _gap, _group_unit, _overlap, _rel,
     _union)
 from .look import Look, layer_points, look, person_ink, rot_ink_box
-from .palette import (accent_color, accent_third, accent_tint, base_paint,
-                      contrast_ink, material_roles)
+from .palette import (BASE_BLACK, accent_color, accent_third, accent_tint, base_paint,
+                      contrast_ink, material_roles, pastel_base)
+from .presets import resolve as resolve_style
 from .vocabulary import MOTIF_FAMILIES, MOTIF_SETS, edge_shapes, motif_shapes
 from .scatter import DECO_FRONT_N, DECO_FRONT_SIZE
 from .bands import ROCKER_BASE_MIN
@@ -74,6 +75,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
           text: "TextSpec | dict | None" = None,
           logos: "LogoSpec | dict | None" = None,
           faces: "FaceSpec | dict | None" = None,
+          style: str | None = None,
           mass_hint: dict | None = None, log=print) -> Recipe:
     """도안 + 실측 → **이타샤 구성 파일**을 쓴다 (게임은 안 건드린다).
 
@@ -137,11 +139,15 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     (수이세이가 별인 것은 이름이 '별마을 혜성'이라서다). 베이스 도색의
     `base_rgb`와 같은 자리의 레버다: 자동으로 정해 주고 사람이 바꾼다.
 
-    ## 구성 계열 (`family`)
+    ## 스타일 프리셋 (`style`) · 구성 계열 (`family`)
 
     옆면 꾸밈은 **후보를 여럿 지어 점수로 고른다** (`design.compose_design` —
-    계열 × 흐름 × 팔레트 변종 × 베드 크기). `family`를 주면 그 계열 안에서만
-    고른다 (`families.FAMILIES`). 사람이 앉힌 도안은 어느 후보에서도 안 움직인다.
+    계열 × 흐름 × 팔레트 변종 × 베드 크기). `style`(`presets.STYLE_PRESETS` —
+    레이싱 스폰서 · 무늬·꽃 · 스플래시·찢김 · 미니멀 · 다크 그래피티)을 주면 그
+    프리셋의 계열 안에서만 고르고 바탕 도색 기본·글자 스타일과 크기·레이싱 번호·
+    로고 줄·리어 배정·예산 사다리가 한 벌로 온다. 사람이 따로 정한 것(바탕 색·
+    글자 스타일·면 배정)이 프리셋보다 앞이다. `family`는 엔진 레버 — 계열만 못
+    박는다 (`families.FAMILIES`). 사람이 앉힌 도안은 어느 후보에서도 안 움직인다.
 
     ## 글자 (`text`)
 
@@ -189,6 +195,16 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if family is not None and family not in FAMILIES:
         raise ValueError(msg("모르는 구성 계열: {family!r} (있는 것: {families})",
                              family=family, families=", ".join(FAMILIES)))
+    pre = resolve_style(style)                    # 모르는 이름이면 ValueError
+    # 프리셋의 글자 기본 — 사람이 auto로 둔 스타일·보통으로 둔 우선순위만 채운다.
+    # 레이싱 번호는 레이싱 프리셋에서만 선다 (다른 프리셋·자동에서는 없는 값이다).
+    if pre is not None:
+        if text_spec.style == "auto" and pre.text_style != "auto":
+            text_spec = replace(text_spec, style=pre.text_style)
+        if pre.text_priority and text_spec.priority == "normal":
+            text_spec = replace(text_spec, priority=pre.text_priority)
+    if text_spec.number and not (pre is not None and pre.number):
+        text_spec = replace(text_spec, number=None)
     cat = cat or Catalog(default_catalog_path())
     preset = preset if preset is not None else PRESET
     extra_plans = list(extra_plans or [])
@@ -208,6 +224,14 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         base_rgb = tuple(int(v) for v in base_rgb)
         base_hsb = tuple(round(v, 2) for v in rgb_to_hsb(*base_rgb))
         notes.append(msg("베이스 도색은 사람이 정했다 — RGB {rgb}", rgb=base_rgb))
+    elif pre is not None and pre.base == "black":
+        base_rgb, base_hsb = BASE_BLACK, tuple(round(v, 2) for v in rgb_to_hsb(*BASE_BLACK))
+        notes.append(msg("베이스 도색은 프리셋이 정했다 — 검정 ({name})", name=pre.name))
+    elif pre is not None and pre.base == "pastel":
+        base_rgb, base_hsb = pastel_base(lk)
+        base_hsb = tuple(round(v, 2) for v in base_hsb)
+        notes.append(msg("베이스 도색은 프리셋이 정했다 — 파스텔 RGB {rgb} ({name})",
+                         rgb=base_rgb, name=pre.name))
     else:
         base_rgb, base_hsb = base_paint(lk)
     car_rgb = base_rgb if paint else (gsurf.car_color(car) if car else None)
@@ -337,7 +361,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # `auto`는 로고·글자가 있으면 그것(로고 줄·워드마크·글자 띠), 없으면 크롭으로
     # 물러난다. 크롭을 안 받는 면은 차 전체 구성(`plan_car`)에 `taken`으로 든다.
     assign = {n: face_spec.resolve(n, logos=bool(logo_protos),
-                                   text=bool(deco and text_spec.active))
+                                   text=bool(deco and text_spec.active),
+                                   poster=bool(pre is not None and pre.rear_poster))
               for n in FACE_OF}
     if deco and not face_spec.all_auto:
         notes.append(msg("면 배정: {what}", what=face_spec.describe()))
@@ -528,6 +553,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     design: Design | None = None
     face_summary: dict | None = None
     text_groups: dict[str, dict] = {}         # 면 → 글자 그룹 항목
+    number_groups: dict[str, dict] = {}       # 면 → 레이싱 번호 그룹 항목 (프리셋)
+    number_poses: list = []
     if not deco:
         notes.append(msg("꾸밈을 끈 판이다 — 도안(과 넘친 조각)만 올린다"))
     if deco and side0 is not None and not side0.uncertain:
@@ -586,7 +613,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             rear_sign=(r0.rear_dir if r0 is not None else 1.0),
             drawable_at=_drawable_at, motif=motif, halo=ocol, family=family,
             phase=_face_phase(deco_src), text=side_text, cap=side_cap,
-            n_person=side_person)
+            n_person=side_person, style=pre)
         notes += design.notes
         # ---- **차 한 대의 지도** — 옆면의 큰 색면이 이음새를 건너간다 ----
         # 프레임 좌표는 면 유닛의 균등 축소라(회전 없음) 각은 그대로고 자리·
@@ -679,13 +706,21 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                       if design.text.tier_main == "D"
                       else msg("도형 맞춤 (층 {tier})", tier=design.text.tier_main)),
                 m=design.text.n))
+        # ---- 레이싱 번호 — 리어 쿼터, 면마다 제 그룹 (프리셋 · 미러 금지) ----
+        # 이름 글자 묶음과 겨루지 않는다 — 이긴 설계 뒤에 로고 줄처럼 따로 앉힌다.
+        if (pre is not None and pre.number and text_spec.number and deco_place is not None):
+            other = next((n for n in ROLE_MAIN if n != deco_src and by_surface.get(n)), None)
+            number_groups, number_poses = _side_number(
+                design, text_spec, cat, out_dir, plan, [deco_src] + ([other] if other else []),
+                (fcu, fcv), ds, notes, written)
         # ---- 옆면 로고 줄 — 로커 위, 면마다 제 그룹 (미러 금지) ----
         row = list(logo_protos) + ([wm_proto] if (wm_proto is not None and wm_face == "side")
                                    else [])
         if row and logo_targets["side"]:
             side_logos = sponsor.side_row(
-                row, design.fld, design.text.poses if design.text is not None else None,
-                notes)
+                row, design.fld,
+                (design.text.poses if design.text is not None else []) + number_poses,
+                notes, size_k=(pre.logo_row if pre is not None else 1.0))
             side_logos = [
                 (sponsor.pick_watermark(
                     pl, sponsor.under_layers(design.back, pl.x, pl.y,
@@ -718,7 +753,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     # 거울이라 같은 자로 맞는다. 큰 색면(띠·블록·베드)은 바탕이라 둔다.
     if design is not None and deco_place is not None:
         marks = [sponsor.pose_box(p)
-                 for p in (design.text.poses if design.text is not None else [])]
+                 for p in (design.text.poses if design.text is not None else [])
+                 + number_poses]
         marks += [pl.box for pl in side_logos]
         cut_all = 0
         for dp, dpath in ((deco_plan, out_dir / "deco.json"),
@@ -744,7 +780,9 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     use_deco = deco_place is not None
     n_front = len(deco_front.layers) if deco_front is not None else 0
     n_text = max([len(LayerPlan.load(out_dir / g["plan"]).layers)
-                  for g in text_groups.values()] or [0])
+                  for g in text_groups.values()] or [0]) \
+        + max([len(LayerPlan.load(out_dir / g["plan"]).layers)
+               for g in number_groups.values()] or [0])
     n_logo = max([logo_summary.get(n, 0) for n in ROLE_MAIN] or [0])
     if use_deco and n_logo and \
             n_person + len(deco_plan.layers) + n_front + n_text + n_logo > cap:
@@ -755,6 +793,7 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
     if use_deco and n_person + len(deco_plan.layers) + n_front + n_text > cap:
         use_deco = False                         # 도안만 남긴다 (`_check`가 나머지를 잡는다)
         text_groups.clear()
+        number_groups.clear()
         notes.append(msg("측면이 상한 {cap:,}을 넘는다 — 꾸밈 그룹을 뺀다", cap=cap))
 
     # 면에 직접 놓는 꾸밈의 색·어휘 — 캔버스 산포와 **같은 세 벌**이다 (액센트 +
@@ -1035,6 +1074,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
             # 글자 그룹은 꾸밈 위·도안 아래, 면마다 제 것 (미러 안 한다)
             if name in text_groups:
                 item["pre_groups"].append(text_groups[name])
+            if name in number_groups:
+                item["pre_groups"].append(number_groups[name])
         if mps:
             item["groups"] = [
                 _hand_group_job(m, hand_ix, hand_group, out_dir) for m in mps]
@@ -1369,6 +1410,8 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         # 설계 기록 — 어느 계열·팔레트·흐름이 이겼고 점수가 어땠나. 사람이
         # 결과를 보고 "왜 이렇게 짰나"를 되짚는 자리이고, 검증 도구가 읽는다.
         cfg["design"] = {
+            # 프리셋은 골랐을 때만 적는다 — 자동 판의 기록은 종전과 바이트가 같다
+            **({"style": pre.name} if pre is not None else {}),
             "family": design.family.name, "variant": design.pal.variant,
             "flow": "rear" if design.flow_rear else "front",
             "bed_level": round(design.level, 2),
@@ -1413,7 +1456,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
                 "tier_sub": (tset.tier_sub if tset else "E"),
                 "role": (tset.poses[0].role if tset else None),
                 "layers": (tset.n if tset else 0),
-                "placement": text_spec.placement, "priority": text_spec.priority}
+                "placement": text_spec.placement, "priority": text_spec.priority,
+                **({"number": text_spec.number,
+                    "number_layers": max([len(LayerPlan.load(out_dir / g["plan"]).layers)
+                                          for g in number_groups.values()] or [0])}
+                   if text_spec.number else {})}
             if face_summary:
                 cfg["design"]["text"].update(face_summary)
             if assigned_summary:
@@ -1470,6 +1517,58 @@ ROW_RESERVE = 0.5
 # 옆면 글자 글리프가 차체 밴드 밖으로 나가도 되는 몫 — 사실상 0 (사용자 지시
 # 2026-09-03). 1%는 마스크 계단이다.
 TEXT_OUT_MAX = 0.01
+
+
+def _side_number(design, spec: TextSpec, cat: Catalog, out_dir: Path, plan: LayerPlan,
+                 sides: list[str], center: tuple[float, float], ds: float,
+                 notes: list[str], written: list[Path]) -> tuple[dict[str, dict], list]:
+    """레이싱 번호 그룹 — 면마다 제 것(`number-<면>.json`), 이름 글자를 피해 리어 쿼터에.
+
+    되돌림: (면 → 그룹 항목, 프레임 좌표 포즈 목록 — 로고 줄과 모티프 양보가 쓴다).
+    반대편은 자리만 거울이고 숫자는 바로 읽힌다 (로고·글자 미러 금지 규칙)."""
+    from .score import raster_layers
+    from .textbudget import plan_tiers
+    from .textbuild import _on_bed, pose_layers, text_box
+    from .textlayout import number_pose, pose_mask
+    from .textstyle import choose_style
+
+    fld = design.fld
+    style = design.text_style or choose_style(spec.style, design.family, None)
+    tplan = design.text_plan or plan_tiers(spec, style, 400)
+    aspect, hratio = text_box(spec.number, style, tplan, cat)
+    avoid = None
+    if design.text is not None and design.text.poses:
+        avoid = np.zeros((fld.grid.rows, fld.grid.cols), bool)
+        for p in design.text.poses:
+            avoid |= pose_mask(fld, p)
+    p = number_pose(fld, spec.number, aspect, hratio, avoid=avoid)
+    if p is None:
+        notes.append(msg("레이싱 번호 '{num}'을(를) 리어 쿼터에 앉힐 자리가 없다 — 뺀다",
+                         num=spec.number))
+        return {}, []
+    _b, bed_a = raster_layers([l for l in design.back if l.label == "itasha_bed"], fld, cat)
+    p.on_bed = _on_bed(fld, bed_a, p)
+    groups: dict[str, dict] = {}
+    poses: list = []
+    fcu, fcv = center
+    for i, sname in enumerate(sides):
+        q = p if i == 0 else p.mirrored()
+        layers = pose_layers(q, design.pal, cat, style=style, plan=tplan)
+        if not layers:
+            continue
+        tp = design.plan(plan, cat)
+        tp.layers = [replace(l, x=rnd(l.x, 4), y=rnd(l.y, 4), sx=rnd(l.sx, 4),
+                             sy=rnd(l.sy, 4), rot=rnd(l.rot % 360.0, 4)) for l in layers]
+        path = out_dir / f"number-{sname}.json"
+        tp.save(path)
+        written.append(path)
+        groups[sname] = {"plan": _rel(path, out_dir), "x": round(fcu, 1), "y": round(fcv, 1),
+                         "scale": round(ds, 3), "rot": 0.0, "mirror": False}
+        poses.append(q)
+    if groups:
+        notes.append(msg("레이싱 번호 {num} — 리어 쿼터 (높이 {h:.0f}유닛 · {n}장, 반대편은 자리만 거울)",
+                         num=spec.number, h=p.height, n=len(layers)))
+    return groups, poses
 
 
 def _side_text_guard(tset, fld, cat: Catalog, body: gsurf.SurfaceMap, u: float,

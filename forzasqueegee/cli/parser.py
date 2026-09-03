@@ -17,6 +17,8 @@ def _text_args(p: argparse.ArgumentParser) -> None:
                             "모자라면 층을 낮추다 게임 글꼴로 물러난다"))
     p.add_argument("--subtext", default=None, metavar=msg("작품명"),
                    help=msg("보조 글자 — 작품명·별칭·팀명 (메인 밑에 작게)"))
+    p.add_argument("--text-number", default=None, dest="text_number", metavar=msg("번호"),
+                   help=msg("레이싱 번호 — 리어 쿼터의 큰 숫자 (레이싱 스폰서 프리셋에서만 선다)"))
     p.add_argument("--text-style", default=None, dest="text_style",
                    help=msg("auto · script · brush · graffiti · racing · techno · minimal "
                             "(기본 auto: 구성 계열이 고른다. 스타일이 글꼴을 고른다)"))
@@ -185,10 +187,16 @@ def build_parser() -> argparse.ArgumentParser:
                                "고른다, engine/compose.motif_family). 계열은 원래 "
                                "캐릭터 의미에서 오는 것이라 팔레트로는 거기까지 못 "
                                "간다 — 수이세이에 star처럼 아는 사람이 짚는 자리다"))
+    p_it.add_argument("--style", default=None, metavar=msg("프리셋"),
+                      help=msg("스타일 프리셋 — racing(레이싱 스폰서) · floral(무늬·꽃) · "
+                               "splash(스플래시·찢김) · minimal(미니멀) · dark(다크 그래피티) "
+                               "(기본: 자동 — 계열 후보를 다 지어 점수로 고른다). 계열에 "
+                               "바탕 도색·글자 스타일과 크기·로고 줄·리어 배정이 한 벌로 온다 "
+                               "(engine/compose/presets)"))
     p_it.add_argument("--family", default=None, metavar=msg("계열"),
-                      help=msg("옆면 꾸밈의 구성 계열을 못 박는다 — minimal · "
-                               "graphic_bed · diagonal_flow · motorsport · splash "
-                               "(기본: 후보를 다 지어 점수로 고른다, "
+                      help=msg("옆면 꾸밈의 구성 계열만 못 박는다 (엔진 레버) — minimal · "
+                               "graphic_bed · diagonal_flow · dark · motorsport · splash "
+                               "(기본: 프리셋의 계열, 없으면 후보를 다 지어 점수로 고른다, "
                                "engine/compose/design)"))
     _text_args(p_it)
     _logo_args(p_it)
@@ -314,13 +322,13 @@ def build_parser() -> argparse.ArgumentParser:
                  "거의 없다 (편집기가 QSettings `itasha/command`로 부른다)"))
     p_fx.add_argument("action",
                       choices=("load-design", "auto-place", "decoration",
-                               "no-decoration", "decorate", "motif", "family",
+                               "no-decoration", "decorate", "motif", "family", "style",
                                "mirror", "base-paint", "text", "no-text",
                                "export", "export-group", "rebuild", "state"),
                       help=msg("load-design(도안 올리기) · auto-place(자동 자리) · "
                                "decoration/no-decoration(꾸밈) · motif(계열) · "
-                               "decorate(자동 꾸밈 창 — 계열·모티프·도색·글자를 한 번에) · "
-                               "family(구성 계열) · mirror(좌우 대칭) · "
+                               "decorate(자동 꾸밈 창 — 프리셋·모티프·도색·글자를 한 번에) · "
+                               "style(스타일 프리셋) · family(구성 계열) · mirror(좌우 대칭) · "
                                "base-paint(베이스 도색) · text/no-text(캐릭터 이름 글자) · "
                                "export(리버리 컨테이너) · export-group(비닐 그룹을 "
                                "FLS·KFPS·plan 셋 중 하나로) · rebuild · state"))
@@ -350,9 +358,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fx.add_argument("--family", default=None,
                       help=msg("motif 계열 — star · flower · splat · swirl · crystal "
                                "(안 주면 도안의 테마색이 고른다)"))
+    p_fx.add_argument("--style", default=None,
+                      help=msg("style·decorate 명령의 스타일 프리셋 — auto · racing · floral · "
+                               "splash · minimal · dark (편집기 드롭다운의 값)"))
     p_fx.add_argument("--composition", default=None,
                       help=msg("family 명령의 구성 계열 — minimal · graphic_bed · "
-                               "diagonal_flow · motorsport · splash (안 주면 자동: "
+                               "diagonal_flow · dark · motorsport · splash (안 주면 자동: "
                                "후보를 다 지어 점수로 고른다)"))
     _logo_args(p_fx)
     _face_args(p_fx)

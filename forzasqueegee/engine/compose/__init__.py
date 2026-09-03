@@ -105,7 +105,9 @@ r"""이타샤 구성 설계 — 도안·면 실측에서 **이타샤 한 대**�
     echo        그래픽 에코 — 인물의 결 · 뾰족함 · 블록을 되풀이하는 잔 조각.
     rhythm      리듬 곡선 — 조각이 원점에서 잦아들며 흘러 나오는 자리.
     macro       매크로 기하 — 인물 뒤 큰 색면의 어휘 (띠·겹·날·화살·가름·모서리…).
-    families    구성 계열 — minimal · graphic_bed · diagonal_flow · motorsport · splash.
+    families    구성 계열 — minimal · graphic_bed · dark · motorsport · splash.
+    presets     스타일 프리셋 — 계열 + 바탕 도색·팔레트·글자·로고 줄·면 배정이 한 벌
+                (racing · floral · splash · minimal · dark). 편집기 드롭다운이 이것이다.
     critic      구도 비평 — 같은 합성을 세 배율(멀리·중간·가까이)로 재는 자.
     score       구도 점수 — 후보 한 벌을 옆면 한 장으로 합성해 재는 자.
     wholeeval   차 한 대의 **위계 평가** — 성립 · 도안 충실도 · 위계를
@@ -194,6 +196,9 @@ from .graph import (
 from .bed import keyline_layers, slab_axis
 from .echo import echo_layers
 from .families import FAMILIES, FAMILY_NAMES, Family, rank_families
+from .presets import (
+    LEGACY_FAMILY as LEGACY_STYLE_FAMILY, PRESET_NAMES as STYLE_PRESET_NAMES,
+    STYLE_PRESETS, StylePreset, listing as style_listing, resolve as resolve_style)
 from .rhythm import Beat, RhythmCurve, beats, curve_for
 from .macro import (
     KINDS as MACRO_KINDS, MACRO_AREA_MAX, MacroSpec, macro_layers,

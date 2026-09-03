@@ -238,7 +238,7 @@ def pose_proto(p: TextPose, pal: RolePalette, cat: Catalog, *, style: str,
     outline = edge if plan.outline else None
     shad = shadow if (plan.shadow and not is_sub) else None
     ix = ix_for_size(plan.ix_sub if is_sub else plan.ix_main, p.height)
-    label = "text_sub" if is_sub else "text"
+    label = "text_sub" if is_sub else ("text_number" if p.role == "number" else "text")
     key = (p.text, style, tier, ix, plan.font, fill, outline, shad, label)
     cache = cat.__dict__.setdefault("_text_proto", {})
     got = cache.get(key)
@@ -288,9 +288,10 @@ def text_box(text: str, style: str, plan: TextPlan, cat: Catalog, sub: bool = Fa
 def build_text_sets(fld: CompositionField, pal: RolePalette, cat: Catalog, *,
                     main: str, sub: str | None, style: str, plan: TextPlan,
                     rocker: bool, bed_alpha=None,
-                    roles: tuple[str, ...] = ROLES) -> list[TextSet]:
+                    roles: tuple[str, ...] = ROLES, scale: float = 1.0) -> list[TextSet]:
     """배치 후보마다 `TextSet` 하나. 층이 E면 빈 목록. 이름의 줄 나눔(`lockups`)
-    마다 배치를 따로 낸다 — 두 줄 락업은 포즈만 다른 게 아니라 글자 블록이 다르다."""
+    마다 배치를 따로 낸다 — 두 줄 락업은 포즈만 다른 게 아니라 글자 블록이 다르다.
+    `scale`은 워드마크 상한 배율 (프리셋 — `presets`)."""
     if plan.tier_main == "E":
         return []
     box_sub = text_box(sub, style, plan, cat, sub=True) if sub else (1.0, 1.0)
@@ -298,7 +299,7 @@ def build_text_sets(fld: CompositionField, pal: RolePalette, cat: Catalog, *,
     cands: list[list[TextPose]] = []
     for text in lockups(main):
         cands += layout_sets(fld, text, sub, text_box(text, style, plan, cat), box_sub,
-                             rocker, roles)
+                             rocker, roles, scale)
     for poses in cands:
         layers: list[Layer] = []
         protos: list[list[Layer]] = []
