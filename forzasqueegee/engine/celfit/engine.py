@@ -585,6 +585,8 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
              if rec.strokes else 0.0)
     thick_on = bool(_S._THICK_ON and pol.fill_below and w_med > 0.0)
     n_thick = 0
+    # 가는 획의 폭 하강(`stroke._THIN_W`)도 cel 노선만 — line 노선은 그대로
+    _S._THIN_ON[0] = bool(pol.fill_below)
     for k, s in enumerate(rec.strokes):
         if progress and (k & 15) == 0:
             progress(k / total, msg("획 {cur}/{total}", cur=k + 1, total=total))
@@ -674,6 +676,7 @@ def place_strokes(plan: LayerPlan, rec: Reconstruction, cel: CelArt,
         placed.append((s.sid, s.path, s.width, s.color, sc, lo,
                        len(plan.layers)))
         owners.append(s)
+    _S._THIN_ON[0] = False
     rec.stats["cheap_strokes"] = n_cheap
     # §9 계측 — 색면이 맡아 안 그은 획 (A/B가 읽는 자)
     rec.stats["fill_owned_strokes"] = n_owned

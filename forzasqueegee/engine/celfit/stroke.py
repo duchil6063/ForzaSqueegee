@@ -145,6 +145,23 @@ _PROF_CAP = float(os.environ.get("FS_PROF_CAP", 1.5))
 # 세 배다. 이음이 각으로 읽히는 것이 그만큼 비싸다는 뜻이고, 그 저울은 폭
 # 프로파일 항과 같다.
 _W_TANG = float(os.environ.get("FS_TANGENT", 0.2))
+# **가는 획은 폭을 하강 목적에도 넣는다** — 이 폭(px) 미만의 원화 띠가 대상.
+#
+# 폭 프로파일 항(`_W_PROF`)은 후보 **순위**의 항이고, 좌표하강(`scoring._descend`)의
+# 목적은 픽셀 점수뿐이다. 점수는 픽셀 중심 표본이라 **반 픽셀의 폭은 값이
+# 없다**: 1.9px 띠를 1.5px로 그어도 덮는 픽셀 중심이 같고 스필만 줄어, 하강이
+# 폭을 한 눈금 아래로 민다. 실측(06, 목표 폭 1.5~2.0px 획 240개): 놓인 폭 /
+# 원화 띠 중앙 0.78 · 60%가 0.85 미만인데, 계열의 최소 폭은 U_13 0.75 · U_31
+# 0.32 · U_45 0.15px로 바닥이 아니다 — 눈금이 0.75px인 U_13은 1.9px 목표에서
+# 1.5(0.79배)와 2.25(1.18배) 중 늘 아래를 골랐다. 굵은 획은 한 눈금이 폭의
+# 몇 %라 이 편향이 안 보이고, 그쪽은 그대로 둔다.
+_THIN_W = float(os.environ.get("FS_THIN_W", 2.5))
+# 폭 어긋남의 배수는 목표 폭에 반비례한 제곱 — 같은 0.4px도 1.9px 띠에서는
+# 폭의 21%다. 1제곱은 06에서 폭비 0.84, 제곱은 0.85에 `thin_loss`까지 준다
+_THIN_POW = 2.0
+# 켜는 자리는 `engine.place_strokes`(cel 노선만, `_THICK`과 같은 무늬) —
+# line 노선은 안 켠다
+_THIN_ON = [False]
 # **끝이 뾰족한 도형은 획이 아니다** — 놓인 폭 프로파일의 양끝이 중앙의 이만큼은
 # 돼야 한다 (0 = 안 본다). 위 자들이 전부 폭을 한 수로 줄여 묻는 탓에 생긴
 # 구멍이다: `placed_profile`이 가운데 80%만 재므로 "가운데는 원화 폭인데 끝이
@@ -382,6 +399,8 @@ def _fit_segments(plan: LayerPlan, sc: _Scorer, dt: np.ndarray,
         steer = (chain.steer(sc.cat, sc,
                              np.stack([arc[:, 0] + y0, arc[:, 1] + x0], axis=1),
                              wpx, sc.w, sc.h, lay) if grammar else None)
+        if grammar and _THIN_ON[0] and wpx < _THIN_W:   # 가는 획 (`_THIN_W`)
+            steer = _bar_width_steer(steer, sc.cat, sc.upp, wpx, L)
         gain, q = _descend(sc, lay, color, passes=3, steer=steer)
         if best_c is not None and best_c[0] >= gain:   # 비기면 곡선이 이긴다
             if best_c[0] < _MIN_GAIN * 0.5:
@@ -473,6 +492,32 @@ def _prof_pen(i: int, sx: float, sy: float, wtgt: np.ndarray,
         return 0.0
     tgt = np.interp(mid, np.linspace(0.0, 1.0, len(wtgt)), wtgt)
     return float(np.mean(np.abs(w / max(upp, 1e-9) - tgt))) * (length / max(upp, 1e-9))
+
+
+def _thin_gain(wtgt: float) -> float:
+    """가는 획의 폭 벌점 배수 — 같은 px 어긋남도 가는 띠에서는 폭의 큰 몫이다."""
+    return (_THIN_W / max(wtgt, 1e-6)) ** _THIN_POW
+
+
+def _width_steer(steer, i: int, wt: np.ndarray, upp: float, wtgt: float):
+    """조종 항에 **폭 프로파일 벌점**을 얹는다 (`_THIN_W` 문서) — 순위 항과 같은 자."""
+    k = _W_PROF * _thin_gain(wtgt)
+
+    def f(q: Layer) -> float:
+        base = steer(q) if steer is not None else 0.0
+        return base + k * _prof_pen(i, q.sx, q.sy, wt, upp, q.skew)
+    return f
+
+
+def _bar_width_steer(steer, cat, upp: float, wpx: float, length: float):
+    """막대의 조종 항에 폭 어긋남 |놓인 폭 − 목표| × 길이(px²)를 얹는다 (`_THIN_W`)."""
+    from .descriptor import layer_width_px
+    k = _W_PROF * _thin_gain(wpx)
+
+    def f(q: Layer) -> float:
+        base = steer(q) if steer is not None else 0.0
+        return base + k * abs(layer_width_px(cat, q, upp) - wpx) * length
+    return f
 
 
 def _tang_pen(i: int, sx: float, sy: float, th: float,
@@ -959,6 +1004,7 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
                 continue
         order.append(i)
     c, s = np.cos(th), np.sin(th)
+    thin = bool(line and _THIN_ON[0] and wt is not None and wtgt < _THIN_W)
     m = U.mean(axis=1)                     # 중심선 무게중심 (로컬)
     Xm = X.mean(axis=0)
     cands = []
@@ -1002,6 +1048,8 @@ def _try_curve(sc: _Scorer, forms: tuple, path: np.ndarray, wpx: float,
     for _, lay, pen, i in cands[:2]:                      # 상위 2개만 정밀 하강
         steer = (chain.steer(sc.cat, sc, anc_g, wtgt, sc.w, sc.h, lay)
                  if anc_g is not None else None)
+        if thin:                           # 가는 획 — 폭도 하강이 지킨다 (`_THIN_W`)
+            steer = _width_steer(steer, i, wt, sc.upp, wtgt)
         # 전단 축은 **씨앗 둘레의 작은 격자 이웃**만 본다 (§9) — 연속 범위를
         # 훑지 않는다. 씨앗이 이미 닫힌 해라 그 둘레 한두 칸이면 족하고,
         # 0 쪽은 언제나 함께 물어본다 (`scoring._descend`의 `skew` 문서)

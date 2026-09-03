@@ -387,6 +387,20 @@ def _seal_dots(plan: LayerPlan, cel: CelArt, cat: Catalog, hard: np.ndarray,
     return n
 
 
+def _seal_demand(plan: LayerPlan, cel: CelArt, cat: Catalog,
+                 need: np.ndarray) -> int:
+    """이 잔여를 메우는 데 메움 도형이 **몇 장** 드나 — 사본에서 돌려 센다."""
+    from .holes import fill_holes
+
+    scratch = LayerPlan(source_image=plan.source_image,
+                        image_size=plan.image_size,
+                        units_per_px=plan.units_per_px,
+                        layers=list(plan.layers))
+    return fill_holes(scratch, cel, cat, log=lambda *_a, **_k: None, min_px=1,
+                      max_layers=10 ** 9, holes=need, label="seal",
+                      group_r=_SEAL_GROUP_R, at=0)
+
+
 def _make_room(plan: LayerPlan, cel: CelArt, cat: Catalog,
                budget: int | None, ss: int, st: dict, want: int = 0,
                weight: np.ndarray | None = None) -> None:
@@ -471,10 +485,13 @@ def seal_coverage(plan: LayerPlan, cel: CelArt, cat: Catalog, *,
         if not hard.any():
             break
         need = need_px(hard, ss)
-        # 자리 만들기 — 군집 수만큼은 있어야 한 바퀴가 헛돌지 않는다
-        ncc, _, _, _ = cv2.connectedComponentsWithStats(
-            need.astype(np.uint8), connectivity=8)
-        want = int(ncc - 1)
+        # 자리 만들기 — **메움이 실제로 쓸 장수**만큼만 판다. 군집 수로 팔면
+        # 메움이 조각을 `_SEAL_GROUP_R`로 묶어 그보다 적게 쓰므로 판 만큼 안
+        # 산다 (실측 02: 되팜 140장에 메움 117장 — 23장은 헛되이 팔렸고 판이
+        # 상한 아래 36장으로 끝났다). 수요는 같은 메움을 **빈 판에 미리 돌려**
+        # 센다 — 메움은 결정적이고 새 도형만 끼우므로 사본 목록에서 돌리면
+        # 본 판은 그대로다
+        want = _seal_demand(plan, cel, cat, need)
         _make_room(plan, cel, cat, budget, ss, st, want, weight)
         snap("b_room%d" % _r)
         room = 10 ** 9 if budget is None else max(0, budget - len(plan.layers))
