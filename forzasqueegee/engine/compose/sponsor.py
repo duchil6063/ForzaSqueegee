@@ -259,6 +259,12 @@ def face_row(protos: list[Proto], sm: gsurf.SurfaceMap, busy: list, *,
     u0, v0, u1, v1 = sm.paint
     W, H = u1 - u0, v1 - v0
     ref = side_w if side_w else W / 0.4 * 1.0
+    # 도어 유리처럼 마스크가 **덩이 둘**(B필러가 가른 앞·뒤 창)이면 줄은 큰 덩이의
+    # 폭에 앉는다 — 면 상자 가운데는 필러라 줄이 반씩 잘렸다 (W9T 줄리아).
+    pane = _pane(sm)
+    if pane is not None:
+        u0, u1 = pane
+        W = u1 - u0
     widths: dict[int, float] = {}
     for pr in ([center] if center else []) + protos:
         w = SIDE_LOGO_W * ref * (WATERMARK_K if pr.item.kind == "watermark" else FACE_LOGO_K)
@@ -298,6 +304,29 @@ def face_row(protos: list[Proto], sm: gsurf.SurfaceMap, busy: list, *,
         busy = list(busy) + [q.box]
         out.append(q)
     return out
+
+
+def _pane(sm: gsurf.SurfaceMap) -> tuple[float, float] | None:
+    """마스크가 덩이 둘 이상이면 **가장 큰 덩이의 u 범위** (면 유닛), 아니면 None.
+
+    작은 부스러기(마스크 넓이의 5% 미만)는 덩이로 안 친다 — 한 덩이 면(리어·
+    프론트·윈드실드)은 그대로라 답이 안 바뀐다."""
+    m = sm.mask
+    if m is None or m.size <= 1:
+        return None
+    import cv2
+    n, lbl, stats, _c = cv2.connectedComponentsWithStats(
+        m.astype("uint8"), connectivity=8)
+    tot = max(1, int(m.sum()))
+    blobs = [(int(stats[i, cv2.CC_STAT_AREA]), int(stats[i, cv2.CC_STAT_LEFT]),
+              int(stats[i, cv2.CC_STAT_WIDTH])) for i in range(1, n)
+             if stats[i, cv2.CC_STAT_AREA] >= 0.05 * tot]
+    if len(blobs) < 2:
+        return None
+    area, left, width = max(blobs)
+    kx = sm.px_per_unit[0]
+    ox = sm.origin_px[0]
+    return ((left - ox) / kx, (left + width - ox) / kx)
 
 
 def corner(pr: Proto, sm: gsurf.SurfaceMap, busy: list, *, side_w: float | None,

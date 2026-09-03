@@ -8,6 +8,7 @@
 - `cap_layers`가 상한을 지킨다
 - 반대편 앉히기(`Placed.mirrored` · `reseat_place`)가 자리만 거울이고 그림은 안 뒤집는다
 - 옆면 줄(`side_row`)이 같은 입력에 같은 답을 낸다 · 로고끼리 안 겹친다 · 인물 상자를 안 덮는다
+- 유리 덩이(`_pane`): 마스크가 B필러로 둘이면 줄은 큰 덩이 안에, 한 덩이면 답이 없다(그대로)
 """
 
 from __future__ import annotations
@@ -136,6 +137,28 @@ def main() -> int:
     # 워터마크가 더 작고, 깎이지 않은 워터마크는 제 폭 그대로다
     check(wm.w < us.w and abs(wm.w - sponsor.WATERMARK_K * sponsor.SIDE_LOGO_W * 900.0) < 1e-6,
           "워터마크는 사용자 로고보다 작다 (옆면 폭의 4.75%)")
+
+    print("[유리 덩이]")
+    # 200×60 마스크 — 앞 창 80px · 필러 4px · 뒤 창 116px (px = u + 100)
+    mask = np.zeros((60, 200), bool)
+    mask[:, :80] = True
+    mask[:, 84:] = True
+    win = gsurf.SurfaceMap(name="window_left", index=8, origin_px=(100.0, 30.0),
+                           px_per_unit=(1.0, 1.0), paint=(-100.0, -30.0, 100.0, 30.0),
+                           fill=float(mask.mean()), mask=mask, cap=1000)
+    pane = sponsor._pane(win)
+    check(pane is not None and abs(pane[0] - (-16.0)) < 1e-6 and abs(pane[1] - 100.0) < 1e-6,
+          f"두 덩이 → 큰 덩이(뒤 창)의 u 범위 {pane}")
+    one = replace(win, mask=np.ones((60, 200), bool))
+    check(sponsor._pane(one) is None, "한 덩이 → None (리어·프론트·윈드실드는 그대로)")
+    small = mask.copy()
+    small[:, :80] = False
+    small[:, :6] = True                               # 5% 미만 부스러기
+    check(sponsor._pane(replace(win, mask=small)) is None, "5% 미만 부스러기는 덩이가 아니다")
+    nw: list[str] = []
+    row = sponsor.face_row(protos[1:], win, [], side_w=900.0, floor_v=None, center=None, notes=nw)
+    check(bool(row) and all(pl.box[0] >= -16.0 - 1e-6 for pl in row),
+          f"유리 로고 줄이 큰 덩이 안에 선다 ({len(row)}개, x={[round(pl.x, 1) for pl in row]})")
 
     print("[요약]")
     if FAILS:

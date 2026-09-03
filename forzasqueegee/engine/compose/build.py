@@ -1199,6 +1199,11 @@ def build(main_plan: Path, out_dir: Path, *, car: str | None = None,
         for face in ("rear", "front", "windshield", "window_left", "window_right"):
             if not logo_targets.get(face, True) or not assign[face].sponsor:
                 continue
+            # 사람이 그림을 올린 면은 그 그림이 그 면의 일이다 — 로고 열도 글자
+            # (`assigned_text`)처럼 건너뛴다. 종전에는 도어 유리의 치비 옆에 로고
+            # 하나를 끼워 넣었다 (다중 그림 픽스처 W10M reze-win: 700+109장).
+            if face in hand_box:
+                continue
             users = _users_on[face]
             center = wm_proto if wm_face == face else None
             if not users and center is None:

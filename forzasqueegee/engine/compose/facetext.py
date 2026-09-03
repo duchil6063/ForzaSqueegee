@@ -17,6 +17,7 @@ from ...game import surface as gsurf
 from ...i18n import msg
 from ..catalog import Catalog
 from ..model import UNITS_PER_SCALE, LayerPlan, rnd
+from . import sponsor
 from .boxes import _rel
 from .place import ROLE_EXTRA, ROLE_REAR, _refit_canvas, drawable
 from .roof import ROOF_DARK, hood_index, top_segments
@@ -270,6 +271,11 @@ def assigned_text(spec, design, items: list[dict], maps: dict, rigs: dict, cat: 
             box = sm.paint
         else:
             box = sm.fit(aspect, coverage=0.85, anchor="center") or sm.paint
+            # 도어 유리처럼 마스크가 덩이 둘이면(B필러) 문구는 **큰 덩이** 안에 —
+            # 내접 상자는 필러를 건너 두 창에 걸쳤다 (로고 줄과 같은 규칙, `sponsor._pane`).
+            pane = sponsor._pane(sm) if role == "phrase" else None
+            if pane is not None:
+                box = (pane[0], box[1], pane[1], box[3])
             bw_box = box[2] - box[0]
             wcap = ROLE_W[role]
             if role == "glass_wordmark" and design.family.name in EDGE_SHAPES:
