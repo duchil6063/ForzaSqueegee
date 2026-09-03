@@ -1,7 +1,7 @@
-From c7cae314e821e03863e50c9369e8f28c8703e9ad Mon Sep 17 00:00:00 2001
+From c00f2749597a8e8712be024048277964486b4b26 Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Thu, 3 Sep 2026 00:08:38 +0900
-Subject: [PATCH 05/11] itasha: a Placed Artwork table in the Auto Decoration
+Subject: [PATCH 05/12] itasha: a Placed Artwork table in the Auto Decoration
  dialog - a role per group
 
 Every group on the car is material for the decoration now (ForzaSqueegee

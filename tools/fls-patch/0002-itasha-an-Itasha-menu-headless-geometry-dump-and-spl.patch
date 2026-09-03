@@ -1,7 +1,7 @@
-From bf8e3a055a586ea5e25a0110f7d2f3d65ce34947 Mon Sep 17 00:00:00 2001
+From 71aef5679996aa8f26f71f6fb7b91e9fa469c11d Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Thu, 27 Aug 2026 03:02:51 +0900
-Subject: [PATCH 02/11] itasha: an Itasha menu, headless geometry dump, and
+Subject: [PATCH 02/12] itasha: an Itasha menu, headless geometry dump, and
  split-at-a-line
 
 Adds everything ForzaSqueegee needs from the editor:

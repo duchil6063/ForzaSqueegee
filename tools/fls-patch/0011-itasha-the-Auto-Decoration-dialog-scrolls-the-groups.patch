@@ -1,7 +1,7 @@
-From e855198b29d966250cceadfc339951bf2b389e26 Mon Sep 17 00:00:00 2001
+From 3b50570c1afa3ac53e0e0211314eda13333a4c2d Mon Sep 17 00:00:00 2001
 From: duchil6063 <gustn9634@gmail.com>
 Date: Thu, 3 Sep 2026 22:23:17 +0900
-Subject: [PATCH 11/11] itasha: the Auto Decoration dialog scrolls (the groups
+Subject: [PATCH 11/12] itasha: the Auto Decoration dialog scrolls (the groups
  outgrew the screen); an empty race number clears the one kept in the recipe
 
 ---

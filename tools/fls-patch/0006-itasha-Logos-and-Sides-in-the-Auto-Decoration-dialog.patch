@@ -1,7 +1,7 @@
-From 55d9dbeec3fc3721dce6127d5908c44d616bf21e Mon Sep 17 00:00:00 2001
+From eff29450400a9b7d4a90e0b607fd9bbff56ab09b Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Thu, 3 Sep 2026 00:55:43 +0900
-Subject: [PATCH 06/11] itasha: Logos and Sides in the Auto Decoration dialog -
+Subject: [PATCH 06/12] itasha: Logos and Sides in the Auto Decoration dialog -
  watermark, logo images, placement, one-side symmetry
 
 ---

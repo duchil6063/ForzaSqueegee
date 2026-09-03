@@ -262,6 +262,9 @@ def cmd_flsedit(args) -> int:
             # (프리셋 이름·설명은 엔진의 것이고 언어도 엔진이 안다)
             out = dict(st.state)
             out["style_presets"] = _compose.style_listing()
+            # "도안에서" 모드가 실제로 고르는 색 — 창의 견본이 빈 흰색으로 안 남게
+            _auto = studio._auto_paint(st)
+            out["paint_auto"] = list(_auto) if _auto else None
             print(_json.dumps(out, ensure_ascii=False, indent=1))
             return 0
         stats = studio.rebuild(st, log=log)

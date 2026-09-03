@@ -1,0 +1,57 @@
+From 170a8fe8b66c007712db2c36fe80d37ca629f49d Mon Sep 17 00:00:00 2001
+From: duchil6063 <gustn9634@gmail.com>
+Date: Fri, 4 Sep 2026 00:44:12 +0900
+Subject: [PATCH 12/12] itasha: the base-paint swatch shows the colour the
+ engine picks from the design (state.paint_auto) instead of a blank white
+
+---
+ src/gui/app/main_window_itasha.cpp | 19 +++++++++++++++----
+ src/gui/i18n.cpp                   |  1 +
+ 2 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/src/gui/app/main_window_itasha.cpp b/src/gui/app/main_window_itasha.cpp
+index e49f5a8..2175878 100644
+--- a/src/gui/app/main_window_itasha.cpp
++++ b/src/gui/app/main_window_itasha.cpp
+@@ -642,14 +642,25 @@ void MainWindow::showItashaDecorationDialog() {
+                         paintRgb.at(2).toInt());
+         pickCombo(paintMode, QStringLiteral("pick"));
+     }
++    // The colour the engine picks from the design (state.paint_auto) - shown
++    // while "From the design" is selected, so the swatch is never a blank white.
++    QColor autoColour;
++    const QJsonArray autoRgb = state.value(QStringLiteral("paint_auto")).toArray();
++    if (autoRgb.size() == 3) {
++        autoColour = QColor(autoRgb.at(0).toInt(), autoRgb.at(1).toInt(),
++                            autoRgb.at(2).toInt());
++    }
+     const auto showSwatch = [&]() {
+-        swatch->setText(chosen.name(QColor::HexRgb).toUpper());
++        const bool pick = paintMode->currentData().toString() == QStringLiteral("pick");
++        const QColor shown = (!pick && autoColour.isValid()) ? autoColour : chosen;
++        swatch->setText(shown.name(QColor::HexRgb).toUpper()
++                        + (pick ? QString() : i18n::t(" (from the design)")));
+         swatch->setStyleSheet(QStringLiteral("background:%1;color:%2;")
+-                                  .arg(chosen.name(QColor::HexRgb),
+-                                       chosen.lightness() < 128
++                                  .arg(shown.name(QColor::HexRgb),
++                                       shown.lightness() < 128
+                                            ? QStringLiteral("white")
+                                            : QStringLiteral("black")));
+-        swatch->setEnabled(paintMode->currentData().toString() == QStringLiteral("pick"));
++        swatch->setEnabled(pick);
+     };
+     showSwatch();
+     connect(paintMode, &QComboBox::currentIndexChanged, &dialog, [&]() { showSwatch(); });
+diff --git a/src/gui/i18n.cpp b/src/gui/i18n.cpp
+index 060fee2..b70e39a 100644
+--- a/src/gui/i18n.cpp
++++ b/src/gui/i18n.cpp
+@@ -712,6 +712,7 @@ const Entry kTable[] = {
+     {"&Pick Colour...", "직접 색 고르기(&P)..."},
+     {"Paint the car a colour you choose", "직접 고른 색으로 차를 칠합니다"},
+     {"Base Paint", "바탕 도색"},
++    {" (from the design)", " (도안에서 고름)"},
+     {"Export &Group As", "그룹 내보내기(&G)"},
+     {"Write this vinyl group as KFPS JSON or a plan.json - the game container "
+      "is File > Export",

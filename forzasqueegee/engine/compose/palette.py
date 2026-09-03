@@ -22,7 +22,7 @@ from .look import Look
 BASE_THEME_SHARE = 0.58    # 지배 색조 몫이 이만큼이면 "상징색"으로 본다
 
 
-BASE_THEME_SAT = 0.45      # 지배색 자체가 이만큼 진해야 상징색이다 — 살색·
+BASE_THEME_SAT = 0.30      # 지배색 자체가 이만큼 진해야 상징색이다 — 살색·
 
 
                            # 갈색 머리처럼 흐린 지배색은 상징색이 아니라 그냥
@@ -31,7 +31,8 @@ BASE_THEME_SAT = 0.45      # 지배색 자체가 이만큼 진해야 상징색�
 BASE_HUE_NEAR = 0.08       # 같은 색조로 묶는 색조 거리
 
 
-BASE_SAT_MIN = 0.22        # 이보다 흐린 색은 유채 후보에서 뺀다
+BASE_SAT_MIN = 0.22        # 이보다 흐린 색은 유채 후보에서 뺀다
+BASE_SKIN_SAT = 0.55       # 살색 띠(`SKIN_HUE`)의 색이 이 채도 아래면 테마색 후보에서 뺀다
 
 
 BASE_WHITE = (245, 245, 245)
@@ -69,7 +70,10 @@ def base_paint(lk: Look) -> tuple[tuple[int, int, int], tuple[float, float, floa
     # 재는 자리라 꼬리 색을 넣으면 분모가 흔들린다 (액센트 쪽과 다른 자다).
     for c, w in zip(lk.palette[:12], (lk.weights or [1.0] * len(lk.palette))[:12]):
         h, s, b = rgb_to_hsb(*c)
-        if s >= BASE_SAT_MIN and b >= 0.15:
+        # 살색·갈색 머리 띠는 테마색 후보가 아니다 — 인물 도안은 살색이 넓이로 늘
+        # 앞서서, 이것을 세면 상징색은 한 번도 못 이기고 살구색 차만 나온다
+        # (표준 11장 실측: 지배 후보 8/11이 색조 0~.05·채도 .22~.40 = 살색)
+        if s >= BASE_SAT_MIN and b >= 0.15 and not (SKIN_HUE[0] <= h <= SKIN_HUE[1] and s < BASE_SKIN_SAT):
             cand.append(((h, s, b), w))
     if cand:
         total = sum(w for _c, w in cand)

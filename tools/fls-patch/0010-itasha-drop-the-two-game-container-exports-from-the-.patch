@@ -1,7 +1,7 @@
-From f9dd02af33913c77565e0e0f4b2fd725419ea831 Mon Sep 17 00:00:00 2001
+From 7687f924298f2075f85328f9a570fc5ccad69734 Mon Sep 17 00:00:00 2001
 From: duchil6063 <gustn9634@gmail.com>
 Date: Thu, 3 Sep 2026 20:28:05 +0900
-Subject: [PATCH 10/11] itasha: drop the two game-container exports from the
+Subject: [PATCH 10/12] itasha: drop the two game-container exports from the
  menu - File > Export writes them (with the preview thumbnail); Export Group
  As keeps KFPS JSON and plan.json
 

@@ -1,7 +1,7 @@
-From 934f1e4ecf24069daea36cefc781e42a0f1a4b15 Mon Sep 17 00:00:00 2001
+From c65e62aa9f9401607722efdcd220b353915c0f20 Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Wed, 26 Aug 2026 16:17:05 +0900
-Subject: [PATCH 01/11] build: locate Qt plugins without assuming a vcpkg
+Subject: [PATCH 01/12] build: locate Qt plugins without assuming a vcpkg
  layout
 
 The plugin and runtime paths were derived from Qt6_DIR with the vcpkg tree

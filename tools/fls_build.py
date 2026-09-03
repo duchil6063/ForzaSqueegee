@@ -85,6 +85,7 @@ CHANGES = (
     "**itasha** — 메뉴의 게임 컨테이너 내보내기 둘을 뺀다 (편집기 제 File > Export가\n"
     "   쓴다), 그룹 내보내기는 KFPS JSON·plan.json만",
     "**itasha** — [Auto Decoration...] 창이 스크롤된다, 빈 레이싱 번호 칸은 번호 없음",
+    "**itasha** — 바탕 도색 견본이 도안에서 고른 색을 보인다 (state.paint_auto)",
 )
 
 CMAKE_ARGS = [

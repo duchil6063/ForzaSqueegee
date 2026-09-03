@@ -1,7 +1,7 @@
-From 346f0375495366b995a65a29cabedd60335f13c3 Mon Sep 17 00:00:00 2001
+From 81b07f9eb8691a7001937942acc0a9173cfe68fc Mon Sep 17 00:00:00 2001
 From: duchil6063 <duchil6063@gmail.com>
 Date: Thu, 3 Sep 2026 09:20:56 +0900
-Subject: [PATCH 07/11] itasha: Panels in the Auto Decoration dialog - door
+Subject: [PATCH 07/12] itasha: Panels in the Auto Decoration dialog - door
  glass, rear window, rear, front and windshield assignment
 
 ---
