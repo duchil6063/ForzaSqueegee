@@ -82,8 +82,7 @@ CHANGES = (
     "**itasha** — 로고 안내문의 벡터화 상한을 엔진과 같은 300장으로",
     "**itasha** — [Auto Decoration...] 창의 스타일 프리셋 드롭다운(엔진이 주는\n"
     "   목록 + 썸네일)과 레이싱 번호 칸, 글자 묶음 기본 켬",
-    "**itasha** — 메뉴의 게임 컨테이너 내보내기 둘을 뺀다 (편집기 제 File > Export가
-"
+    "**itasha** — 메뉴의 게임 컨테이너 내보내기 둘을 뺀다 (편집기 제 File > Export가\n"
     "   쓴다), 그룹 내보내기는 KFPS JSON·plan.json만",
 )
 
